@@ -37,6 +37,18 @@ func TestSessionAddMessage(t *testing.T) {
 	}
 }
 
+func TestSessionTouch(t *testing.T) {
+	s := NewSession("test-1", ModeStandard, "")
+	before := s.LastActiveAt
+
+	time.Sleep(10 * time.Millisecond)
+	s.Touch()
+
+	if !s.LastActiveAt.After(before) {
+		t.Fatalf("expected LastActiveAt to advance, before=%v after=%v", before, s.LastActiveAt)
+	}
+}
+
 func TestSessionStateString(t *testing.T) {
 	tests := []struct {
 		state    SessionState
@@ -136,6 +148,24 @@ func TestSessionManagerIdleEviction(t *testing.T) {
 
 	if mgr.Count() != 0 {
 		t.Errorf("expected 0 sessions after idle eviction, got %d", mgr.Count())
+	}
+}
+
+func TestSessionManagerTouchKeepsSessionAlive(t *testing.T) {
+	mgr := NewSessionManagerWithTimeout(10, 50*time.Millisecond)
+	defer mgr.Stop()
+	mgr.Create("s1", ModeVoiceLLM, "")
+
+	time.Sleep(30 * time.Millisecond)
+	if err := mgr.Touch("s1"); err != nil {
+		t.Fatalf("touch failed: %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	mgr.evictIdle()
+
+	if mgr.Count() != 1 {
+		t.Fatalf("expected touched session to stay alive, got %d sessions", mgr.Count())
 	}
 }
 

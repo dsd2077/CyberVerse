@@ -86,6 +86,12 @@ func (s *Session) SetState(state SessionState) {
 	s.LastActiveAt = time.Now()
 }
 
+func (s *Session) Touch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastActiveAt = time.Now()
+}
+
 func (s *Session) GetState() SessionState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -222,6 +228,15 @@ func (m *SessionManager) Get(id string) (*Session, error) {
 		return nil, ErrSessionNotFound
 	}
 	return session, nil
+}
+
+func (m *SessionManager) Touch(id string) error {
+	session, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	session.Touch()
+	return nil
 }
 
 func (m *SessionManager) Delete(id string) {

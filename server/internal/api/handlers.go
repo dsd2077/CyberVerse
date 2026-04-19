@@ -255,28 +255,35 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	handler := ws.HandleWebSocket(r.wsHub, id, func(sessionID string, msg ws.WSMessage) {
-		switch msg.Type {
-		case "text_input":
-			if r.orch != nil && msg.Text != "" {
-				go func() {
-					if err := r.orch.HandleTextInput(req.Context(), sessionID, msg.Text); err != nil {
-						log.Printf("Failed to handle WS text input for session %s: %v", sessionID, err)
+	handler := ws.HandleWebSocket(
+		r.wsHub,
+		id,
+		func(sessionID string, msg ws.WSMessage) {
+			switch msg.Type {
+			case "text_input":
+				if r.orch != nil && msg.Text != "" {
+					go func() {
+						if err := r.orch.HandleTextInput(req.Context(), sessionID, msg.Text); err != nil {
+							log.Printf("Failed to handle WS text input for session %s: %v", sessionID, err)
+						}
+					}()
+				}
+			case "interrupt":
+				if r.orch != nil {
+					if err := r.orch.Interrupt(sessionID); err != nil {
+						log.Printf("Failed to interrupt session %s: %v", sessionID, err)
 					}
-				}()
-			}
-		case "interrupt":
-			if r.orch != nil {
-				if err := r.orch.Interrupt(sessionID); err != nil {
-					log.Printf("Failed to interrupt session %s: %v", sessionID, err)
+				}
+			case "webrtc_ready", "webrtc_answer", "ice_candidate":
+				if r.orch != nil {
+					r.orch.HandleSignaling(sessionID, msg)
 				}
 			}
-		case "webrtc_ready", "webrtc_answer", "ice_candidate":
-			if r.orch != nil {
-				r.orch.HandleSignaling(sessionID, msg)
-			}
-		}
-	})
+		},
+		func(sessionID string) {
+			_ = r.sessionMgr.Touch(sessionID)
+		},
+	)
 	handler(w, req)
 }
 

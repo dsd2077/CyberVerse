@@ -35,7 +35,10 @@ type WSMessage struct {
 
 // ReadPump reads messages from the WebSocket and dispatches them via onMessage.
 // Must be run as a goroutine. When it returns, the client is unregistered.
-func (c *Client) ReadPump(onMessage func(sessionID string, msg WSMessage)) {
+func (c *Client) ReadPump(
+	onMessage func(sessionID string, msg WSMessage),
+	onActivity func(sessionID string),
+) {
 	defer func() {
 		c.hub.Unregister(c)
 		c.Conn.Close()
@@ -45,6 +48,9 @@ func (c *Client) ReadPump(onMessage func(sessionID string, msg WSMessage)) {
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.Conn.SetPongHandler(func(string) error {
 		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		if onActivity != nil {
+			onActivity(c.SessionID)
+		}
 		return nil
 	})
 
@@ -55,6 +61,9 @@ func (c *Client) ReadPump(onMessage func(sessionID string, msg WSMessage)) {
 				log.Printf("ws: read error for session %s: %v", c.SessionID, err)
 			}
 			return
+		}
+		if onActivity != nil {
+			onActivity(c.SessionID)
 		}
 
 		var msg WSMessage

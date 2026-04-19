@@ -17,7 +17,12 @@ var upgrader = websocket.Upgrader{
 
 // HandleWebSocket returns an HTTP handler that upgrades connections to WebSocket
 // and dispatches incoming messages via onMessage.
-func HandleWebSocket(hub *Hub, sessionID string, onMessage func(string, WSMessage)) http.HandlerFunc {
+func HandleWebSocket(
+	hub *Hub,
+	sessionID string,
+	onMessage func(string, WSMessage),
+	onActivity func(string),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -33,8 +38,11 @@ func HandleWebSocket(hub *Hub, sessionID string, onMessage func(string, WSMessag
 		}
 
 		hub.Register(client)
+		if onActivity != nil {
+			onActivity(sessionID)
+		}
 
 		go client.WritePump()
-		go client.ReadPump(onMessage)
+		go client.ReadPump(onMessage, onActivity)
 	}
 }

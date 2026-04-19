@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 _sys_path_lock = threading.Lock()
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
+_DIST_OP_INFER = 0
+_DIST_OP_SHUTDOWN = 1
+_DIST_OP_RESET = 2
+_DIST_OP_KEEPALIVE = 3
+_DIST_OP_SET_AVATAR = 4
 
 
 def _audio_bytes_to_float32_mono(data: bytes, format_hint: str) -> np.ndarray:
@@ -96,6 +101,15 @@ def _parse_bool(value: object, *, default: bool) -> bool:
     if normalized in _FALSE_VALUES:
         return False
     raise ValueError(f"Invalid boolean value: {value!r}")
+
+
+def _parse_positive_float(value: object, *, default: float) -> float:
+    if value is None:
+        return default
+    parsed = float(value)
+    if parsed <= 0:
+        raise ValueError(f"Expected a positive float, got {value!r}")
+    return parsed
 
 
 def _is_primary_rank(rank: int, world_size: int) -> bool:
@@ -219,8 +233,14 @@ class LiveActAvatarPlugin(AvatarPlugin):
         # Distributed
         self._rank: int = int(os.environ.get("RANK", "0"))
         self._world_size: int = 1
+        self._dist_control_lock = threading.Lock()
         self._dist_worker_thread: threading.Thread | None = None
         self._dist_worker_stop = threading.Event()
+        self._dist_keepalive_thread: threading.Thread | None = None
+        self._dist_keepalive_stop = threading.Event()
+        self._dist_keepalive_interval_s: float = 30.0
+        self._dist_keepalive_idle_s: float = 30.0
+        self._dist_last_command_monotonic: float = 0.0
 
     # ── Plugin lifecycle ──────────────────────────────────────────────────
 
@@ -239,6 +259,22 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
         self._rank = int(os.environ.get("RANK", "0"))
         self._device = int(os.environ.get("LOCAL_RANK", "0"))
+        self._dist_keepalive_interval_s = _parse_positive_float(
+            os.environ.get(
+                "LIVEACT_DIST_KEEPALIVE_INTERVAL_S",
+                config.params.get("dist_keepalive_interval_s"),
+            ),
+            default=30.0,
+        )
+        self._dist_keepalive_idle_s = _parse_positive_float(
+            os.environ.get(
+                "LIVEACT_DIST_KEEPALIVE_IDLE_S",
+                config.params.get("dist_keepalive_idle_s"),
+            ),
+            default=self._dist_keepalive_interval_s,
+        )
+        if self._dist_keepalive_idle_s < self._dist_keepalive_interval_s:
+            self._dist_keepalive_idle_s = self._dist_keepalive_interval_s
         warmup_policy = resolve_avatar_warmup_policy(
             config,
             world_size=self._world_size,
@@ -345,6 +381,8 @@ class LiveActAvatarPlugin(AvatarPlugin):
             self._dist_worker_loop()
         elif not dist_worker_main:
             self._start_dist_worker_if_needed()
+
+        self._start_dist_keepalive_if_needed()
 
     def _load_models(self, config: PluginConfig) -> None:
         import torchaudio  # noqa: F401 - ensure available
@@ -999,14 +1037,16 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
         cuda_dev = torch.device(f"cuda:{self._rank}")
         audio_np = np.asarray(audio_slice, dtype=np.float32)
-        cmd = torch.tensor(
-            [0, int(audio_np.shape[0]), int(iteration), 0],
-            dtype=torch.int32,
-            device=cuda_dev,
-        )
-        dist.broadcast(cmd, src=0)
-        payload = torch.from_numpy(audio_np).to(cuda_dev, non_blocking=False)
-        dist.broadcast(payload, src=0)
+        with self._dist_control_lock:
+            self._broadcast_dist_cmd_locked(
+                _DIST_OP_INFER,
+                int(audio_np.shape[0]),
+                int(iteration),
+                0,
+            )
+            payload = torch.from_numpy(audio_np).to(cuda_dev, non_blocking=False)
+            dist.broadcast(payload, src=0)
+            self._note_dist_command_locked()
         return self._run_one_iteration_local(audio_np, iteration)
 
     def _trim_consumed_audio(self) -> None:
@@ -1044,6 +1084,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
     def _shutdown_sync(self) -> None:
         if self._world_size > 1 and self._rank == 0:
+            self._stop_dist_keepalive_if_needed()
             self._distributed_shutdown_if_needed()
             time.sleep(0.2)
 
@@ -1065,6 +1106,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
     def _cleanup(self) -> None:
         self._dist_worker_thread = None
+        self._dist_keepalive_thread = None
         self._wan_model = None
         self._vae = None
         self._clip = None
@@ -1105,14 +1147,73 @@ class LiveActAvatarPlugin(AvatarPlugin):
         )
         self._dist_worker_thread.start()
 
+    def _start_dist_keepalive_if_needed(self) -> None:
+        if self._world_size <= 1 or self._rank != 0:
+            return
+        if self._dist_keepalive_thread is not None and self._dist_keepalive_thread.is_alive():
+            return
+        self._dist_keepalive_stop.clear()
+        self._dist_last_command_monotonic = time.monotonic()
+        self._dist_keepalive_thread = threading.Thread(
+            target=self._dist_keepalive_loop,
+            name="liveact-dist-keepalive",
+            daemon=True,
+        )
+        self._dist_keepalive_thread.start()
+        logger.info(
+            "LiveAct dist keepalive started: interval=%.1fs idle=%.1fs",
+            self._dist_keepalive_interval_s,
+            self._dist_keepalive_idle_s,
+        )
+
+    def _stop_dist_keepalive_if_needed(self) -> None:
+        self._dist_keepalive_stop.set()
+        if self._dist_keepalive_thread is not None and self._dist_keepalive_thread.is_alive():
+            self._dist_keepalive_thread.join(timeout=5.0)
+
+    def _dist_keepalive_loop(self) -> None:
+        while not self._dist_keepalive_stop.wait(self._dist_keepalive_interval_s):
+            if not dist.is_initialized():
+                continue
+            with self._lock:
+                if self._dist_keepalive_stop.is_set():
+                    break
+                idle_for = time.monotonic() - self._dist_last_command_monotonic
+                if idle_for < self._dist_keepalive_idle_s:
+                    continue
+                with self._dist_control_lock:
+                    self._broadcast_dist_cmd_locked(_DIST_OP_KEEPALIVE)
+
+    def _broadcast_dist_cmd_locked(
+        self,
+        op_code: int,
+        param1: int = 0,
+        param2: int = 0,
+        param3: int = 0,
+    ) -> None:
+        if self._world_size <= 1 or self._rank != 0 or not dist.is_initialized():
+            return
+        cuda_dev = torch.device(f"cuda:{self._rank}")
+        cmd = torch.tensor(
+            [int(op_code), int(param1), int(param2), int(param3)],
+            dtype=torch.int32,
+            device=cuda_dev,
+        )
+        dist.broadcast(cmd, src=0)
+        self._note_dist_command_locked()
+
+    def _note_dist_command_locked(self) -> None:
+        self._dist_last_command_monotonic = time.monotonic()
+
     def _dist_worker_loop(self) -> None:
         """Worker loop for non-rank-0 processes in distributed mode.
 
         Command protocol (tensor-based):
           cmd_tensor = [op_code, param1, param2, param3]
-            op_code 0: infer (param1=iteration_count, audio data follows)
+            op_code 0: infer (param1=audio_len, param2=iteration, audio data follows)
             op_code 1: shutdown
             op_code 2: reset
+            op_code 3: keepalive
             op_code 4: set_avatar (param1=image_bytes_len)
         """
         if self._world_size <= 1:
@@ -1126,12 +1227,14 @@ class LiveActAvatarPlugin(AvatarPlugin):
                 dist.broadcast(cmd, src=0)
                 op = int(cmd[0].item())
 
-                if op == 1:  # shutdown
+                if op == _DIST_OP_SHUTDOWN:
                     break
-                if op == 2:  # reset
+                if op == _DIST_OP_RESET:
                     self._reset_sync_local()
                     continue
-                if op == 4:  # set_avatar
+                if op == _DIST_OP_KEEPALIVE:
+                    continue
+                if op == _DIST_OP_SET_AVATAR:
                     img_len = int(cmd[1].item())
                     recv = torch.empty(img_len, dtype=torch.uint8, device=cuda_dev)
                     dist.broadcast(recv, src=0)
@@ -1150,7 +1253,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
                         except OSError:
                             pass
                     continue
-                if op == 0:  # infer
+                if op == _DIST_OP_INFER:
                     # Receive audio data and run the same iteration
                     audio_len = int(cmd[1].item())
                     iteration = int(cmd[2].item())
@@ -1180,28 +1283,21 @@ class LiveActAvatarPlugin(AvatarPlugin):
         if not img_bytes:
             raise ValueError(f"Avatar image file is empty: {image_path}")
 
-        cmd = torch.tensor(
-            [4, len(img_bytes), 0, 0], dtype=torch.int32, device=cuda_dev,
-        )
-        dist.broadcast(cmd, src=0)
-        img_tensor = torch.frombuffer(bytearray(img_bytes), dtype=torch.uint8).to(cuda_dev)
-        dist.broadcast(img_tensor, src=0)
+        with self._dist_control_lock:
+            self._broadcast_dist_cmd_locked(_DIST_OP_SET_AVATAR, len(img_bytes), 0, 0)
+            img_tensor = torch.frombuffer(bytearray(img_bytes), dtype=torch.uint8).to(cuda_dev)
+            dist.broadcast(img_tensor, src=0)
+            self._note_dist_command_locked()
         self._set_avatar_sync_local(image_path)
 
     def _distributed_reset_if_needed(self) -> None:
         if self._world_size <= 1 or self._rank != 0:
             return
-        cmd = torch.tensor(
-            [2, 0, 0, 0], dtype=torch.int32,
-            device=torch.device(f"cuda:{self._rank}"),
-        )
-        dist.broadcast(cmd, src=0)
+        with self._dist_control_lock:
+            self._broadcast_dist_cmd_locked(_DIST_OP_RESET)
 
     def _distributed_shutdown_if_needed(self) -> None:
         if self._world_size <= 1 or self._rank != 0:
             return
-        cmd = torch.tensor(
-            [1, 0, 0, 0], dtype=torch.int32,
-            device=torch.device(f"cuda:{self._rank}"),
-        )
-        dist.broadcast(cmd, src=0)
+        with self._dist_control_lock:
+            self._broadcast_dist_cmd_locked(_DIST_OP_SHUTDOWN)
