@@ -21,7 +21,7 @@ CyberVerse is an open-source **digital human agent platform** with real-time vid
 
 ### Real-Time Video Call
 
-Not pre-recorded. Not turn-based. A live, low-latency video call with a digital human — first frame in **~1.5s**. Built on WebRTC with P2P streaming and embedded TURN/NAT traversal.
+Not pre-recorded. Not turn-based. **Unlimited-duration**, live, low-latency video calls with a digital human — first frame in **~1.5s**. Built on WebRTC with P2P streaming and embedded TURN/NAT traversal.
 
 ### Agent, Not Just an Avatar
 
@@ -48,10 +48,10 @@ Real-time video conversation requires GPU acceleration. Below are benchmarks for
 |-------|---------|-----|-------|------------|-----|------------|
 | FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ Yes |
 | FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ No |
-| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 96 | ✅ Yes |
+| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ Yes |
 | LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ Yes |
 
-> **Pro** delivers higher visual quality; **Lite** is optimized for speed. GPUs with compute power comparable to 2× RTX 5090 (e.g., A100 80GB, H100) can run the Pro model in real-time. Lite runs real-time on a single RTX 4090.
+> **Pro** favors visual quality; **Lite** favors speed. The table reflects typical **quality–compute** balances — more GPU headroom lets you push higher quality; tighter hardware calls for lower settings (resolution, **Pro** vs **Lite**, etc.) to stay real-time.
 
 ## Quick Start
 
@@ -91,11 +91,13 @@ DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao voice LLM
 DOUBAO_APP_ID=your_doubao_app_id
 ```
 
+Doubao Voice: get **App ID** / **API Key** per [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) → `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
+
 After the stack is running, you can change these values (and other API keys / service endpoints) from the web UI at **`/settings`** instead of editing `.env` only.
 
 ### Step 4: Download model weights
 
-CyberVerse can use **FlashHead** or **LiveAct** as the avatar backend (see `inference.avatar.default` in `cyberverse_config.yaml`). **You do not need every asset below** — download only the stack you will run (FlashHead uses `facebook/wav2vec2-base-960h`; LiveAct uses `chinese-wav2vec2-base`).
+CyberVerse currently supports **FlashHead** and **LiveAct**; download only what you need. More backends are planned.
 
 ```bash
 pip install "huggingface_hub[cli]"
@@ -236,7 +238,7 @@ Configure characters, inference, and launch real-time digital-human sessions.
 - [x] Optional session video recording (`recording` in `cyberverse_config.yaml`)
 - [ ] Knowledge and document import for character-grounded answers (RAG)
 
-### 2. **Actionable Digital Humans**  
+### 2. **Digital Humans as Agents**  
 Turn digital humans into agents with memory, tools, and task execution.
 - [ ] Add long-term memory across sessions
 - [ ] Add tool use and function calling

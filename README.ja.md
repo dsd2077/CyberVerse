@@ -18,7 +18,7 @@ CyberVerse は、リアルタイムのビデオ通話に対応したオープン
 
 ### リアルタイムのビデオ通話
 
-録画済みではありません。ターン制でもありません。デジタルヒューマンと低遅延でリアルタイムにビデオ通話でき、初回フレームは**約 1.5 秒**で表示されます。WebRTC を基盤とし、P2P ストリーミングと組み込みの TURN / NAT トラバーサルを備えています。
+録画済みではありません。ターン制でもありません。デジタルヒューマンと**時間制限なく**低遅延でリアルタイムにビデオ通話でき、初回フレームは**約 1.5 秒**で表示されます。WebRTC を基盤とし、P2P ストリーミングと組み込みの TURN / NAT トラバーサルを備えています。
 
 ### アバターではなく、エージェント
 
@@ -45,10 +45,10 @@ CyberVerse は、リアルタイムのビデオ通話に対応したオープン
 |-------|---------|-----|-------|------------|-----|------------|
 | FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ はい |
 | FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ いいえ |
-| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 96 | ✅ はい |
+| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ はい |
 | LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ はい |
 
-> **Pro** はより高い画質を提供し、**Lite** は速度重視です。2× RTX 5090 に近い計算性能を持つ GPU（A100 80GB、H100 など）であれば、Pro モデルをリアルタイムで動かせます。Lite は単一の RTX 4090 でリアルタイム動作します。
+> **Pro** は画質優先、**Lite** は速度優先です。表は代表的な **画質と計算資源のバランス** の例です。余裕があれば画質を上げられ、不足なら解像度や **Pro** / **Lite** など画質側の設定を下げてリアルタイム性を確保してください。
 
 ## クイックスタート
 
@@ -88,11 +88,13 @@ DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao 音声 LLM
 DOUBAO_APP_ID=your_doubao_app_id
 ```
 
+Doubao Voice: [Volcengine クイックスタート](https://www.volcengine.com/docs/6561/2119699?lang=zh)に従い **App ID** / **API Key** を取得し、`DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN` に設定します。
+
 スタック起動後は、これらの値や他の API キー / サービスエンドポイントも、`.env` を直接編集する代わりに Web UI の **`/settings`** から変更できます。
 
 ### ステップ 4: モデル重みをダウンロードする
 
-CyberVerse はアバターバックエンドとして **FlashHead** または **LiveAct** を利用できます（`cyberverse_config.yaml` の `inference.avatar.default` を参照）。**以下のすべてのアセットを取得する必要はありません。** 実際に使うスタックだけをダウンロードしてください（FlashHead は `facebook/wav2vec2-base-960h`、LiveAct は `chinese-wav2vec2-base` を使用します）。
+CyberVerse は現在 **FlashHead** と **LiveAct** の 2 モデルに対応しています。必要なものだけダウンロードしてください。今後、さらにバックエンドを追加する予定です。
 
 ```bash
 pip install "huggingface_hub[cli]"
@@ -234,7 +236,7 @@ curl -s http://localhost:8080/api/v1/health
 - [x] 任意のセッション動画録画（`cyberverse_config.yaml` の `recording`）
 - [ ] キャラクターに紐づく回答のための知識 / 文書インポート（RAG）
 
-### 2. **行動可能なデジタルヒューマン**
+### 2. **デジタルヒューマン・エージェント**
 デジタルヒューマンを、記憶・ツール・タスク実行能力を備えたエージェントへ進化させます。
 
 - [ ] セッションをまたぐ長期記憶を追加
