@@ -7,8 +7,6 @@ livekit:
     url: "${LIVEKIT_URL}"
     api_key: "${LIVEKIT_API_KEY}"
     api_secret: "${LIVEKIT_API_SECRET}"
-redis:
-    url: "redis://localhost:6379"
 # Warmup configuration for reducing first frame inference latency
 warmup:
     enabled: true

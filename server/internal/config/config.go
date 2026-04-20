@@ -10,7 +10,6 @@ import (
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	LiveKit   LiveKitConfig   `yaml:"livekit"`
-	Redis     RedisConfig     `yaml:"redis"`
 	Session   SessionConfig   `yaml:"session"`
 	Pipeline  PipelineConfig  `yaml:"pipeline"`
 	Inference InferenceConfig `yaml:"inference_grpc"`
@@ -38,10 +37,6 @@ type LiveKitConfig struct {
 	URL       string `yaml:"url"`
 	APIKey    string `yaml:"api_key"`
 	APISecret string `yaml:"api_secret"`
-}
-
-type RedisConfig struct {
-	URL string `yaml:"url"`
 }
 
 type SessionConfig struct {

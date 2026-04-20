@@ -30,7 +30,6 @@ services:
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
       - GRPC_INFERENCE_ADDR=cyberverse-inference:50051
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cyberverse_redis_dev}@redis:6379
     depends_on:
       - livekit
       - cyberverse-inference
