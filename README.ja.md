@@ -34,8 +34,12 @@ CyberVerse は、リアルタイムのビデオ通話に対応したオープン
 
 ## デモ
 
-<!-- TODO: ここにデモ GIF またはスクリーンショットを追加 -->
-<!-- ![Demo](docs/assets/demo.gif) -->
+<div>
+  <a href="https://youtu.be/Lk88sew2x4o"><img src="./docs/demo/爱丽丝.mov.png" alt="Alice Demo" width="48%"></a>
+  <a href="https://youtu.be/8jdQ3ThcwgA"><img src="./docs/demo/丽娜.mov.png" alt="Lina Demo" width="48%"></a>
+  <br />
+  <a href="https://youtu.be/WjEHUYZx5Gs"><img src="./docs/demo/小龙女.mov.png" alt="Xiaolongnv Demo" width="48%"></a>
+</div>
 
 ## ハードウェア要件
 
