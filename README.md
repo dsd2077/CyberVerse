@@ -37,11 +37,16 @@ Brain, face, voice, ears — every component is a swappable plugin. Mix and matc
 
 ## Demo
 
-<div>
-  <a href="https://youtu.be/Lk88sew2x4o"><img src="./docs/demo/爱丽丝.mov.png" alt="Alice Demo" width="48%"></a>
-  <a href="https://youtu.be/8jdQ3ThcwgA"><img src="./docs/demo/丽娜.mov.png" alt="Lina Demo" width="48%"></a>
-  <br />
-  <a href="https://youtu.be/WjEHUYZx5Gs"><img src="./docs/demo/小龙女.mov.png" alt="Xiaolongnv Demo" width="48%"></a>
+<div align="center">
+
+| [![](docs/demo/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/demo/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
+|:---:|:---:|
+| [**Alice — watch on YouTube**](https://youtu.be/Lk88sew2x4o) | [**Lina — watch on YouTube**](https://youtu.be/8jdQ3ThcwgA) |
+
+| [![](docs/demo/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
+|:---:|
+| [**Xiaolongnü — watch on YouTube**](https://youtu.be/WjEHUYZx5Gs) |
+
 </div>
 
 ## Hardware Requirements
@@ -234,20 +239,24 @@ Open http://localhost:5173 in your browser — you're ready to go.
 ### **Digital Human Creation Platform**  
 Configure characters, inference, and launch real-time digital-human sessions.
 
-- [x] Character CRUD with multiple reference images, active image and fixed/random display mode, optional face crop, tags, voice fields, personality, welcome message, and system prompt
+- [x] Character CRUD with multiple reference images, active image, fixed/random display mode, optional face crop, tags, voice fields, personality, welcome message, and system prompt
 - [x] Real-time avatar video driven from reference images via configurable avatar plugins (e.g. FlashHead, LiveAct)
-- [x] Real-time voice and video over WebRTC — **direct** P2P (embedded TURN) or **LiveKit** SFU (`pipeline.streaming_mode`); sessions support **voice_llm** and **standard** (text→LLM→TTS→avatar) pipelines
-- [x] YAML-pluggable inference stack (avatar, voice LLM, LLM, TTS, ASR); launch UI for avatar parameters; switching the configured default avatar model typically requires restarting the inference service
-- [x] Web **Settings** (`/settings`) for API keys and service endpoints, with connection testing and persistence to config
-- [x] Per-character conversation history persisted on disk and exposed via the REST API
-- [x] Optional session video recording (`recording` in `cyberverse_config.yaml`)
-- [ ] Knowledge and document import for character-grounded answers (RAG)
+- [x] Real-time voice and video over WebRTC — direct P2P (embedded TURN) or LiveKit SFU
+- [x] Pluggable modules (avatar, voice LLM, LLM, TTS, ASR); configure different vendors’ API keys via YAML (a single Doubao Voice API key is enough to run today)
+- [x] Session management: per-character chat history persisted to disk and loaded when a conversation starts
+- [ ] Import knowledge, documents, and biographical material for character-grounded RAG Q&A
+- [ ] Face-to-face: user-side camera/video input with understanding of motion, gestures, and other visual cues
+- [ ] Embeddable for developers (Web component or SDK) to integrate self-hosted instances into their own sites
+- [ ] Voice cloning: match a character’s voice from a small amount of reference audio
+- [ ] Voice interruption while the model is speaking, plus session pause and resume
+- [ ] Live streaming: audio/video output for broadcast-style use cases
 
 ### 2. **Digital Humans as Agents**  
 Turn digital humans into agents with memory, tools, and task execution.
-- [ ] Add long-term memory across sessions
-- [ ] Add tool use and function calling
-- [ ] Add workflow execution and task completion
+
+- [ ] **Memory system**: long-term memory across sessions, integrated with character knowledge bases and RAG for richer backstory and dialogue continuity
+- [ ] Tool use and function calling
+- [ ] Workflow execution and task completion
 
 ### 3. **Agent Network**  
 Connect multiple agents so they can communicate, collaborate, and form networks.

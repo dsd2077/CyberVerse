@@ -34,11 +34,16 @@ CyberVerse は、リアルタイムのビデオ通話に対応したオープン
 
 ## デモ
 
-<div>
-  <a href="https://youtu.be/Lk88sew2x4o"><img src="./docs/demo/爱丽丝.mov.png" alt="Alice Demo" width="48%"></a>
-  <a href="https://youtu.be/8jdQ3ThcwgA"><img src="./docs/demo/丽娜.mov.png" alt="Lina Demo" width="48%"></a>
-  <br />
-  <a href="https://youtu.be/WjEHUYZx5Gs"><img src="./docs/demo/小龙女.mov.png" alt="Xiaolongnv Demo" width="48%"></a>
+<div align="center">
+
+| [![](docs/demo/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/demo/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
+|:---:|:---:|
+| [**Alice — YouTube で見る**](https://youtu.be/Lk88sew2x4o) | [**Lina — YouTube で見る**](https://youtu.be/8jdQ3ThcwgA) |
+
+| [![](docs/demo/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
+|:---:|
+| [**Xiaolongnü — YouTube で見る**](https://youtu.be/WjEHUYZx5Gs) |
+
 </div>
 
 ## ハードウェア要件
@@ -233,18 +238,21 @@ curl -s http://localhost:8080/api/v1/health
 キャラクターや推論設定を構成し、リアルタイムのデジタルヒューマンセッションを起動します。
 
 - [x] 複数の参照画像、アクティブ画像、固定 / ランダム表示モード、任意の顔切り抜き、タグ、音声フィールド、人格、ウェルカムメッセージ、システムプロンプトを備えたキャラクター CRUD
-- [x] 参照画像から、設定可能なアバタープラグイン（FlashHead、LiveAct など）を使ってリアルタイムのアバター動画を生成
-- [x] WebRTC によるリアルタイム音声 / 映像。**直接** P2P（組み込み TURN）または **LiveKit** SFU（`pipeline.streaming_mode`）をサポート。セッションでは **voice_llm** と **standard**（text → LLM → TTS → avatar）パイプラインを利用可能
-- [x] YAML で差し替え可能な推論スタック（avatar、voice LLM、LLM、TTS、ASR）、アバターパラメータ用の起動 UI、設定済みデフォルトのアバターモデル切り替え時は通常推論サービスの再起動が必要
-- [x] API キーとサービスエンドポイントを設定できる Web **Settings**（`/settings`）。接続テストと永続化にも対応
-- [x] キャラクターごとの会話履歴をディスクに永続化し、REST API から利用可能
-- [x] 任意のセッション動画録画（`cyberverse_config.yaml` の `recording`）
-- [ ] キャラクターに紐づく回答のための知識 / 文書インポート（RAG）
+- [x] 参照画像から、設定可能な Avatar プラグイン（FlashHead、LiveAct など）でリアルタイムのアバター映像を駆動
+- [x] WebRTC によるリアルタイム音声・映像。直接 P2P（組み込み TURN）または LiveKit SFU
+- [x] avatar、voice LLM、LLM、TTS、ASR をプラグインとして提供し、YAML で各ベンダーの API キーを設定可能（現状は豆包音声のキー 1 つで実行可能）
+- [x] セッション管理：キャラクター単位で会話履歴をディスクに永続化し、会話開始時に読み込み
+- [ ] 知識・文書・人物の生平などの素材を取り込み、キャラクターに沿った RAG による回答
+- [ ] Face-to-face：ユーザー側のカメラ / 映像入力と、動作・ジェスチャーなど視覚的手がかりの理解
+- [ ] 開発者向けのサイト埋め込み（Web コンポーネントまたは SDK）、自己ホストしたインスタンスを自サイトへ接続
+- [ ] 音声クローン：少量の参照音声からキャラクターに一致する声色
+- [ ] モデル発話中の音声割り込みとセッションの中断・再開
+- [ ] ライブ配信向けの音声・映像ストリーミング
 
 ### 2. **デジタルヒューマン・エージェント**
 デジタルヒューマンを、記憶・ツール・タスク実行能力を備えたエージェントへ進化させます。
 
-- [ ] セッションをまたぐ長期記憶を追加
+- [ ] **記憶システム**：セッションをまたぐ長期記憶と、キャラクター知識ベース・RAG の連携により、人物背景と対話の一貫性を強化
 - [ ] ツール利用と function calling を追加
 - [ ] ワークフロー実行とタスク完了機能を追加
 
