@@ -233,6 +233,24 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
+### 远程访问时检查 8443/TCP 连通性
+
+当 `streaming_mode: direct` 且使用内嵌 TURN 时，浏览器必须能够访问服务端的 `8443/TCP`。如果页面可以打开，但音视频始终无法建立连接，或者服务端日志中出现 `ICE connection state: failed`、`publish timeout waiting for connection`，请先在本机检查与服务器 `8443` 端口是否连通，例如：
+
+```bash
+nc -vz <server-ip> 8443
+```
+
+如果 `8443` 不可达，通常是云安全组、防火墙或 NAT 限制导致。此时可以通过 SSH 隧道将本机 `8443` 转发到服务器：
+
+```bash
+ssh -L 8443:127.0.0.1:8443 user@host -p port
+```
+
+建立隧道后，浏览器会通过本机 `127.0.0.1:8443` 转发访问远端 TURN 服务。
+
+如果你不是通过 SSH 隧道访问，而是希望浏览器直接连接远端服务器，请将 `cyberverse_config.yaml` 中的 `pipeline.ice_public_ip` 设置为服务器的公网 IP 或域名；如果使用 SSH 隧道，可以保持默认值（`127.0.0.1`）。
+
 在浏览器中打开 http://localhost:5173，即可开始使用。
 
 ## 路线图
