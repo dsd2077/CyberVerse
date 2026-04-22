@@ -233,6 +233,24 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
+### Check 8443/TCP Connectivity for Remote Access
+
+When `streaming_mode: direct` uses the embedded TURN server, the browser must be able to reach the server's `8443/TCP`. If the page loads but audio/video never connects, or the server logs show `ICE connection state: failed` or `publish timeout waiting for connection`, first check whether your machine can reach port `8443` on the server:
+
+```bash
+nc -vz <server-ip> 8443
+```
+
+If `8443` is not reachable, the usual cause is a cloud security group, firewall, or NAT restriction. In that case, you can forward your local `8443` to the server through an SSH tunnel:
+
+```bash
+ssh -L 8443:127.0.0.1:8443 user@host -p port
+```
+
+After the tunnel is established, the browser will access the remote TURN service through local `127.0.0.1:8443`.
+
+If you want the browser to connect to the remote server directly instead of through an SSH tunnel, set `pipeline.ice_public_ip` in `cyberverse_config.yaml` to the server's public IP or domain. If you are using an SSH tunnel, you can keep the default value (`127.0.0.1`).
+
 Open http://localhost:5173 in your browser — you're ready to go.
 
 ## Roadmap

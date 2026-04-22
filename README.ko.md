@@ -231,6 +231,24 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
+### 원격 접속 시 8443/TCP 연결 여부 확인
+
+`streaming_mode: direct` 에서 내장 TURN 서버를 사용하는 경우, 브라우저가 서버의 `8443/TCP` 에 접속할 수 있어야 합니다. 페이지는 열리지만 오디오/비디오 연결이 끝내 성립하지 않거나, 서버 로그에 `ICE connection state: failed` 또는 `publish timeout waiting for connection` 이 보이면 먼저 로컬 머신에서 서버 `8443` 포트에 연결 가능한지 확인하세요.
+
+```bash
+nc -vz <server-ip> 8443
+```
+
+`8443` 에 연결되지 않는다면 보통 클라우드 보안 그룹, 방화벽, 또는 NAT 제한이 원인입니다. 이 경우 SSH 터널로 로컬 `8443` 을 서버로 포워딩할 수 있습니다.
+
+```bash
+ssh -L 8443:127.0.0.1:8443 user@host -p port
+```
+
+터널이 만들어지면 브라우저는 로컬 `127.0.0.1:8443` 을 통해 원격 TURN 서비스에 접속합니다.
+
+SSH 터널이 아니라 브라우저가 원격 서버에 직접 연결되게 하려면 `cyberverse_config.yaml` 의 `pipeline.ice_public_ip` 를 서버의 공인 IP 또는 도메인으로 설정하세요. SSH 터널을 사용할 경우에는 기본값(`127.0.0.1`)을 그대로 사용하면 됩니다.
+
 브라우저에서 http://localhost:5173 를 열면 바로 사용할 수 있습니다.
 
 ## 로드맵
