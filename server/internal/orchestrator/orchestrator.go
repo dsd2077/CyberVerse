@@ -50,6 +50,9 @@ type voiceAVSyncBuffer struct {
 	totalAudioIn     int64
 	totalAudioOut    int64
 	maxBufferSamples int
+	// Carries fractional samples from frames*sampleRate/fps to avoid
+	// long-session drift caused by per-segment integer rounding.
+	sampleCarryNumer int64
 }
 
 func newVoiceAVSyncBuffer(maxBufferSamples int) *voiceAVSyncBuffer {
@@ -103,31 +106,48 @@ func desiredSamplesForVideo(frames, fps, sampleRate int) int {
 	return (frames*sampleRate + fps/2) / fps
 }
 
-func (b *voiceAVSyncBuffer) takeSegmentPCM(frames, fps int) ([]byte, int, int) {
+func (b *voiceAVSyncBuffer) takeSegmentPCM(frames, fps int, isFinal bool) ([]byte, int, int, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	wantSamples := desiredSamplesForVideo(frames, fps, b.sampleRate)
+	if frames <= 0 || fps <= 0 || b.sampleRate <= 0 {
+		return nil, 0, 0, 0
+	}
+	// Exact target with carry:
+	// want = floor((frames*sampleRate + carry)/fps), carry = modulo part.
+	numer := int64(frames*b.sampleRate) + b.sampleCarryNumer
+	wantSamples := int(numer / int64(fps))
+	b.sampleCarryNumer = numer % int64(fps)
 	if wantSamples <= 0 {
-		return nil, 0, 0
+		wantSamples = desiredSamplesForVideo(frames, fps, b.sampleRate)
+	}
+	if wantSamples <= 0 {
+		return nil, 0, 0, len(b.pcmBytes) / 2
 	}
 	wantBytes := wantSamples * 2
-	if wantBytes > len(b.pcmBytes) {
-		wantBytes = len(b.pcmBytes)
+
+	availableBytes := len(b.pcmBytes)
+	takeBytes := wantBytes
+	if takeBytes > availableBytes {
+		takeBytes = availableBytes
 	}
-	if wantBytes%2 != 0 {
-		wantBytes--
-	}
-	if wantBytes <= 0 {
-		return nil, 0, wantSamples
+	if takeBytes%2 != 0 {
+		takeBytes--
 	}
 
-	out := make([]byte, wantBytes)
-	copy(out, b.pcmBytes[:wantBytes])
-	b.pcmBytes = b.pcmBytes[wantBytes:]
-	outSamples := wantBytes / 2
+	out := make([]byte, wantBytes) // strict lip-sync: always return exact segment duration
+	if takeBytes > 0 {
+		copy(out, b.pcmBytes[:takeBytes])
+		b.pcmBytes = b.pcmBytes[takeBytes:]
+	}
+	outSamples := takeBytes / 2
 	b.totalAudioOut += int64(outSamples)
-	return out, outSamples, wantSamples
+	if isFinal {
+		// Final close-loop: strict mode prefers exact A/V alignment over
+		// carrying remaining tail audio into post-video silence.
+		b.pcmBytes = nil
+	}
+	return out, outSamples, wantSamples, len(b.pcmBytes) / 2
 }
 
 func (b *voiceAVSyncBuffer) snapshot() (bufferedSamples int, totalIn int64, totalOut int64, sampleRate int) {
@@ -1129,7 +1149,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			lastKnownSampleRate int
 			firstFrameSent      bool
 		)
-		flushVoiceSeg := func() {
+		flushVoiceSeg := func(isFinalSeg bool) {
 			if segCount == 0 {
 				return
 			}
@@ -1139,7 +1159,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			o.mu.RUnlock()
 			if peer != nil {
 				traceLabel := "voice-trace session=" + sessionID + " seg=" + strconv.FormatInt(segSeq, 10)
-				segPCM, outSamples, wantSamples := syncBuf.takeSegmentPCM(segFrames, segFPS)
+				segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := syncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
 				bufferedSamples, _, _, sampleRate := syncBuf.snapshot()
 				if sampleRate > 0 {
 					lastKnownSampleRate = sampleRate
@@ -1159,14 +1179,15 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				if outSamples < wantSamples {
 					log.Printf("voice av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
 						sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
-					if wantSamples > 0 && sampleRate > 0 {
-						padded := make([]byte, wantSamples*2) // int16 LE, zeros = silence
-						copy(padded, segPCM)
-						segPCM = padded
-						log.Printf("voice av silence pad session=%s: %d→%d samples (%.3fs silence added)",
-							sessionID, outSamples, wantSamples,
-							float64(wantSamples-outSamples)/float64(sampleRate))
+					if sampleRate <= 0 {
+						sampleRate = 16000
 					}
+					log.Printf("voice av strict pad session=%s: %d→%d samples (%.3fs silence added)",
+						sessionID, outSamples, wantSamples,
+						float64(wantSamples-outSamples)/float64(sampleRate))
+				}
+				if isFinalSeg && bufferedSamplesAfterTake > 0 {
+					log.Printf("voice av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
 				}
 				// Send to AV pipeline (non-blocking encode+publish).
 				raw := &mediapeer.RawAVSegment{
@@ -1196,7 +1217,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		for {
 			select {
 			case <-ctx.Done():
-				flushVoiceSeg()
+				flushVoiceSeg(false)
 				if turnRec != nil {
 					_ = turnRec.Finish()
 				}
@@ -1204,7 +1225,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				return
 			case chunk, ok := <-videoCh:
 				if !ok {
-					flushVoiceSeg()
+					flushVoiceSeg(false)
 					if turnRec != nil {
 						_ = turnRec.Finish()
 						turnRec = nil
@@ -1248,7 +1269,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				segFPS = fps
 				segCount++
 				// Serial path: flush every chunk immediately.
-				flushVoiceSeg()
+				flushVoiceSeg(chunk.GetIsFinal())
 				if chunk.GetIsFinal() {
 					if turnRec != nil {
 						_ = turnRec.Finish()

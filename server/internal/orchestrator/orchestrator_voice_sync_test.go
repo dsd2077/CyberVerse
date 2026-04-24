@@ -14,15 +14,18 @@ func TestVoiceAVSyncBufferTakeSegmentPCM(t *testing.T) {
 	input := make([]byte, 32000) // 16000 samples
 	buf.appendPCM(input, 24000)
 
-	out, outSamples, wantSamples := buf.takeSegmentPCM(25, 25) // 1s => 24000 samples
+	out, outSamples, wantSamples, bufferedAfter := buf.takeSegmentPCM(25, 25, false) // 1s => 24000 samples
 	if wantSamples != 24000 {
 		t.Fatalf("expected wantSamples=24000, got %d", wantSamples)
 	}
 	if outSamples != 16000 {
 		t.Fatalf("expected outSamples=16000, got %d", outSamples)
 	}
-	if len(out) != 32000 {
-		t.Fatalf("expected out bytes=32000, got %d", len(out))
+	if len(out) != 48000 {
+		t.Fatalf("expected strict padded out bytes=48000, got %d", len(out))
+	}
+	if bufferedAfter != 0 {
+		t.Fatalf("expected bufferedAfter=0, got %d", bufferedAfter)
 	}
 }
 

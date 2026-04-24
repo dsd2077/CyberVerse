@@ -13,5 +13,5 @@ export function isOfficialVoiceType(value: string): boolean {
 export function formatVoiceTypeDisplay(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return '—'
-  return officialVoiceLabelMap.get(trimmed) ?? `自定义复刻 · ${trimmed}`
+  return officialVoiceLabelMap.get(trimmed) ?? `克隆音色 · ${trimmed}`
 }

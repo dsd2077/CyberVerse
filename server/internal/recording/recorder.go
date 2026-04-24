@@ -248,6 +248,8 @@ func (t *TurnRecording) Finish() error {
 	t.videoWriter.Close()
 	if err := <-t.videoDone; err != nil {
 		log.Printf("recording: video ffmpeg error: %v", err)
+		os.Remove(t.videoTmpPath)
+		return fmt.Errorf("recording: finalize video failed: %w", err)
 	}
 
 	// Step 2: write audio WAV temp file.
