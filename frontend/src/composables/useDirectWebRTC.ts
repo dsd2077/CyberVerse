@@ -190,6 +190,7 @@ export function useDirectWebRTC() {
   let pendingIceServers: RTCIceServer[] | null = null
 
   const isMuted = ref(false)
+  let sentWebrtcReady = false
 
   const MIC_LEVEL_BARS = 16
   const micBarLevels = ref<number[]>(Array.from({ length: MIC_LEVEL_BARS }, () => 0))
@@ -269,6 +270,32 @@ export function useDirectWebRTC() {
     }
   }
 
+  async function requestMicrophone(reason: 'connect' | 'click') {
+    if (!window.isSecureContext) {
+      throw new Error(`Microphone requires HTTPS or localhost (origin=${window.location.origin})`)
+    }
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      for (const track of localStream.getAudioTracks()) {
+        // default to unmuted when acquiring
+        track.enabled = true
+        attachMicMeter(track)
+      }
+      isMuted.value = false
+      pushNote(`mic acquired (${reason})`)
+    } catch (e: any) {
+      let userMsg: string = e?.message || String(e)
+      if (e?.name === 'NotAllowedError') {
+        userMsg =
+          'Microphone access denied. ' +
+          'On macOS: System Settings → Privacy & Security → Microphone → enable your browser, then click the mic button to retry. ' +
+          'On other platforms: check browser site permissions and allow microphone for this page.'
+        throw new Error(userMsg)
+      }
+      throw new Error(userMsg)
+    }
+  }
+
   function pushNote(note: string) {
     const next = [...debugState.value.notes, `${new Date().toISOString()} ${note}`]
     debugState.value.notes = next.slice(-10)
@@ -336,16 +363,27 @@ export function useDirectWebRTC() {
     resetState()
     sendSignaling = signalingFn
     pendingIceServers = null
+    sentWebrtcReady = false
 
-    try {
-      // Get microphone early so permission is granted before negotiation
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // Try to acquire mic, but don't abort the connection if it fails.
+    // The WebRTC session (AI video/audio) still works without a mic track.
+    // The user can retry via the mic button once OS/browser permission is granted.
+    if (!localStream) {
+      try {
+        await requestMicrophone('connect')
+      } catch (micErr: any) {
+        pushNote(`mic failed on connect: ${micErr?.name ?? micErr}`)
+      }
+    } else {
       for (const track of localStream.getAudioTracks()) {
         attachMicMeter(track)
       }
+    }
 
+    try {
       // Tell server we're ready for negotiation
       sendSignaling({ type: 'webrtc_ready' })
+      sentWebrtcReady = true
       pushNote('sent webrtc_ready')
     } catch (e: unknown) {
       stopMicMetering()
@@ -367,13 +405,22 @@ export function useDirectWebRTC() {
     let videoMST: MediaStreamTrack | null = null
     let audioMST: MediaStreamTrack | null = null
 
-    const mergeStream = () => {
+    const mergeStream = (resumePlay = false) => {
       const el = videoElement.value
       if (!el || !videoMST) return
       const tracks: MediaStreamTrack[] = [videoMST]
       if (audioMST) tracks.push(audioMST)
       el.srcObject = new MediaStream(tracks)
+      el.muted = false
       console.log(`[DirectRTC][${ts()}] merged stream set: video=Y audio=${!!audioMST}`)
+      // When srcObject is replaced (e.g. audio track added after video), Chrome does
+      // not automatically resume playback — the autoplay attribute only fires once.
+      // Explicitly call play() so audio is heard from the first response.
+      if (resumePlay) {
+        el.play().catch((e) => {
+          console.warn(`[DirectRTC][${ts()}] play() after audio merge failed:`, e)
+        })
+      }
     }
 
     newPc.ontrack = (event) => {
@@ -416,11 +463,10 @@ export function useDirectWebRTC() {
           }, { once: true })
         }
 
-        mergeStream()
+        mergeStream(true /* resumePlay: audio track just added */)
       }
     }
 
-    // Forward ICE candidates to server
     newPc.onicecandidate = (event) => {
       if (event.candidate) {
         sendSignaling?.({
@@ -433,6 +479,8 @@ export function useDirectWebRTC() {
     }
 
     newPc.onconnectionstatechange = () => {
+      // Guard against stale callbacks after a mic-retry reconnect.
+      if (newPc !== pc) return
       const state = newPc.connectionState
       console.log(`[DirectRTC][${ts()}] connection state: ${state}`)
       pushNote(`connection: ${state}`)
@@ -516,7 +564,38 @@ export function useDirectWebRTC() {
   }
 
   async function toggleMute() {
-    if (!localStream) return
+    // If mic not yet acquired, retry on user gesture.
+    if (!localStream) {
+      error.value = ''
+      try {
+        await requestMicrophone('click')
+        if (sentWebrtcReady && sendSignaling && connectionState.value === 'connected') {
+          // Connection already established without mic — close the current PC and
+          // re-negotiate so the new mic track is included. Only safe when fully
+          // connected (not mid-negotiation).
+          pc?.close()
+          pc = null
+          sentWebrtcReady = false
+          signalingChain = Promise.resolve()
+          connectionState.value = 'connecting'
+          debugState.value.connectionState = 'connecting'
+          sendSignaling({ type: 'webrtc_ready' })
+          sentWebrtcReady = true
+          pushNote('mic acquired, reconnecting with audio')
+        } else if (!sentWebrtcReady && sendSignaling) {
+          sendSignaling({ type: 'webrtc_ready' })
+          sentWebrtcReady = true
+          pushNote('sent webrtc_ready (mic acquired on click)')
+        }
+      } catch (e: unknown) {
+        stopMicMetering()
+        const msg = e instanceof Error ? e.message : 'Microphone failed'
+        error.value = msg
+        pushNote(`mic retry failed: ${msg}`)
+      }
+      return
+    }
+
     const next = !isMuted.value
     for (const track of localStream.getAudioTracks()) {
       track.enabled = !next
@@ -531,6 +610,7 @@ export function useDirectWebRTC() {
       clearInterval(networkStatsTimer)
       networkStatsTimer = null
     }
+    sentWebrtcReady = false
 
     if (videoElement.value) {
       videoElement.value.srcObject = null

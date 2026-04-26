@@ -132,6 +132,17 @@ func (p *DirectPeer) Connect(ctx context.Context) error {
 	go readRTCP(videoSender)
 	go readRTCP(audioSender)
 
+	// Add a recvonly audio transceiver so the SDP offer explicitly requests
+	// the browser's microphone audio. Without this, pion's sendrecv transceiver
+	// from AddTrack may not produce an OnTrack callback for the browser's mic.
+	if _, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
+		pc.Close()
+		return fmt.Errorf("add mic receive transceiver: %w", err)
+	}
+
 	// Handle incoming user audio track (mic)
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		if track.Kind() != webrtc.RTPCodecTypeAudio {
@@ -457,14 +468,23 @@ func (p *DirectPeer) runPublisher() {
 	}
 }
 
-func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
-	// Wait for connection to be established
+func (p *DirectPeer) waitConnected(timeout time.Duration) bool {
 	select {
 	case <-p.connected:
+		return true
 	case <-p.avPipelineCtx.Done():
-		return
-	case <-time.After(10 * time.Second):
-		log.Printf("[DirectPeer] session=%s publish timeout waiting for connection", p.sessionID)
+		return false
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
+	// Wait for connection to be established
+	if !p.waitConnected(10 * time.Second) {
+		if p.avPipelineCtx.Err() == nil {
+			log.Printf("[DirectPeer] session=%s publish timeout waiting for connection", p.sessionID)
+		}
 		return
 	}
 
@@ -551,6 +571,12 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 func (p *DirectPeer) PublishAudioFrame(pcm []byte, sampleRate int) error {
 	if len(pcm) == 0 || sampleRate <= 0 {
 		return nil
+	}
+	if !p.waitConnected(10 * time.Second) {
+		if p.avPipelineCtx.Err() != nil {
+			return fmt.Errorf("audio publish cancelled")
+		}
+		return fmt.Errorf("audio publish timeout waiting for connection")
 	}
 	return p.writeOpus(pcm, sampleRate)
 }
