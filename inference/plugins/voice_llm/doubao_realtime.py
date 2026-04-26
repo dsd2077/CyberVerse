@@ -347,7 +347,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                 while True:
                     try:
                         event = await asyncio.wait_for(output_queue.get(), timeout=1.0)
-                    except TimeoutError:
+                    except asyncio.TimeoutError:
                         if done.is_set():
                             break
                         continue

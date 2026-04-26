@@ -77,12 +77,22 @@ Real-time video conversation requires GPU acceleration. Below are benchmarks for
 
 ### Prerequisites
 
-- Python 3.10+
 - Node 18+
 - Go 1.22+
-- PyTorch 2.8 (CUDA 12.8)
 - GPU with CUDA 12.8+
 - FFmpeg (must include `libvpx` for video encoding)
+- Conda
+- Python 3.10+
+- PyTorch 2.8 (CUDA 12.8)
+
+To verify, use:
+
+```bash
+node --version
+go version
+ffmpeg -version|grep libvpx
+conda --version
+```
 
 ### Step 1: Clone
 
