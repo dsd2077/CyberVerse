@@ -9,17 +9,9 @@ from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 import numpy as np
-
-# FlashHead depends on PyTorch, but we keep imports optional so that the module
-# can be imported in minimal/dev environments (e.g. unit tests that don't need
-# the GPU stack). We fail fast with a clear error when the plugin is actually
-# initialized/used.
-try:
-    import torch  # type: ignore
-    import torch.distributed as dist  # type: ignore
-except Exception:  # pragma: no cover
-    torch = None  # type: ignore
-    dist = None  # type: ignore
+import torch
+import torch.distributed as dist
+from PIL import Image
 
 from inference.core.types import AudioChunk, PluginConfig, VideoChunk
 from inference.plugins.avatar.base import AvatarPlugin
@@ -28,6 +20,24 @@ from inference.plugins.avatar.warmup import resolve_avatar_warmup_policy
 logger = logging.getLogger(__name__)
 
 _sys_path_lock = threading.Lock()
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off", ""}
+
+
+def _parse_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    normalized = str(value).strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
 
 
 def _audio_bytes_to_float32_mono(data: bytes, format_hint: str) -> np.ndarray:
@@ -96,8 +106,6 @@ def _apply_cuda_visible_devices(config: PluginConfig) -> None:
 
 def _distributed_all_ranks_ready(local_ready: bool) -> bool:
     """Synchronize avatar init readiness across ranks before warmup/worker loop."""
-    if dist is None or torch is None:
-        return local_ready
     if not dist.is_available() or not dist.is_initialized():
         return local_ready
 
@@ -153,14 +161,6 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         await loop.run_in_executor(None, self._init_sync, config)
 
     def _create_default_avatar_placeholder(self) -> tuple[str, bool]:
-        try:
-            from PIL import Image  # pillow
-        except Exception as e:  # pragma: no cover - optional dependency
-            raise RuntimeError(
-                "Pillow is required for FlashHead placeholder avatar generation. "
-                "Install it via the flash_head extra dependencies."
-            ) from e
-
         height = int(self.infer_params["height"])
         width = int(self.infer_params["width"])
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -171,13 +171,6 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         return tmp_path, True
 
     def _init_sync(self, config: PluginConfig) -> None:
-        if torch is None:
-            raise RuntimeError(
-                "FlashHeadAvatarPlugin requires PyTorch. Install torch "
-                "(and CUDA build if you want GPU acceleration) before using "
-                "the FlashHead avatar backend."
-            )
-
         _apply_cuda_visible_devices(config)
 
         world_size = int(config.params.get("world_size", 1))
@@ -201,6 +194,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
 
         # Import once and cache all functions
         from flash_head.inference import (
+            configure_infer_params,
+            configure_runtime_options,
             get_pipeline,
             get_infer_params,
             get_base_data,
@@ -208,6 +203,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
             run_pipeline,
         )
 
+        configure_runtime_options(config.params)
+        configure_infer_params(config.params.get("infer_params"))
         self._fn_get_base_data = get_base_data
         self._fn_get_audio_embedding = get_audio_embedding
         self._fn_run_pipeline = run_pipeline
@@ -225,7 +222,13 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         # executed from Python background threads. Allow running the
         # distributed worker loop on the main thread for non-rank0.
         self._dist_worker_main_thread = (
-            os.environ.get("FLASHHEAD_DIST_WORKER_MAIN_THREAD", "0") == "1"
+            _parse_bool(
+                os.environ.get(
+                    "FLASHHEAD_DIST_WORKER_MAIN_THREAD",
+                    config.params.get("dist_worker_main_thread"),
+                ),
+                default=False,
+            )
         )
 
         # Use a gray placeholder avatar for initialization and warmup.
@@ -275,12 +278,7 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
             return
 
         if avatar_ready and warmup_policy.enabled:
-            try:
-                self._warmup()
-            except Exception:
-                # Warmup is a best-effort latency optimization. Don't fail plugin init
-                # (and therefore the whole default avatar) if it crashes.
-                logger.exception("FlashHead warmup failed; continuing without warmup")
+            self._warmup()
         elif self._rank == 0:
             logger.info(
                 "FlashHead warmup skipped: avatar_ready=%s global_enabled=%s distributed_enabled=%s world_size=%d",

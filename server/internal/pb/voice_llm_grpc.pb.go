@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	VoiceLLMService_Converse_FullMethodName  = "/cyberverse.VoiceLLMService/Converse"
-	VoiceLLMService_Interrupt_FullMethodName = "/cyberverse.VoiceLLMService/Interrupt"
+	VoiceLLMService_Converse_FullMethodName   = "/cyberverse.VoiceLLMService/Converse"
+	VoiceLLMService_CheckVoice_FullMethodName = "/cyberverse.VoiceLLMService/CheckVoice"
+	VoiceLLMService_Interrupt_FullMethodName  = "/cyberverse.VoiceLLMService/Interrupt"
 )
 
 // VoiceLLMServiceClient is the client API for VoiceLLMService service.
@@ -28,6 +29,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type VoiceLLMServiceClient interface {
 	Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[VoiceLLMInput, VoiceLLMOutput], error)
+	CheckVoice(ctx context.Context, in *CheckVoiceRequest, opts ...grpc.CallOption) (*CheckVoiceResponse, error)
 	Interrupt(ctx context.Context, in *InterruptRequest, opts ...grpc.CallOption) (*InterruptResponse, error)
 }
 
@@ -52,6 +54,16 @@ func (c *voiceLLMServiceClient) Converse(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VoiceLLMService_ConverseClient = grpc.BidiStreamingClient[VoiceLLMInput, VoiceLLMOutput]
 
+func (c *voiceLLMServiceClient) CheckVoice(ctx context.Context, in *CheckVoiceRequest, opts ...grpc.CallOption) (*CheckVoiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckVoiceResponse)
+	err := c.cc.Invoke(ctx, VoiceLLMService_CheckVoice_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *voiceLLMServiceClient) Interrupt(ctx context.Context, in *InterruptRequest, opts ...grpc.CallOption) (*InterruptResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InterruptResponse)
@@ -67,6 +79,7 @@ func (c *voiceLLMServiceClient) Interrupt(ctx context.Context, in *InterruptRequ
 // for forward compatibility.
 type VoiceLLMServiceServer interface {
 	Converse(grpc.BidiStreamingServer[VoiceLLMInput, VoiceLLMOutput]) error
+	CheckVoice(context.Context, *CheckVoiceRequest) (*CheckVoiceResponse, error)
 	Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error)
 	mustEmbedUnimplementedVoiceLLMServiceServer()
 }
@@ -80,6 +93,9 @@ type UnimplementedVoiceLLMServiceServer struct{}
 
 func (UnimplementedVoiceLLMServiceServer) Converse(grpc.BidiStreamingServer[VoiceLLMInput, VoiceLLMOutput]) error {
 	return status.Error(codes.Unimplemented, "method Converse not implemented")
+}
+func (UnimplementedVoiceLLMServiceServer) CheckVoice(context.Context, *CheckVoiceRequest) (*CheckVoiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckVoice not implemented")
 }
 func (UnimplementedVoiceLLMServiceServer) Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Interrupt not implemented")
@@ -112,6 +128,24 @@ func _VoiceLLMService_Converse_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VoiceLLMService_ConverseServer = grpc.BidiStreamingServer[VoiceLLMInput, VoiceLLMOutput]
 
+func _VoiceLLMService_CheckVoice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckVoiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VoiceLLMServiceServer).CheckVoice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VoiceLLMService_CheckVoice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VoiceLLMServiceServer).CheckVoice(ctx, req.(*CheckVoiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VoiceLLMService_Interrupt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InterruptRequest)
 	if err := dec(in); err != nil {
@@ -137,6 +171,10 @@ var VoiceLLMService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "cyberverse.VoiceLLMService",
 	HandlerType: (*VoiceLLMServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CheckVoice",
+			Handler:    _VoiceLLMService_CheckVoice_Handler,
+		},
 		{
 			MethodName: "Interrupt",
 			Handler:    _VoiceLLMService_Interrupt_Handler,

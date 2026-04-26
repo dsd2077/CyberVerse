@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,25 +17,6 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 	opus "gopkg.in/hraban/opus.v2"
 )
-
-// extractAudioLines returns only the m=audio sections from an SDP for compact logging.
-func extractAudioLines(sdp string) string {
-	var b strings.Builder
-	inAudio := false
-	for _, line := range strings.Split(sdp, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.HasPrefix(line, "m=audio") {
-			inAudio = true
-		} else if strings.HasPrefix(line, "m=") {
-			inAudio = false
-		}
-		if inAudio {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
 
 // Compile-time check: DirectPeer implements mediapeer.MediaPeer.
 var _ mediapeer.MediaPeer = (*DirectPeer)(nil)
@@ -277,7 +257,6 @@ func (p *DirectPeer) StartNegotiation() error {
 
 	// Send the complete SDP (with candidates embedded)
 	completeOffer := pc.LocalDescription()
-	log.Printf("[DirectPeer] session=%s SDP offer audio-lines:\n%s", p.sessionID, extractAudioLines(completeOffer.SDP))
 	p.signalingFn(p.sessionID, map[string]any{
 		"type": "webrtc_offer",
 		"sdp":  completeOffer.SDP,

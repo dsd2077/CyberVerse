@@ -28,6 +28,13 @@ _DIST_OP_KEEPALIVE = 3
 _DIST_OP_SET_AVATAR = 4
 
 
+def _get_infer_param(config: PluginConfig, key: str, default: object) -> object:
+    infer_params = config.params.get("infer_params")
+    if isinstance(infer_params, dict) and key in infer_params:
+        return infer_params[key]
+    return config.params.get(key, default)
+
+
 def _audio_bytes_to_float32_mono(data: bytes, format_hint: str) -> np.ndarray:
     """Decode raw audio bytes to mono float32 in [-1, 1]."""
     fmt = (format_hint or "").strip().lower()
@@ -281,11 +288,11 @@ class LiveActAvatarPlugin(AvatarPlugin):
         )
 
         # Parse config
-        size_str = config.params.get("size", "480*832")
+        size_str = _get_infer_param(config, "size", "480*832")
         self._width, self._height = [int(x) for x in size_str.split("*")]
-        self._fps = int(config.params.get("fps", 24))
+        self._fps = int(_get_infer_param(config, "fps", 24))
         self._seed = int(config.params.get("seed", 42))
-        self._audio_cfg = float(config.params.get("audio_cfg", 1.0))
+        self._audio_cfg = float(_get_infer_param(config, "audio_cfg", 1.0))
         self._t5_cpu = bool(config.params.get("t5_cpu", True))
         self._fp8_kv_cache = bool(config.params.get("fp8_kv_cache", False))
         self._offload_cache = bool(config.params.get("offload_cache", False))
@@ -376,7 +383,13 @@ class LiveActAvatarPlugin(AvatarPlugin):
             self._avatar_initialized = False
 
         # Distributed worker for non-rank-0
-        dist_worker_main = os.environ.get("LIVEACT_DIST_WORKER_MAIN_THREAD", "0") == "1"
+        dist_worker_main = _parse_bool(
+            os.environ.get(
+                "LIVEACT_DIST_WORKER_MAIN_THREAD",
+                config.params.get("dist_worker_main_thread"),
+            ),
+            default=False,
+        )
         if dist_worker_main and self._world_size > 1 and self._rank != 0:
             self._dist_worker_loop()
         elif not dist_worker_main:

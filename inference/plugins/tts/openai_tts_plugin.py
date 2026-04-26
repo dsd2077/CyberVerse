@@ -69,32 +69,13 @@ class OpenAITTSPlugin(TTSPlugin):
         """Resample audio with proper anti-aliasing via polyphase filtering."""
         if orig_sr == target_sr:
             return audio
+        from scipy.signal import resample_poly
+        from math import gcd
 
-        # Prefer SciPy for high-quality resampling, but keep a lightweight
-        # pure-numpy fallback so unit tests and minimal installs work.
-        try:
-            from math import gcd
-            from scipy.signal import resample_poly
-
-            g = gcd(orig_sr, target_sr)
-            up = target_sr // g
-            down = orig_sr // g
-            return resample_poly(audio, up, down).astype(np.float32)
-        except Exception:
-            if audio.size == 0 or orig_sr <= 0 or target_sr <= 0:
-                return np.array([], dtype=np.float32)
-
-            n_src = int(audio.shape[0])
-            n_dst = max(int(round(n_src * target_sr / orig_sr)), 1)
-            if n_src == 1 or n_dst == 1:
-                return np.array([float(audio[0])], dtype=np.float32)
-
-            # Linear interpolation in the time domain. Not as good as polyphase,
-            # but avoids forcing SciPy as a hard dependency.
-            x_old = np.linspace(0.0, 1.0, n_src, dtype=np.float64)
-            x_new = np.linspace(0.0, 1.0, n_dst, dtype=np.float64)
-            y_new = np.interp(x_new, x_old, audio.astype(np.float64, copy=False))
-            return y_new.astype(np.float32)
+        g = gcd(orig_sr, target_sr)
+        up = target_sr // g
+        down = orig_sr // g
+        return resample_poly(audio, up, down).astype(np.float32)
 
     async def shutdown(self) -> None:
         self.client = None

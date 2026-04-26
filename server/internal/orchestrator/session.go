@@ -60,6 +60,10 @@ type Session struct {
 	// PipelineDone is closed when the pipeline goroutine finishes.
 	// TeardownSession waits on this to ensure messages are saved before session deletion.
 	PipelineDone chan struct{} `json:"-"`
+	// PipelineSeq increments each time a new pipeline starts.
+	PipelineSeq uint64 `json:"-"`
+	// VoiceWelcomeSent prevents replaying the greeting when VoiceLLM pipelines restart.
+	VoiceWelcomeSent bool `json:"-"`
 	// RecordingDir is the absolute path where recordings for this session are saved.
 	// Set by the orchestrator when the first recording turn begins.
 	RecordingDir string `json:"-"`
@@ -98,18 +102,26 @@ func (s *Session) GetState() SessionState {
 	return s.state
 }
 
-// MarkPipelineRunning initializes PipelineDone. Call before launching a pipeline goroutine.
-func (s *Session) MarkPipelineRunning() {
+// MarkPipelineRunning initializes PipelineDone and returns the new pipeline sequence.
+// Call before launching a pipeline goroutine.
+func (s *Session) MarkPipelineRunning() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.PipelineSeq++
 	s.PipelineDone = make(chan struct{})
+	return s.PipelineSeq
 }
 
 // MarkPipelineFinished signals that the pipeline goroutine has completed.
-func (s *Session) MarkPipelineFinished() {
+// Late completions from an older pipeline will not close the current pipeline's done channel.
+func (s *Session) MarkPipelineFinished(seq uint64) {
 	s.mu.RLock()
 	ch := s.PipelineDone
+	currentSeq := s.PipelineSeq
 	s.mu.RUnlock()
+	if seq != currentSeq {
+		return
+	}
 	if ch != nil {
 		select {
 		case <-ch:
@@ -118,6 +130,22 @@ func (s *Session) MarkPipelineFinished() {
 			close(ch)
 		}
 	}
+}
+
+func (s *Session) IsCurrentPipeline(seq uint64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.PipelineSeq == seq
+}
+
+func (s *Session) ConsumeVoiceWelcomeMessage(message string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.VoiceWelcomeSent {
+		return ""
+	}
+	s.VoiceWelcomeSent = true
+	return message
 }
 
 // WaitPipelineDone blocks until the pipeline goroutine finishes (with timeout).

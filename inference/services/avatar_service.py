@@ -19,19 +19,6 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             raise RuntimeError("No avatar plugin initialized")
         return plugin
 
-    def _get_plugin_or_set_status(self, context) -> AvatarPlugin | None:
-        """Return avatar plugin if available, otherwise set a gRPC error status.
-
-        We avoid crashing the server for discovery-style RPCs (e.g. GetInfo),
-        while still signaling a proper error for generation RPCs.
-        """
-        plugin = self.registry.get_by_category("avatar")
-        if plugin is None:
-            context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
-            context.set_details("No avatar plugin initialized")
-            return None
-        return plugin
-
     async def SetAvatar(self, request, context):
         try:
             plugin = self._get_plugin()
@@ -45,9 +32,7 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             return avatar_pb2.SetAvatarResponse(success=False, message=str(e))
 
     async def GenerateStream(self, request_iterator, context):
-        plugin = self._get_plugin_or_set_status(context)
-        if plugin is None:
-            return
+        plugin = self._get_plugin()
 
         async def audio_stream():
             async for chunk in request_iterator:
@@ -73,9 +58,7 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
 
     async def Reset(self, request, context):
         try:
-            plugin = self._get_plugin_or_set_status(context)
-            if plugin is None:
-                return avatar_pb2.ResetResponse(success=False)
+            plugin = self._get_plugin()
             await plugin.reset()
             return avatar_pb2.ResetResponse(success=True)
         except Exception as e:
@@ -84,17 +67,7 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             return avatar_pb2.ResetResponse(success=False)
 
     async def GetInfo(self, request, context):
-        plugin = self.registry.get_by_category("avatar")
-        if plugin is None:
-            # Allow the UI / server to detect "not ready" without failing the RPC.
-            return avatar_pb2.AvatarInfo(
-                model_name="",
-                output_fps=0,
-                output_width=0,
-                output_height=0,
-                frames_per_chunk=0,
-                chunk_duration_s=0,
-            )
+        plugin = self._get_plugin()
         return avatar_pb2.AvatarInfo(
             model_name=plugin.name,
             output_fps=plugin.get_fps(),

@@ -29,6 +29,13 @@ type VoiceLLMSessionConfig struct {
 	WelcomeMessage string
 }
 
+// VoiceLLMInputEvent is one input item for a VoiceLLM conversation stream.
+// Exactly one of Audio or Text should be set.
+type VoiceLLMInputEvent struct {
+	Audio []byte
+	Text  string
+}
+
 // InferenceService defines the interface for communicating with the Python
 // inference layer. Using an interface allows tests to inject mocks.
 type InferenceService interface {
@@ -50,7 +57,8 @@ type InferenceService interface {
 	TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error)
 
 	// VoiceLLM
-	ConverseStream(ctx context.Context, audioCh <-chan []byte, config VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error)
+	CheckVoice(ctx context.Context, config VoiceLLMSessionConfig) (string, error)
+	ConverseStream(ctx context.Context, inputCh <-chan VoiceLLMInputEvent, config VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error)
 	Interrupt(ctx context.Context, sessionID string) error
 
 	Close() error

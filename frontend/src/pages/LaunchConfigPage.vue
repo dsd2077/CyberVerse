@@ -5,6 +5,7 @@ import { useCharacterStore } from '../stores/characters'
 import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, updateLaunchConfig } from '../services/api'
 import CvSelect from '../components/CvSelect.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
+import { formatVoiceTypeDisplay } from '../utils/voice'
 
 const router = useRouter()
 const route = useRoute()
@@ -139,15 +140,12 @@ async function launch() {
     router.push({
       path: `/session/${resp.session_id}`,
       query: {
-        mode: resp.mode,
         streaming_mode: resp.streaming_mode || 'direct',
         livekit_url: resp.livekit_url,
         livekit_token: resp.livekit_token,
         idle_video_url: resp.idle_video_url,
         idle_video_urls: resp.idle_video_urls ? JSON.stringify(resp.idle_video_urls) : undefined,
         character_id: characterId.value,
-        text_input_enabled: String(resp.text_input_enabled),
-        text_input_hint: resp.text_input_hint,
       },
     })
   } catch (e) {
@@ -201,7 +199,12 @@ async function launch() {
             <!-- Info rows -->
             <div class="flex justify-between text-xs font-medium">
               <span class="text-[#80808c]">声线</span>
-              <span class="text-cv-text">{{ store.current.voice_type }}</span>
+              <span
+                class="max-w-[200px] truncate text-right text-cv-text"
+                :title="formatVoiceTypeDisplay(store.current.voice_type)"
+              >
+                {{ formatVoiceTypeDisplay(store.current.voice_type) }}
+              </span>
             </div>
             <div class="flex justify-between text-xs font-medium">
               <span class="text-[#80808c]">说话风格</span>

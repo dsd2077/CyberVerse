@@ -50,6 +50,9 @@ type voiceAVSyncBuffer struct {
 	totalAudioIn     int64
 	totalAudioOut    int64
 	maxBufferSamples int
+	// Carries fractional samples from frames*sampleRate/fps to avoid
+	// long-session drift caused by per-segment integer rounding.
+	sampleCarryNumer int64
 }
 
 func newVoiceAVSyncBuffer(maxBufferSamples int) *voiceAVSyncBuffer {
@@ -103,31 +106,48 @@ func desiredSamplesForVideo(frames, fps, sampleRate int) int {
 	return (frames*sampleRate + fps/2) / fps
 }
 
-func (b *voiceAVSyncBuffer) takeSegmentPCM(frames, fps int) ([]byte, int, int) {
+func (b *voiceAVSyncBuffer) takeSegmentPCM(frames, fps int, isFinal bool) ([]byte, int, int, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	wantSamples := desiredSamplesForVideo(frames, fps, b.sampleRate)
+	if frames <= 0 || fps <= 0 || b.sampleRate <= 0 {
+		return nil, 0, 0, 0
+	}
+	// Exact target with carry:
+	// want = floor((frames*sampleRate + carry)/fps), carry = modulo part.
+	numer := int64(frames*b.sampleRate) + b.sampleCarryNumer
+	wantSamples := int(numer / int64(fps))
+	b.sampleCarryNumer = numer % int64(fps)
 	if wantSamples <= 0 {
-		return nil, 0, 0
+		wantSamples = desiredSamplesForVideo(frames, fps, b.sampleRate)
+	}
+	if wantSamples <= 0 {
+		return nil, 0, 0, len(b.pcmBytes) / 2
 	}
 	wantBytes := wantSamples * 2
-	if wantBytes > len(b.pcmBytes) {
-		wantBytes = len(b.pcmBytes)
+
+	availableBytes := len(b.pcmBytes)
+	takeBytes := wantBytes
+	if takeBytes > availableBytes {
+		takeBytes = availableBytes
 	}
-	if wantBytes%2 != 0 {
-		wantBytes--
-	}
-	if wantBytes <= 0 {
-		return nil, 0, wantSamples
+	if takeBytes%2 != 0 {
+		takeBytes--
 	}
 
-	out := make([]byte, wantBytes)
-	copy(out, b.pcmBytes[:wantBytes])
-	b.pcmBytes = b.pcmBytes[wantBytes:]
-	outSamples := wantBytes / 2
+	out := make([]byte, wantBytes) // strict lip-sync: always return exact segment duration
+	if takeBytes > 0 {
+		copy(out, b.pcmBytes[:takeBytes])
+		b.pcmBytes = b.pcmBytes[takeBytes:]
+	}
+	outSamples := takeBytes / 2
 	b.totalAudioOut += int64(outSamples)
-	return out, outSamples, wantSamples
+	if isFinal {
+		// Final close-loop: strict mode prefers exact A/V alignment over
+		// carrying remaining tail audio into post-video silence.
+		b.pcmBytes = nil
+	}
+	return out, outSamples, wantSamples, len(b.pcmBytes) / 2
 }
 
 func (b *voiceAVSyncBuffer) snapshot() (bufferedSamples int, totalIn int64, totalOut int64, sampleRate int) {
@@ -208,8 +228,6 @@ func (o *Orchestrator) HandleSignaling(sessionID string, msg ws.WSMessage) {
 			sdpMid = &msg.SDPMid
 		}
 		dp.HandleSignaling(msg.Type, msg.SDP, msg.Candidate, sdpMid, msg.SDPMLine)
-	case "webrtc_error":
-		log.Printf("[Orchestrator] session=%s browser WebRTC error: %s", sessionID, msg.Text)
 	}
 }
 
@@ -234,6 +252,15 @@ func (o *Orchestrator) HealthCheck(ctx context.Context) error {
 		return errors.New("inference service is not configured")
 	}
 	return o.inference.HealthCheck(ctx)
+}
+
+func (o *Orchestrator) CheckVoice(ctx context.Context, voiceType string) (string, error) {
+	if o == nil || o.inference == nil {
+		return "", errors.New("inference service is not configured")
+	}
+	return o.inference.CheckVoice(ctx, inference.VoiceLLMSessionConfig{
+		Voice: voiceType,
+	})
 }
 
 func (o *Orchestrator) AvatarInfo(ctx context.Context) (*pb.AvatarInfo, error) {
@@ -512,28 +539,6 @@ loop:
 	return outPath, nil
 }
 
-func userFacingVoiceError(err error) string {
-	if err == nil {
-		return "Voice conversation failed"
-	}
-
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "http 401"), strings.Contains(msg, "authentication failed"):
-		return "豆包语音服务鉴权失败，请检查 DOUBAO_ACCESS_TOKEN / DOUBAO_APP_ID 是否正确，或凭证是否已过期。"
-	case strings.Contains(msg, "http 403"):
-		return "豆包语音服务没有调用权限，请检查账号权限和应用配置。"
-	case strings.Contains(msg, "no such host"),
-		strings.Contains(msg, "name or service not known"),
-		strings.Contains(msg, "temporary failure in name resolution"):
-		return "豆包语音服务连接失败，请检查网络或 ws_url 配置。"
-	case strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"):
-		return "豆包语音服务连接超时，请稍后重试。"
-	default:
-		return "语音对话失败，请查看后端日志。"
-	}
-}
-
 // SetupSession creates a media peer (DirectPeer or LiveKit Bot) and prepares for streaming.
 // When roomMgr is nil (direct mode), a DirectPeer is created instead of a LiveKit Bot.
 func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, error) {
@@ -604,37 +609,155 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	return peer, nil
 }
 
-// HandleTextInput processes a text message through the standard pipeline:
-// LLM → TTS → Avatar.
+func (o *Orchestrator) stopPipelineAndWait(session *Session, sessionID string, interruptVoice bool) {
+	if interruptVoice && session.Mode == ModeVoiceLLM && o.inference != nil {
+		if err := o.inference.Interrupt(context.Background(), sessionID); err != nil {
+			log.Printf("Failed to interrupt VoiceLLM for session %s: %v", sessionID, err)
+		}
+	}
+	o.cancelPipeline(session)
+	session.WaitPipelineDone(3 * time.Second)
+}
+
+func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID string) inference.VoiceLLMSessionConfig {
+	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
+	if session.CharacterID != "" && o.charStore != nil {
+		if char, err := o.charStore.Get(session.CharacterID); err == nil {
+			voiceConfig.SystemPrompt = char.SystemPrompt
+			voiceConfig.Voice = char.VoiceType
+			voiceConfig.BotName = char.Name
+			voiceConfig.SpeakingStyle = char.SpeakingStyle
+			voiceConfig.WelcomeMessage = session.ConsumeVoiceWelcomeMessage(char.WelcomeMessage)
+		} else {
+			log.Printf("buildVoiceLLMSessionConfig: could not fetch character %s: %v", session.CharacterID, err)
+		}
+	}
+	return voiceConfig
+}
+
+func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan inference.VoiceLLMInputEvent {
+	inputCh := make(chan inference.VoiceLLMInputEvent, 64)
+	go func() {
+		defer close(inputCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data, ok := <-audioCh:
+				if !ok {
+					return
+				}
+				if len(data) == 0 {
+					continue
+				}
+				select {
+				case inputCh <- inference.VoiceLLMInputEvent{Audio: data}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return inputCh
+}
+
+func singleVoiceTextInput(text string) <-chan inference.VoiceLLMInputEvent {
+	inputCh := make(chan inference.VoiceLLMInputEvent, 1)
+	inputCh <- inference.VoiceLLMInputEvent{Text: text}
+	close(inputCh)
+	return inputCh
+}
+
+func drainUserAudio(audioCh <-chan []byte, maxDrain int) {
+	for i := 0; i < maxDrain; i++ {
+		select {
+		case <-audioCh:
+		default:
+			return
+		}
+	}
+}
+
+func (o *Orchestrator) resumeVoiceAudioStream(sessionID string) error {
+	session, err := o.sessionMgr.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	if session.Mode != ModeVoiceLLM {
+		return nil
+	}
+
+	o.mu.RLock()
+	peer := o.peers[sessionID]
+	o.mu.RUnlock()
+	if peer == nil {
+		return errors.New("media peer not found")
+	}
+
+	audioCh := peer.SubscribeUserAudio()
+	drainUserAudio(audioCh, 256)
+	return o.HandleAudioStream(context.Background(), sessionID, audioCh)
+}
+
+func (o *Orchestrator) handleStandardTextInput(ctx context.Context, session *Session, sessionID string, text string) error {
+	o.stopPipelineAndWait(session, sessionID, false)
+
+	pipeCtx, cancel := context.WithCancel(ctx)
+	session.mu.Lock()
+	session.PipelineCancel = cancel
+	session.mu.Unlock()
+
+	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	pipelineSeq := session.MarkPipelineRunning()
+	go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq)
+	return nil
+}
+
+func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Session, sessionID string, text string) error {
+	o.stopPipelineAndWait(session, sessionID, true)
+
+	pipeCtx, cancel := context.WithCancel(ctx)
+	session.mu.Lock()
+	session.PipelineCancel = cancel
+	session.mu.Unlock()
+
+	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	pipelineSeq := session.MarkPipelineRunning()
+	inputCh := singleVoiceTextInput(text)
+
+	go func(seq uint64) {
+		o.runVoiceLLMPipeline(pipeCtx, session, sessionID, inputCh, seq)
+		if pipeCtx.Err() != nil || !session.IsCurrentPipeline(seq) {
+			return
+		}
+		if err := o.resumeVoiceAudioStream(sessionID); err != nil {
+			log.Printf("Failed to resume VoiceLLM audio stream for session %s: %v", sessionID, err)
+		}
+	}(pipelineSeq)
+
+	return nil
+}
+
+// HandleTextInput processes a text message through either the standard
+// LLM→TTS→Avatar pipeline or the VoiceLLM text-query path.
 func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, text string) error {
 	session, err := o.sessionMgr.Get(sessionID)
 	if err != nil {
 		return err
 	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
 
-	// Cancel any existing pipeline
-	o.cancelPipeline(session)
-
-	// This pipeline runs asynchronously after the HTTP / WebSocket handler returns,
-	// so it must not inherit a request-scoped context that would be cancelled
-	// immediately at the end of that request.
-	_ = ctx
-	pipeCtx, cancel := context.WithCancel(context.Background())
-	session.mu.Lock()
-	session.PipelineCancel = cancel
-	session.mu.Unlock()
-
-	// Add user message to history
-	session.AddMessage(ChatMessage{Role: "user", Content: text})
-
-	// Run pipeline in background
-	session.MarkPipelineRunning()
-	go o.runStandardPipeline(pipeCtx, session, sessionID)
-	return nil
+	if session.Mode == ModeVoiceLLM {
+		return o.handleVoiceLLMTextInput(ctx, session, sessionID, text)
+	}
+	return o.handleStandardTextInput(ctx, session, sessionID, text)
 }
 
 // runStandardPipeline executes: LLM → sentence detection → TTS → Avatar.
-func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string) {
+func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string, pipelineSeq uint64) {
 	var fullResponseCh chan string // set below; read in defer to store assistant message
 	defer func() {
 		// Store assistant message in session history
@@ -643,7 +766,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 				session.AddMessage(ChatMessage{Role: "assistant", Content: resp})
 			}
 		}
-		session.MarkPipelineFinished()
+		session.MarkPipelineFinished(pipelineSeq)
 		session.SetState(StateListening)
 		o.broadcastStatus(sessionID, "idle")
 	}()
@@ -901,16 +1024,16 @@ func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, 
 	session.PipelineCancel = cancel
 	session.mu.Unlock()
 
-	session.MarkPipelineRunning()
-	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, audioCh)
+	pipelineSeq := session.MarkPipelineRunning()
+	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq)
 	return nil
 }
 
-// runVoiceLLMPipeline executes: UserAudio -> VoiceLLM (audio+transcript) -> Avatar (video).
+// runVoiceLLMPipeline executes a VoiceLLM turn source -> VoiceLLM -> Avatar (video).
 //
 // Serial flow: collect all audio for one turn, merge into a single chunk,
 // generate avatar video, and publish each video chunk immediately.
-func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, userAudioCh <-chan []byte) {
+func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64) {
 	// Function-level message accumulators: track pending user/assistant text
 	// so we can store them even when ctx is cancelled mid-turn.
 	var pendingUserText string
@@ -927,7 +1050,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			session.AddMessage(ChatMessage{Role: "assistant", Content: pendingAssistantText})
 		}
 		log.Printf("voiceLLM defer done: session=%s finalHistoryLen=%d", sessionID, len(session.History))
-		session.MarkPipelineFinished()
+		session.MarkPipelineFinished(pipelineSeq)
 		session.SetState(StateListening)
 		o.broadcastStatus(sessionID, "idle")
 	}()
@@ -944,23 +1067,11 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Build per-session VoiceLLM config from character data.
-	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
-	if session.CharacterID != "" && o.charStore != nil {
-		if char, err := o.charStore.Get(session.CharacterID); err == nil {
-			voiceConfig.SystemPrompt = char.SystemPrompt
-			voiceConfig.Voice = char.VoiceType
-			voiceConfig.BotName = char.Name
-			voiceConfig.SpeakingStyle = char.SpeakingStyle
-			voiceConfig.WelcomeMessage = char.WelcomeMessage
-		} else {
-			log.Printf("runVoiceLLMPipeline: could not fetch character %s: %v", session.CharacterID, err)
-		}
-	}
+	voiceConfig := o.buildVoiceLLMSessionConfig(session, sessionID)
 
 	// outputCh stays open for the entire session; a single turn ends with
 	// audio.IsFinal=true. The channel closes when the bot disconnects.
-	outputCh, errCh := o.inference.ConverseStream(ctx, userAudioCh, voiceConfig)
+	outputCh, errCh := o.inference.ConverseStream(ctx, inputCh, voiceConfig)
 
 	// Outer loop: one iteration = one complete assistant turn.
 	for {
@@ -1078,7 +1189,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		if sessionDone {
 			if err := <-errCh; err != nil {
 				log.Printf("VoiceLLM stream error for session %s: %v", sessionID, err)
-				o.broadcastError(sessionID, userFacingVoiceError(err))
+				o.broadcastError(sessionID, "Voice conversation failed")
 			}
 			return
 		}
@@ -1104,14 +1215,6 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		if sr <= 0 {
 			sr = 16000
 		}
-
-		// Skip avatar generation if all audio chunks were empty (e.g. Doubao error/silence).
-		if len(mergedData) == 0 {
-			log.Printf("voiceLLM: skipping avatar generation for session %s — no audio data received", sessionID)
-			audioChunks = nil
-			continue
-		}
-
 		silenceBytes := make([]byte, sr*2*3/2) // 1.5 seconds of silence (s16le mono)
 		mergedData = append(mergedData, silenceBytes...)
 
@@ -1155,7 +1258,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			lastKnownSampleRate int
 			firstFrameSent      bool
 		)
-		flushVoiceSeg := func() {
+		flushVoiceSeg := func(isFinalSeg bool) {
 			if segCount == 0 {
 				return
 			}
@@ -1165,7 +1268,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			o.mu.RUnlock()
 			if peer != nil {
 				traceLabel := "voice-trace session=" + sessionID + " seg=" + strconv.FormatInt(segSeq, 10)
-				segPCM, outSamples, wantSamples := syncBuf.takeSegmentPCM(segFrames, segFPS)
+				segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := syncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
 				bufferedSamples, _, _, sampleRate := syncBuf.snapshot()
 				if sampleRate > 0 {
 					lastKnownSampleRate = sampleRate
@@ -1185,14 +1288,15 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				if outSamples < wantSamples {
 					log.Printf("voice av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
 						sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
-					if wantSamples > 0 && sampleRate > 0 {
-						padded := make([]byte, wantSamples*2) // int16 LE, zeros = silence
-						copy(padded, segPCM)
-						segPCM = padded
-						log.Printf("voice av silence pad session=%s: %d→%d samples (%.3fs silence added)",
-							sessionID, outSamples, wantSamples,
-							float64(wantSamples-outSamples)/float64(sampleRate))
+					if sampleRate <= 0 {
+						sampleRate = 16000
 					}
+					log.Printf("voice av strict pad session=%s: %d→%d samples (%.3fs silence added)",
+						sessionID, outSamples, wantSamples,
+						float64(wantSamples-outSamples)/float64(sampleRate))
+				}
+				if isFinalSeg && bufferedSamplesAfterTake > 0 {
+					log.Printf("voice av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
 				}
 				// Send to AV pipeline (non-blocking encode+publish).
 				raw := &mediapeer.RawAVSegment{
@@ -1222,7 +1326,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		for {
 			select {
 			case <-ctx.Done():
-				flushVoiceSeg()
+				flushVoiceSeg(false)
 				if turnRec != nil {
 					_ = turnRec.Finish()
 				}
@@ -1230,7 +1334,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				return
 			case chunk, ok := <-videoCh:
 				if !ok {
-					flushVoiceSeg()
+					flushVoiceSeg(false)
 					if turnRec != nil {
 						_ = turnRec.Finish()
 						turnRec = nil
@@ -1274,7 +1378,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				segFPS = fps
 				segCount++
 				// Serial path: flush every chunk immediately.
-				flushVoiceSeg()
+				flushVoiceSeg(chunk.GetIsFinal())
 				if chunk.GetIsFinal() {
 					if turnRec != nil {
 						_ = turnRec.Finish()

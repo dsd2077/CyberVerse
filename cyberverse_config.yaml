@@ -15,35 +15,38 @@ warmup:
         timeout_s: 30 # Timeout in seconds to prevent hangs
 inference:
     avatar:
-        # Use a lightweight placeholder avatar by default so the stack can run
-        # without downloading large model weights.
         default: "flash_head"
         runtime:
             cuda_visible_devices: 0
             world_size: 1
-        static:
-            plugin_class: "inference.plugins.avatar.static_plugin.StaticAvatarPlugin"
-            fps: 25
-            width: 512
-            height: 512
-            bg_color: [128, 128, 128]
         flash_head:
             plugin_class: "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
             models_dir: "models"
-            checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"
-            wav2vec_dir: "./checkpoints/wav2vec2-base-960h"
-            model_type: "lite"
+            checkpoint_dir: "/root/autodl-tmp/models/SoulX-FlashHead-1_3B"
+            wav2vec_dir: "/root/autodl-tmp/models/wav2vec2-base-960h"
+            model_type: "pro"
             device: "cuda:0"
             seed: 9999
+            compile_model: true
+            compile_vae: true
+            dist_worker_main_thread: true
+            infer_params:
+                frame_num: 33 
+                motion_frames_latent_num: 2
+                tgt_fps: 20
+                sample_rate: 16000
+                sample_shift: 5
+                color_correction_strength: 1.0
+                cached_audio_duration: 8
+                num_heads: 12
+                height: 512
+                width: 512
         live_act:
             plugin_class: "inference.plugins.avatar.live_act_plugin.LiveActAvatarPlugin"
             models_dir: "models/SoulX-LiveAct"
-            ckpt_dir: "./checkpoints/LiveAct"
-            wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"
-            size: "320*480"
-            fps: 20
+            ckpt_dir: "/root/autodl-tmp/models/LiveAct"
+            wav2vec_dir: "/root/autodl-tmp/models/chinese-wav2vec2-base"
             seed: 42
-            audio_cfg: 1.0
             t5_cpu: false
             fp8_kv_cache: false
             offload_cache: false
@@ -51,7 +54,12 @@ inference:
             mean_memory: false
             compile_wan_model: false
             compile_vae_decode: false
+            dist_worker_main_thread: true
             default_prompt: "一个人在说话"
+            infer_params:
+                size: "320*480"
+                fps: 20
+                audio_cfg: 1.0
 
     voice_llm:
         default: "doubao"
@@ -67,13 +75,6 @@ inference:
             end_smooth_window_ms: 6000
     llm:
         default: "openai"
-        qwen:
-            plugin_class: "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
-            api_key: "${QWEN_API_KEY}"
-            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            model: "qwen-plus"
-            temperature: 0.7
-            system_prompt: "你是一个友善的数字人助手。"
         openai:
             plugin_class: "inference.plugins.llm.openai_plugin.OpenAILLMPlugin"
             api_key: "${OPENAI_API_KEY}"
@@ -82,13 +83,6 @@ inference:
             system_prompt: "你是一个友善的数字人助手。"
     tts:
         default: "openai"
-        qwen:
-            plugin_class: "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
-            api_key: "${QWEN_API_KEY}"
-            base_url: "https://dashscope.aliyuncs.com/api/v1"
-            model: "qwen3-tts-flash"
-            voice: "Cherry"
-            language_type: "auto"
         openai:
             plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
             api_key: "${OPENAI_API_KEY}"

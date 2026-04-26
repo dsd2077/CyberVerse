@@ -46,6 +46,8 @@ class DoubaoEvent:
     SESSION_FAILED = 153
     TASK_REQUEST = 200
     SAY_HELLO = 300
+    CHAT_TEXT_QUERY = 501
+    CHAT_TEXT_QUERY_CONFIRMED = 553
     REPLY_START = 350          # 助手开始回复
     TTS_SENTENCE_DONE = 351    # TTS 一句话合成完毕 (含 text 字段)
     AUDIO_DATA = 352           # 音频帧

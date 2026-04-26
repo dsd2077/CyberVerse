@@ -1,16 +1,14 @@
-FROM golang:1.25-alpine AS builder
-
-RUN apk add --no-cache build-base pkgconfig opus-dev opusfile-dev soxr-dev
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /build
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 
 COPY server/ .
-RUN CGO_ENABLED=1 go build -o cyberverse-server ./cmd/cyberverse-server
+RUN CGO_ENABLED=0 go build -o cyberverse-server ./cmd/cyberverse-server
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates opus opusfile soxr ffmpeg
+RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /build/cyberverse-server .
 COPY cyberverse_config.yaml .

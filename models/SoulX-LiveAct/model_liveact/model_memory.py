@@ -165,6 +165,7 @@ class WanSelfAttention(nn.Module):
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.attn_mask = None
+        self.frame_seqlen = None
         self.memory_proj_k = nn.Conv1d(self.dim, self.dim, kernel_size=5, stride=5, groups=self.dim, bias=False)
         self.memory_proj_v = nn.Conv1d(self.dim, self.dim, kernel_size=5, stride=5, groups=self.dim, bias=False)
 
@@ -202,6 +203,7 @@ class WanSelfAttention(nn.Module):
         return kv
 
     def init_kvidx(self, frame_len, world_size):
+        self.frame_seqlen = frame_len
         self.kv_idx0 = torch.tensor(list(range(6 * frame_len // world_size)),
                                     device=f'cuda:{int(os.getenv("RANK", 0))}')
         self.kv_idx2 = torch.tensor(list(range(14 * frame_len // world_size)),
@@ -266,6 +268,8 @@ class WanSelfAttention(nn.Module):
         k_cache, v_cache = self._load_kv_cache(kv_cache, f'cuda:{int(os.getenv("RANK", 0))}', torch.bfloat16)
 
         frame_seqlen = self.frame_seqlen
+        if frame_seqlen is None:
+            raise RuntimeError("WanSelfAttention.init_kvidx() must be called before forward().")
         current_start_frame = start_idx // frame_seqlen
 
         if update_cache:
@@ -722,6 +726,13 @@ class WanBlockOffloadManager:
             src_child = src_children.get(name)
             if src_child is not None:
                 self._copy_module_state(dst_child, src_child)
+
+        if hasattr(src_module, "frame_seqlen"):
+            dst_module.frame_seqlen = src_module.frame_seqlen
+        if hasattr(src_module, "kv_idx0"):
+            dst_module.kv_idx0 = src_module.kv_idx0
+        if hasattr(src_module, "kv_idx2"):
+            dst_module.kv_idx2 = src_module.kv_idx2
 
     def _load_slot(self, slot_idx, block_idx, async_transfer=False):
         def copy_block():

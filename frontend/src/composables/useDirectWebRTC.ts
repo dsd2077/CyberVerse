@@ -191,19 +191,6 @@ export function useDirectWebRTC() {
 
   const isMuted = ref(false)
   let sentWebrtcReady = false
-  const micDiag = ref({
-    origin: '',
-    secureContext: false,
-    permission: 'unknown' as 'unknown' | 'unsupported' | 'granted' | 'denied' | 'prompt',
-    hasLocalStream: false,
-    audioContextState: '',
-    // Unified error fields (used by SessionPage regardless of streaming mode)
-    lastErrorName: '',
-    lastErrorMessage: '',
-    // getUserMedia-specific error fields (more precise)
-    lastGumErrorName: '',
-    lastGumErrorMessage: '',
-  })
 
   const MIC_LEVEL_BARS = 16
   const micBarLevels = ref<number[]>(Array.from({ length: MIC_LEVEL_BARS }, () => 0))
@@ -229,24 +216,6 @@ export function useDirectWebRTC() {
     }
     micAudioContext = null
     micBarLevels.value = Array.from({ length: MIC_LEVEL_BARS }, () => 0)
-    micDiag.value.audioContextState = ''
-  }
-
-  async function refreshMicPermission() {
-    try {
-      micDiag.value.origin = window.location.origin
-      micDiag.value.secureContext = window.isSecureContext
-      const p = (navigator as any).permissions
-      if (!p?.query) {
-        micDiag.value.permission = 'unsupported'
-        return
-      }
-      const status = await p.query({ name: 'microphone' })
-      micDiag.value.permission = status?.state || 'unknown'
-      // keep it reasonably fresh; don't spam listeners
-    } catch {
-      micDiag.value.permission = 'unknown'
-    }
   }
 
   function attachMicMeter(mediaTrack: MediaStreamTrack) {
@@ -259,7 +228,6 @@ export function useDirectWebRTC() {
     try {
       const ctx = new AudioContext()
       micAudioContext = ctx
-      micDiag.value.audioContextState = ctx.state
       const src = ctx.createMediaStreamSource(new MediaStream([mediaTrack]))
       micMediaSource = src
       const analyser = ctx.createAnalyser()
@@ -293,33 +261,9 @@ export function useDirectWebRTC() {
         micRafId = requestAnimationFrame(tick)
       }
 
-      // Chrome may block AudioContext start until a user gesture.
-      // Start the RAF loop immediately, and keep retrying resume on the next gesture.
-      const tryResume = async () => {
-        if (ctx.state === 'suspended') {
-          try {
-            await ctx.resume()
-          } catch {
-            // Intentionally ignore; we'll retry on user gesture.
-          }
-        }
-        micDiag.value.audioContextState = ctx.state
-      }
-
-      const startLoop = () => {
-        if (!micRafId) micRafId = requestAnimationFrame(tick)
-      }
-
-      const unlockOnGesture = () => {
-        // If metering has already been stopped/replaced, don't restart a dead loop.
-        if (micAudioContext !== ctx) return
-        void tryResume().finally(startLoop)
-      }
-
-      startLoop()
-      void tryResume()
-      window.addEventListener('pointerdown', unlockOnGesture, { once: true, capture: true })
-      window.addEventListener('keydown', unlockOnGesture, { once: true, capture: true })
+      void ctx.resume().then(() => {
+        micRafId = requestAnimationFrame(tick)
+      })
     } catch (e) {
       console.warn('[DirectRTC] mic meter failed', e)
       stopMicMetering()
@@ -327,23 +271,11 @@ export function useDirectWebRTC() {
   }
 
   async function requestMicrophone(reason: 'connect' | 'click') {
-    void refreshMicPermission()
-    micDiag.value.lastErrorName = ''
-    micDiag.value.lastErrorMessage = ''
-    micDiag.value.lastGumErrorName = ''
-    micDiag.value.lastGumErrorMessage = ''
-
     if (!window.isSecureContext) {
-      const msg = `Microphone requires HTTPS or localhost (origin=${window.location.origin})`
-      micDiag.value.lastGumErrorName = 'InsecureContext'
-      micDiag.value.lastGumErrorMessage = msg
-      micDiag.value.lastErrorName = 'InsecureContext'
-      micDiag.value.lastErrorMessage = msg
-      throw new Error(msg)
+      throw new Error(`Microphone requires HTTPS or localhost (origin=${window.location.origin})`)
     }
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      micDiag.value.hasLocalStream = true
       for (const track of localStream.getAudioTracks()) {
         // default to unmuted when acquiring
         track.enabled = true
@@ -351,22 +283,16 @@ export function useDirectWebRTC() {
       }
       isMuted.value = false
       pushNote(`mic acquired (${reason})`)
-      void refreshMicPermission()
     } catch (e: any) {
-      micDiag.value.hasLocalStream = false
-      micDiag.value.lastGumErrorName = e?.name || 'getUserMediaError'
       let userMsg: string = e?.message || String(e)
       if (e?.name === 'NotAllowedError') {
         userMsg =
           'Microphone access denied. ' +
           'On macOS: System Settings → Privacy & Security → Microphone → enable your browser, then click the mic button to retry. ' +
           'On other platforms: check browser site permissions and allow microphone for this page.'
+        throw new Error(userMsg)
       }
-      micDiag.value.lastGumErrorMessage = userMsg
-      micDiag.value.lastErrorName = micDiag.value.lastGumErrorName
-      micDiag.value.lastErrorMessage = userMsg
-      void refreshMicPermission()
-      throw e
+      throw new Error(userMsg)
     }
   }
 
@@ -438,7 +364,6 @@ export function useDirectWebRTC() {
     sendSignaling = signalingFn
     pendingIceServers = null
     sentWebrtcReady = false
-    micDiag.value.hasLocalStream = !!localStream
 
     // Try to acquire mic, but don't abort the connection if it fails.
     // The WebRTC session (AI video/audio) still works without a mic track.
@@ -635,15 +560,12 @@ export function useDirectWebRTC() {
       }
     }).catch(e => {
       console.error('[DirectRTC] signaling chain error:', e)
-      sendSignaling?.({ type: 'webrtc_error', text: String(e) })
     })
   }
 
   async function toggleMute() {
     // If mic not yet acquired, retry on user gesture.
     if (!localStream) {
-      micDiag.value.lastGumErrorName = ''
-      micDiag.value.lastGumErrorMessage = ''
       error.value = ''
       try {
         await requestMicrophone('click')
@@ -697,7 +619,6 @@ export function useDirectWebRTC() {
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop())
       localStream = null
-      micDiag.value.hasLocalStream = false
     }
 
     resetState()
@@ -769,11 +690,9 @@ export function useDirectWebRTC() {
     error,
     isMuted,
     micBarLevels,
-    micDiag,
     connect,
     disconnect,
     toggleMute,
-    requestMicrophone,
     handleSignaling,
   }
 }

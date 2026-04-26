@@ -16,7 +16,6 @@ dependencies = [
 inference = [
     "grpcio>=1.60",
     "grpcio-tools>=1.60",
-    "grpcio-health-checking>=1.60",
 ]
 llm = ["openai>=1.0"]
 tts = ["openai>=1.0"]

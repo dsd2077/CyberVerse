@@ -12,11 +12,31 @@ from transformers import Wav2Vec2FeatureExtractor
 from flash_head.src.modules.flash_head_model import WanModelAudioProject
 from flash_head.audio_analysis.wav2vec2 import Wav2Vec2Model
 from flash_head.utils.utils import match_and_blend_colors_torch, resize_and_centercrop
+from flash_head.utils.facecrop import process_image
 
-# compile models to speedup inference
-# Override via env: FLASHHEAD_COMPILE_MODEL=0/1, FLASHHEAD_COMPILE_VAE=0/1
-COMPILE_MODEL = os.environ.get("FLASHHEAD_COMPILE_MODEL", "1") == "1"
-COMPILE_VAE = os.environ.get("FLASHHEAD_COMPILE_VAE", "1") == "1"
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off", ""}
+
+
+def _resolve_bool_flag(env_key, configured, *, default):
+    value = os.environ.get(env_key)
+    if value is None:
+        value = configured
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    normalized = str(value).strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise ValueError(f"Invalid boolean value for {env_key}: {value!r}")
+
+
 # use parallel vae to speedup decode/encode, only support WanVAE
 USE_PARALLEL_VAE = True
 
@@ -24,11 +44,6 @@ def get_cond_image_dict(cond_image_path_or_dir, use_face_crop):
     def get_image(cond_image_path, use_face_crop):
         if use_face_crop:
             try:
-                # Face cropping relies on MediaPipe and can be an optional runtime
-                # dependency. Import lazily so environments without mediapipe can
-                # still run FlashHead as long as use_face_crop=False.
-                from flash_head.utils.facecrop import process_image
-
                 image = process_image(cond_image_path)
                 return image
             except Exception as e:
@@ -67,6 +82,8 @@ class FlashHeadPipeline:
         use_usp=False,
         num_timesteps=1000,
         use_timestep_transform=True,
+        compile_model=None,
+        compile_vae=None,
     ):
         r"""
         Initializes the image-to-video generation model components.
@@ -130,10 +147,23 @@ class FlashHeadPipeline:
         self.num_timesteps = num_timesteps
         self.use_timestep_transform = use_timestep_transform
 
-        logger.info(f"FlashHead torch.compile: COMPILE_MODEL={COMPILE_MODEL}, COMPILE_VAE={COMPILE_VAE}")
-        if COMPILE_MODEL:
+        resolved_compile_model = _resolve_bool_flag(
+            "FLASHHEAD_COMPILE_MODEL",
+            compile_model,
+            default=True,
+        )
+        resolved_compile_vae = _resolve_bool_flag(
+            "FLASHHEAD_COMPILE_VAE",
+            compile_vae,
+            default=True,
+        )
+        logger.info(
+            f"FlashHead torch.compile: COMPILE_MODEL={resolved_compile_model}, "
+            f"COMPILE_VAE={resolved_compile_vae}"
+        )
+        if resolved_compile_model:
             self.model = torch.compile(self.model)
-        if COMPILE_VAE:
+        if resolved_compile_vae:
             if self.use_ltx:
                 self.vae.model.encode = torch.compile(self.vae.model.encode)
                 self.vae.model.decode = torch.compile(self.vae.model.decode)

@@ -7,6 +7,7 @@ import "common.proto";
 
 service VoiceLLMService {
   rpc Converse (stream VoiceLLMInput) returns (stream VoiceLLMOutput);
+  rpc CheckVoice (CheckVoiceRequest) returns (CheckVoiceResponse);
   rpc Interrupt (InterruptRequest) returns (InterruptResponse);
 }
 
@@ -34,6 +35,15 @@ message VoiceLLMConfig {
   string bot_name = 5;
   string speaking_style = 6;
   string welcome_message = 7;
+}
+
+message CheckVoiceRequest {
+  VoiceLLMConfig config = 1;
+}
+
+message CheckVoiceResponse {
+  bool ok = 1;
+  string provider_error = 2;
 }
 
 message InterruptRequest {

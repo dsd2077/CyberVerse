@@ -51,6 +51,7 @@ class DoubaoSessionConfig:
     say_hello_content: str = ""
     recv_timeout: int = 120
     input_mod: str = "keep_alive"
+    conversation_id: str = ""
     output_sample_rate: int = 24000
     output_audio_format: str = "pcm_s16le"
     compression: str = "gzip"
@@ -139,6 +140,10 @@ class DoubaoSessionConfig:
             overrides["speaking_style"] = session_config.speaking_style
         if session_config.welcome_message is not None:
             overrides["say_hello_content"] = session_config.welcome_message
+        if session_config.input_mode:
+            overrides["input_mod"] = session_config.input_mode
+        if session_config.session_id:
+            overrides["conversation_id"] = session_config.session_id
         if not overrides:
             return self
         result = replace(self, **overrides)
@@ -167,7 +172,7 @@ class DoubaoSessionConfig:
             "X-Api-Connect-Id": connect_id,
         }
 
-    def build_start_session_payload(self) -> dict:
+    def build_start_session_payload(self, dialog_id: str | None = None) -> dict:
         """
         Build the start_session request payload.
 
@@ -181,13 +186,19 @@ class DoubaoSessionConfig:
             speaker,
             self.voice_type in SC20_VOICES,
         )
+        dialog: dict = {
+            "character_manifest": self.build_character_manifest(),
+            "extra": {
+                "strict_audit": False,
+                "recv_timeout": self.recv_timeout,
+                "input_mod": self.input_mod,
+                "model": self.model,
+            },
+        }
+        if dialog_id:
+            dialog["dialog_id"] = dialog_id
         return {
             "asr": {
-                "audio_config": {
-                    "channel": 1,
-                    "format": "pcm_s16le",
-                    "sample_rate": 16000,
-                },
                 "extra": {
                     "end_smooth_window_ms": self.end_smooth_window_ms,
                 },
@@ -200,15 +211,7 @@ class DoubaoSessionConfig:
                     "sample_rate": self.output_sample_rate,
                 },
             },
-            "dialog": {
-                "character_manifest": self.build_character_manifest(),
-                "extra": {
-                    "strict_audit": False,
-                    "recv_timeout": self.recv_timeout,
-                    "input_mod": self.input_mod,
-                    "model": self.model,
-                },
-            },
+            "dialog": dialog,
         }
 
     def build_say_hello_payload(self) -> dict:

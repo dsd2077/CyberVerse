@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cyberverse/server/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 var errInferenceUnavailable = errors.New("inference service is unavailable")
@@ -114,7 +115,7 @@ var settingsFields = []settingsField{
 	{"LIVEKIT_URL", func(s *SettingsResponse) string { return s.LiveKit.URL }},
 	{"LIVEKIT_API_KEY", func(s *SettingsResponse) string { return s.LiveKit.APIKey }},
 	{"LIVEKIT_API_SECRET", func(s *SettingsResponse) string { return s.LiveKit.APISecret }},
-	{"QWEN_API_KEY", func(s *SettingsResponse) string { return s.LLM.APIKey }},
+	{"OPENAI_API_KEY", func(s *SettingsResponse) string { return s.LLM.APIKey }},
 	{"LLM_MODEL", func(s *SettingsResponse) string { return s.LLM.Model }},
 	{"LLM_TEMPERATURE", func(s *SettingsResponse) string {
 		return strconv.FormatFloat(s.LLM.Temperature, 'f', -1, 64)
@@ -140,13 +141,13 @@ func (r *Router) handleGetSettings(w http.ResponseWriter, req *http.Request) {
 			APISecret: envOrDefault("LIVEKIT_API_SECRET", r.cfg.LiveKit.APISecret),
 		},
 		LLM: LLMSettings{
-			APIKey:      os.Getenv("QWEN_API_KEY"),
-			Model:       envOrDefault("LLM_MODEL", "qwen-plus"),
+			APIKey:      os.Getenv("OPENAI_API_KEY"),
+			Model:       envOrDefault("LLM_MODEL", "gpt-4o"),
 			Temperature: envOrDefaultFloat("LLM_TEMPERATURE", 0.7),
 		},
 		TTS: TTSSettings{
-			Model: envOrDefault("TTS_MODEL", "qwen3-tts-flash"),
-			Voice: envOrDefault("TTS_VOICE", "Cherry"),
+			Model: envOrDefault("TTS_MODEL", "tts-1"),
+			Voice: envOrDefault("TTS_VOICE", "nova"),
 		},
 		ASR: ASRSettings{
 			ModelSize: envOrDefault("ASR_MODEL_SIZE", "base"),
@@ -235,20 +236,34 @@ var paramMeta = map[string]struct {
 	"model_type":   {Options: []string{"pro", "lite"}},
 }
 
-// GPU-related keys are shown in a separate section.
-var gpuKeys = map[string]bool{
-	"cuda_visible_devices": true,
-	"device":               true,
-	"world_size":           true,
+// Shared avatar runtime GPU-related keys are shown in a separate section.
+var runtimeGPUKeys = map[string]bool{
+	"cuda_visible_devices":      true,
+	"world_size":                true,
+	"dist_keepalive_interval_s": true,
+	"dist_keepalive_idle_s":     true,
 }
 
-var gpuKeyOrder = []string{
+var runtimeGPUKeyOrder = []string{
 	"cuda_visible_devices",
 	"world_size",
-	"device",
+	"dist_keepalive_interval_s",
+	"dist_keepalive_idle_s",
 }
 
-// Readonly keys in infer_params.yaml.
+// Some models keep a small subset of GPU-related controls outside infer_params.
+// These remain in the GPU section only when explicitly allowlisted here.
+var modelGPUKeys = map[string]map[string]bool{
+	"flash_head": {
+		"device": true,
+	},
+}
+
+var modelGPUKeyOrder = map[string][]string{
+	"flash_head": {"device"},
+}
+
+// Readonly keys in flash_head infer_params.
 var inferParamsReadonly = map[string]bool{}
 
 func normalizeAvatarModelName(name string) string {
@@ -275,6 +290,19 @@ func displayAvatarModelName(name string) string {
 		}
 		return strings.Join(parts, " ")
 	}
+}
+
+func isModelGPUKey(modelName, key string) bool {
+	keys, ok := modelGPUKeys[modelName]
+	return ok && keys[key]
+}
+
+func orderedGPUKeys(modelName string) []string {
+	ordered := append([]string{}, runtimeGPUKeyOrder...)
+	if extraOrder, ok := modelGPUKeyOrder[modelName]; ok {
+		ordered = append(ordered, extraOrder...)
+	}
+	return ordered
 }
 
 func (r *Router) configuredDefaultAvatarModel() string {
@@ -318,13 +346,20 @@ func (r *Router) configuredAvatarModels() []string {
 	return models
 }
 
+func inferParamsConfigPath(modelName string) string {
+	return "inference.avatar." + modelName + ".infer_params"
+}
+
 func (r *Router) inferParamsExists(modelName string) bool {
-	if modelName == "" {
+	if modelName == "" || r.configPath == "" {
 		return false
 	}
-	inferPath := config.InferParamsPath(r.modelsDir, modelName)
-	info, err := os.Stat(inferPath)
-	return err == nil && !info.IsDir()
+	doc, err := config.ReadYAMLNode(r.configPath)
+	if err != nil {
+		return false
+	}
+	_, err = config.GetMappingKeys(doc, inferParamsConfigPath(modelName))
+	return err == nil
 }
 
 func (r *Router) configStatusForModel(modelName string) avatarModelConfigStatus {
@@ -412,6 +447,9 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 					if err != nil {
 						continue
 					}
+					if node.Kind != yaml.ScalarNode {
+						continue
+					}
 					p := launchConfigParamJSON{
 						Name:            key,
 						Path:            modelPath + "." + key,
@@ -422,7 +460,7 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 					if hasMeta && len(meta.Options) > 0 {
 						p.Options = meta.Options
 					}
-					if gpuKeys[key] {
+					if isModelGPUKey(modelName, key) {
 						modelGPUParams[key] = p
 					} else {
 						avatarSection.Params = append(avatarSection.Params, p)
@@ -435,7 +473,7 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 			runtimeKeys, err := config.GetMappingKeys(doc, runtimePath)
 			if err == nil {
 				for _, key := range runtimeKeys {
-					if !gpuKeys[key] {
+					if !runtimeGPUKeys[key] {
 						continue
 					}
 					node, err := config.GetNodeAtPath(doc, runtimePath+"."+key)
@@ -451,13 +489,44 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 				}
 			}
 
-			for _, key := range gpuKeyOrder {
+			usedGPUKeys := map[string]bool{}
+			for _, key := range orderedGPUKeys(modelName) {
 				if p, ok := modelGPUParams[key]; ok {
 					gpuSection.Params = append(gpuSection.Params, p)
+					usedGPUKeys[key] = true
 					continue
 				}
 				if p, ok := runtimeGPUParams[key]; ok {
 					gpuSection.Params = append(gpuSection.Params, p)
+					usedGPUKeys[key] = true
+				}
+			}
+
+			extraGPUKeySet := map[string]bool{}
+			for key := range modelGPUParams {
+				if !usedGPUKeys[key] {
+					extraGPUKeySet[key] = true
+				}
+			}
+			for key := range runtimeGPUParams {
+				if !usedGPUKeys[key] {
+					extraGPUKeySet[key] = true
+				}
+			}
+			extraGPUKeys := make([]string, 0, len(extraGPUKeySet))
+			for key := range extraGPUKeySet {
+				extraGPUKeys = append(extraGPUKeys, key)
+			}
+			sort.Strings(extraGPUKeys)
+			for _, key := range extraGPUKeys {
+				if p, ok := modelGPUParams[key]; ok {
+					gpuSection.Params = append(gpuSection.Params, p)
+					usedGPUKeys[key] = true
+					continue
+				}
+				if p, ok := runtimeGPUParams[key]; ok {
+					gpuSection.Params = append(gpuSection.Params, p)
+					usedGPUKeys[key] = true
 				}
 			}
 		}
@@ -469,18 +538,18 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 
 	if r.inferParamsExists(modelName) {
 		videoSection := launchConfigSectionJSON{Title: "视频输出", Badge: "restart"}
-		inferPath := config.InferParamsPath(r.modelsDir, modelName)
-		if doc, err := config.ReadYAMLNode(inferPath); err == nil {
-			keys, err := config.GetMappingKeys(doc, "")
+		inferPath := inferParamsConfigPath(modelName)
+		if doc, err := config.ReadYAMLNode(r.configPath); err == nil {
+			keys, err := config.GetMappingKeys(doc, inferPath)
 			if err == nil {
 				for _, key := range keys {
-					node, err := config.GetNodeAtPath(doc, key)
+					node, err := config.GetNodeAtPath(doc, inferPath+"."+key)
 					if err != nil {
 						continue
 					}
 					videoSection.Params = append(videoSection.Params, launchConfigParamJSON{
 						Name:            key,
-						Path:            "infer_params." + key,
+						Path:            inferPath + "." + key,
 						Value:           config.NodeValue(node, false),
 						Readonly:        inferParamsReadonly[key],
 						RequiresRestart: true,
@@ -549,27 +618,27 @@ func (r *Router) handleUpdateLaunchConfig(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	// Group updates by source file.
-	mainUpdates := map[string]string{}  // dot-path -> value
-	inferUpdates := map[string]string{} // key -> value
+	// Group updates by config path.
+	mainUpdates := map[string]string{} // dot-path -> value
 
 	modelPrefix := "inference.avatar." + body.Model + "."
 	runtimePrefix := "inference.avatar.runtime."
+	inferParamsPrefix := inferParamsConfigPath(body.Model) + "."
 
 	for _, p := range body.Params {
 		// Determine source and validate.
-		if strings.HasPrefix(p.Path, "infer_params.") {
-			key := strings.TrimPrefix(p.Path, "infer_params.")
+		if strings.HasPrefix(p.Path, inferParamsPrefix) {
+			key := strings.TrimPrefix(p.Path, inferParamsPrefix)
 			if inferParamsReadonly[key] {
 				writeJSON(w, http.StatusBadRequest, ErrorResponse{
 					Error: fmt.Sprintf("parameter %q is readonly", p.Path),
 				})
 				return
 			}
-			inferUpdates[key] = fmt.Sprintf("%v", p.Value)
+			mainUpdates[p.Path] = fmt.Sprintf("%v", p.Value)
 		} else if strings.HasPrefix(p.Path, runtimePrefix) {
 			key := strings.TrimPrefix(p.Path, runtimePrefix)
-			if !gpuKeys[key] {
+			if !runtimeGPUKeys[key] {
 				writeJSON(w, http.StatusBadRequest, ErrorResponse{
 					Error: fmt.Sprintf("parameter %q is not a shared runtime parameter", p.Path),
 				})
@@ -594,7 +663,6 @@ func (r *Router) handleUpdateLaunchConfig(w http.ResponseWriter, req *http.Reque
 		}
 	}
 
-	// Apply main config updates.
 	if len(mainUpdates) > 0 && r.configPath != "" {
 		doc, err := config.ReadYAMLNode(r.configPath)
 		if err != nil {
@@ -610,34 +678,6 @@ func (r *Router) handleUpdateLaunchConfig(w http.ResponseWriter, req *http.Reque
 			}
 		}
 		if err := config.WriteYAMLNode(r.configPath, doc); err != nil {
-			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-			return
-		}
-	}
-
-	// Apply infer_params updates.
-	if len(inferUpdates) > 0 {
-		inferPath := config.InferParamsPath(r.modelsDir, body.Model)
-		if _, err := os.Stat(inferPath); err != nil {
-			writeJSON(w, http.StatusBadRequest, ErrorResponse{
-				Error: fmt.Sprintf("model %q does not expose infer_params.yaml", body.Model),
-			})
-			return
-		}
-		doc, err := config.ReadYAMLNode(inferPath)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-			return
-		}
-		for key, val := range inferUpdates {
-			if err := config.SetNodeAtPath(doc, key, val); err != nil {
-				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
-					Error: fmt.Sprintf("set %s: %v", key, err),
-				})
-				return
-			}
-		}
-		if err := config.WriteYAMLNode(inferPath, doc); err != nil {
 			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 			return
 		}

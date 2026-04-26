@@ -1,44 +1,43 @@
-FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04 AS builder
 
-# Runtime dependencies (ffmpeg for audio IO; keep it minimal).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
+    python3.10 python3-pip ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install only runtime Python deps we need in the container.
-# Note: torch is provided by the base image to avoid slow downloads of NVIDIA
-# split-wheel dependencies during image build in some regions.
 COPY pyproject.toml .
-RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    python -m pip install --no-cache-dir \
-    "numpy>=1.24" \
-    "pyyaml>=6.0" \
-    "grpcio>=1.60" \
-    "grpcio-health-checking>=1.60" \
-    "websockets>=12.0" \
-    "openai>=1.0" \
-    "openai-whisper>=20231117" \
-    pillow \
-    scipy \
-    "diffusers>=0.34.0" \
-    transformers==4.57.3 \
-    "tokenizers>=0.20.3" \
-    "accelerate>=1.8.1" \
-    safetensors \
-    einops \
-    loguru \
-    pyloudnorm \
-    tqdm
+RUN pip install --no-cache-dir -e ".[inference]" && \
+    pip install --no-cache-dir grpcio-tools grpcio-health-checking scipy
 
+# Generate gRPC code in builder stage
+COPY proto/ ./proto/
+RUN mkdir -p inference/generated && \
+    python3 -m grpc_tools.protoc \
+    -I proto/ \
+    --python_out=inference/generated \
+    --grpc_python_out=inference/generated \
+    proto/*.proto
+
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3-pip ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.10 /usr/local/lib/python3.10
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /app/inference/generated ./inference/generated/
+
+COPY pyproject.toml .
 COPY inference/ ./inference/
 COPY models/flash_head/ ./models/flash_head/
-COPY models/SoulX-LiveAct/ ./models/SoulX-LiveAct/
 COPY cyberverse_config.yaml .
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import grpc; ch = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=3)" || exit 1
+    CMD python3 -c "import grpc; ch = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=3)" || exit 1
 
 EXPOSE 50051
-CMD ["python", "-m", "inference.server", "--config", "cyberverse_config.yaml"]
+CMD ["python3", "-m", "inference.server", "--config", "cyberverse_config.yaml"]

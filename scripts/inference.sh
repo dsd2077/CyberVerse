@@ -102,22 +102,47 @@ echo "[inference] MASTER_ADDR=${MASTER_ADDR} MASTER_PORT=${MASTER_PORT}"
 # Model-specific distributed tuning defaults
 if [[ "${AVATAR_MODEL}" == "flash_head" ]]; then
   : "${FLASHHEAD_MIN_NEW_AUDIO_RATIO:=0.6}"
-  : "${FLASHHEAD_COMPILE_MODEL:=1}"
-  : "${FLASHHEAD_COMPILE_VAE:=1}"
-  : "${FLASHHEAD_DIST_WORKER_MAIN_THREAD:=1}"
+  if [[ -z "${FLASHHEAD_COMPILE_MODEL:-}" ]]; then
+    FLASHHEAD_COMPILE_MODEL="$(_yaml_first_val \
+      "inference.avatar.flash_head.compile_model" \
+      '1')"
+  fi
+  if [[ -z "${FLASHHEAD_COMPILE_VAE:-}" ]]; then
+    FLASHHEAD_COMPILE_VAE="$(_yaml_first_val \
+      "inference.avatar.flash_head.compile_vae" \
+      '1')"
+  fi
+  if [[ -z "${FLASHHEAD_DIST_WORKER_MAIN_THREAD:-}" ]]; then
+    FLASHHEAD_DIST_WORKER_MAIN_THREAD="$(_yaml_first_val \
+      "inference.avatar.flash_head.dist_worker_main_thread" \
+      '1')"
+  fi
   export FLASHHEAD_MIN_NEW_AUDIO_RATIO
   export FLASHHEAD_COMPILE_MODEL FLASHHEAD_COMPILE_VAE
   export FLASHHEAD_DIST_WORKER_MAIN_THREAD
   echo "[inference] FLASHHEAD_MIN_NEW_AUDIO_RATIO=${FLASHHEAD_MIN_NEW_AUDIO_RATIO}"
   echo "[inference] Warmup control: ${CONFIG} -> warmup.*"
   echo "[inference] FLASHHEAD_COMPILE_MODEL=${FLASHHEAD_COMPILE_MODEL}"
+  echo "[inference] FLASHHEAD_COMPILE_VAE=${FLASHHEAD_COMPILE_VAE}"
   echo "[inference] FLASHHEAD_DIST_WORKER_MAIN_THREAD=${FLASHHEAD_DIST_WORKER_MAIN_THREAD}"
 elif [[ "${AVATAR_MODEL}" == "live_act" ]]; then
   # torch.compile currently produces noisy Dynamo/Inductor fallback logs on
   # LiveAct's dynamic-shape warmup path. Keep it off by default in dev mode.
-  : "${LIVEACT_COMPILE_WAN_MODEL:=1}"
-  : "${LIVEACT_COMPILE_VAE_DECODE:=1}"
-  : "${LIVEACT_DIST_WORKER_MAIN_THREAD:=1}"
+  if [[ -z "${LIVEACT_COMPILE_WAN_MODEL:-}" ]]; then
+    LIVEACT_COMPILE_WAN_MODEL="$(_yaml_first_val \
+      "inference.avatar.live_act.compile_wan_model" \
+      '1')"
+  fi
+  if [[ -z "${LIVEACT_COMPILE_VAE_DECODE:-}" ]]; then
+    LIVEACT_COMPILE_VAE_DECODE="$(_yaml_first_val \
+      "inference.avatar.live_act.compile_vae_decode" \
+      '1')"
+  fi
+  if [[ -z "${LIVEACT_DIST_WORKER_MAIN_THREAD:-}" ]]; then
+    LIVEACT_DIST_WORKER_MAIN_THREAD="$(_yaml_first_val \
+      "inference.avatar.live_act.dist_worker_main_thread" \
+      '1')"
+  fi
   export LIVEACT_COMPILE_WAN_MODEL LIVEACT_COMPILE_VAE_DECODE
   export LIVEACT_DIST_WORKER_MAIN_THREAD
   echo "[inference] LIVEACT_COMPILE_WAN_MODEL=${LIVEACT_COMPILE_WAN_MODEL}"

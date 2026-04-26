@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,11 +159,6 @@ func NodeValue(node *yaml.Node, expandEnv bool) any {
 		return false
 	}
 	return display
-}
-
-// InferParamsPath returns the infer_params.yaml path for a given model.
-func InferParamsPath(modelsDir, modelName string) string {
-	return filepath.Join(modelsDir, modelName, "configs", "infer_params.yaml")
 }
 
 func inferYAMLTag(value string) string {

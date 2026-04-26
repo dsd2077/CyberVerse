@@ -5,7 +5,6 @@ const props = defineProps<{
   displayMode?: 'webrtc' | 'standby' | 'placeholder'
   standbySrc?: string
   standbySources?: string[]
-  placeholderSrc?: string
 }>()
 
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -187,13 +186,6 @@ defineExpose({ videoRef })
         :class="{ 'video-hidden': currentDisplayMode !== 'standby' }"
         @ended="onStandbyEnded"
       />
-      <img
-        v-if="props.placeholderSrc"
-        :src="props.placeholderSrc"
-        class="placeholder-image"
-        :class="{ 'video-hidden': currentDisplayMode !== 'placeholder' }"
-        alt=""
-      />
     </div>
   </div>
 </template>
@@ -236,15 +228,5 @@ defineExpose({ videoRef })
 .video-hidden {
   opacity: 0;
   pointer-events: none;
-}
-
-.placeholder-image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: center;
-  transition: opacity 180ms ease;
 }
 </style>

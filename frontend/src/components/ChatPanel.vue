@@ -7,9 +7,6 @@ const props = defineProps<{
   currentTranscript: string
   currentLLMResponse: string
   avatarStatus: AvatarStatus
-  errorMessage?: string
-  textInputEnabled?: boolean
-  textInputHint?: string
   historyLoading?: boolean
   historyHasMore?: boolean
 }>()
@@ -161,24 +158,15 @@ onUnmounted(() => {
     </div>
 
     <div class="input-bar">
-      <div v-if="errorMessage" class="chat-error">
-        {{ errorMessage }}
-      </div>
-      <div v-else-if="textInputHint && textInputEnabled === false" class="chat-hint">
-        {{ textInputHint }}
-      </div>
-      <div class="input-row">
-        <input
-          v-model="inputText"
-          type="text"
-          :placeholder="textInputEnabled === false ? '当前文本输入不可用' : 'Type a message...'"
-          :disabled="textInputEnabled === false"
-          @keydown="handleKeydown"
-        />
-        <button class="send-btn" @click="handleSend" :disabled="!inputText.trim() || textInputEnabled === false">
-          Send
-        </button>
-      </div>
+      <input
+        v-model="inputText"
+        type="text"
+        placeholder="Type a message..."
+        @keydown="handleKeydown"
+      />
+      <button class="send-btn" @click="handleSend" :disabled="!inputText.trim()">
+        Send
+      </button>
     </div>
   </div>
 </template>
@@ -286,31 +274,10 @@ onUnmounted(() => {
 }
 
 .input-bar {
+  display: flex;
   gap: 8px;
   padding: 12px;
   border-top: 1px solid #333;
-}
-
-.input-row {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-error {
-  color: #ff9b9b;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.chat-hint {
-  color: #888;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.input-bar input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .input-bar input {

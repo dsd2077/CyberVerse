@@ -8,30 +8,12 @@ from diffusers import ModelMixin
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 import torch.cuda.amp as amp
 import torch.distributed as dist
-
-# xFuser is only required for USP / distributed sequence-parallel attention.
-# In single-process single-GPU mode (dist not initialized), FlashHead can run
-# without it. Keep the import optional to reduce setup friction.
-try:
-    from xfuser.core.distributed import (
-        get_sequence_parallel_rank,
-        get_sequence_parallel_world_size,
-        get_sp_group,
-    )
-    from xfuser.core.long_ctx_attention import xFuserLongContextAttention
-except ModuleNotFoundError:  # pragma: no cover
-    def get_sequence_parallel_rank() -> int:
-        return 0
-
-    def get_sequence_parallel_world_size() -> int:
-        return 1
-
-    def get_sp_group():
-        raise RuntimeError("xfuser is required for USP/distributed mode")
-
-    class xFuserLongContextAttention:  # type: ignore
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("xfuser is required for USP/distributed mode")
+from xfuser.core.distributed import (
+    get_sequence_parallel_rank,
+    get_sequence_parallel_world_size,
+    get_sp_group,
+)
+from xfuser.core.long_ctx_attention import xFuserLongContextAttention
 try:
     import flash_attn_interface
     FLASH_ATTN_3_AVAILABLE = True

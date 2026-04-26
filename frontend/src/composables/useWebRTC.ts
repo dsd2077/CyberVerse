@@ -180,7 +180,7 @@ function resetState() {
  * 这是保证音画同步的关键：浏览器对同一 MediaElement 内的 A/V 轨道
  * 会通过 RTCP SR 做原生 lipsync，视频卡顿时音频也会随之等待。
  */
-function mergeCombinedStream(resumePlay = false) {
+function mergeCombinedStream() {
   const el = _videoEl
   if (!el || !_videoMST) return
 
@@ -188,16 +188,10 @@ function mergeCombinedStream(resumePlay = false) {
   if (_audioMST) tracks.push(_audioMST)
 
   el.srcObject = new MediaStream(tracks)
-  el.muted = false
   console.log(
     `[AVSync][${ts()}] ✅ 合并流已设置 → <video>: video=✓ audio=${!!_audioMST}` +
       ` (浏览器将原生同步音画)`
   )
-  if (resumePlay) {
-    el.play().catch((e) => {
-      console.warn(`[AVSync][${ts()}] play() after audio merge failed:`, e)
-    })
-  }
 }
 
 function logIncomingTrack(kind: 'audio' | 'video', track: RemoteTrack) {
@@ -287,17 +281,6 @@ export function useWebRTC() {
   const connectionState = ref<ConnectionState>('disconnected')
   const error = ref<string>('')
   const debugState = ref<AVSyncDebugState>(emptyDebugState())
-  const micDiag = ref({
-    origin: '',
-    secureContext: false,
-    permission: 'unknown' as 'unknown' | 'unsupported' | 'granted' | 'denied' | 'prompt',
-    hasLocalStream: false,
-    audioContextState: '',
-    lastErrorName: '',
-    lastErrorMessage: '',
-    lastGumErrorName: '',
-    lastGumErrorMessage: '',
-  })
 
   let room: InstanceType<typeof Room> | null = null
   const pendingVideoTracks: RemoteTrack[] = []
@@ -405,22 +388,6 @@ export function useWebRTC() {
     micBarLevels.value = Array.from({ length: MIC_LEVEL_BARS }, () => 0)
   }
 
-  async function refreshMicPermission() {
-    try {
-      micDiag.value.origin = window.location.origin
-      micDiag.value.secureContext = window.isSecureContext
-      const p = (navigator as any).permissions
-      if (!p?.query) {
-        micDiag.value.permission = 'unsupported'
-        return
-      }
-      const status = await p.query({ name: 'microphone' })
-      micDiag.value.permission = status?.state || 'unknown'
-    } catch {
-      micDiag.value.permission = 'unknown'
-    }
-  }
-
   function attachMicMeter(mediaTrack: MediaStreamTrack) {
     stopMicMetering()
     if (mediaTrack.readyState !== 'live') {
@@ -467,32 +434,9 @@ export function useWebRTC() {
         micRafId = requestAnimationFrame(tick)
       }
 
-      // Chrome may block AudioContext start until a user gesture.
-      // Start the RAF loop immediately, and keep retrying resume on the next gesture.
-      const tryResume = async () => {
-        if (ctx.state === 'suspended') {
-          try {
-            await ctx.resume()
-          } catch {
-            // Intentionally ignore; we'll retry on user gesture.
-          }
-        }
-      }
-
-      const startLoop = () => {
-        if (!micRafId) micRafId = requestAnimationFrame(tick)
-      }
-
-      const unlockOnGesture = () => {
-        // If metering has already been stopped/replaced, don't restart a dead loop.
-        if (micAudioContext !== ctx) return
-        void tryResume().finally(startLoop)
-      }
-
-      startLoop()
-      void tryResume()
-      window.addEventListener('pointerdown', unlockOnGesture, { once: true, capture: true })
-      window.addEventListener('keydown', unlockOnGesture, { once: true, capture: true })
+      void ctx.resume().then(() => {
+        micRafId = requestAnimationFrame(tick)
+      })
     } catch (e) {
       console.warn('[useWebRTC] mic meter failed', e)
       stopMicMetering()
@@ -510,25 +454,9 @@ export function useWebRTC() {
   async function toggleMute() {
     if (!room || connectionState.value !== 'connected') return
     const next = !isMuted.value
-    try {
-      await room.localParticipant.setMicrophoneEnabled(!next)
-      isMuted.value = next
-      micDiag.value.lastErrorName = ''
-      micDiag.value.lastErrorMessage = ''
-      pushNote(`mic ${next ? 'muted' : 'unmuted'}`)
-      void refreshMicPermission()
-      if (!next) {
-        tryAttachLocalMic(room)
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Microphone permission denied'
-      error.value = msg
-      micDiag.value.lastErrorName = e instanceof Error ? 'Error' : 'MicrophoneError'
-      micDiag.value.lastErrorMessage = msg
-      isMuted.value = true
-      pushNote(`mic toggle failed: ${msg}`)
-      void refreshMicPermission()
-    }
+    await room.localParticipant.setMicrophoneEnabled(!next)
+    isMuted.value = next
+    pushNote(`mic ${next ? 'muted' : 'unmuted'}`)
   }
 
   async function connect(livekitUrl: string, token: string) {
@@ -546,7 +474,6 @@ export function useWebRTC() {
     resetState()
 
     try {
-      void refreshMicPermission()
       room = new Room({
         adaptiveStream: false,
         dynacast: false,
@@ -606,7 +533,7 @@ export function useWebRTC() {
             }, { once: true })
           }
 
-          mergeCombinedStream(true /* resumePlay: audio track just added */)
+          mergeCombinedStream()
         }
       })
 
@@ -626,24 +553,8 @@ export function useWebRTC() {
       connectionState.value = 'connected'
       debugState.value.connectionState = 'connected'
       pushNote('room connected')
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true)
-        isMuted.value = false
-        tryAttachLocalMic(room)
-        micDiag.value.hasLocalStream = true
-        micDiag.value.lastErrorName = ''
-        micDiag.value.lastErrorMessage = ''
-      } catch (e: unknown) {
-        // Permission prompts / denials shouldn't kill the whole session.
-        const msg = e instanceof Error ? e.message : 'Microphone permission denied'
-        error.value = msg
-        micDiag.value.hasLocalStream = false
-        micDiag.value.lastErrorName = e instanceof Error ? 'Error' : 'MicrophoneError'
-        micDiag.value.lastErrorMessage = msg
-        isMuted.value = true
-        pushNote(`mic enable failed: ${msg}`)
-      }
-      void refreshMicPermission()
+      await room.localParticipant.setMicrophoneEnabled(true)
+      tryAttachLocalMic(room)
       // 每秒采集一次 WebRTC 网络统计
       networkStatsTimer = setInterval(() => void pollNetworkStats(), 1000)
     } catch (e: unknown) {
@@ -740,7 +651,6 @@ export function useWebRTC() {
     error,
     isMuted,
     micBarLevels,
-    micDiag,
     connect,
     disconnect,
     toggleMute,

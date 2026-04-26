@@ -42,8 +42,6 @@ watchEffect(() => {
 })
 
 const characterId = computed(() => (route.query.character_id as string) || '')
-const textInputEnabled = computed(() => (route.query.text_input_enabled as string) !== 'false')
-const textInputHint = computed(() => (route.query.text_input_hint as string) || '')
 
 const {
   messages,
@@ -52,7 +50,6 @@ const {
   avatarStatus,
   idleVideoUrl,
   idleVideoUrls,
-  errorMessage,
   historyLoading,
   historyHasMore,
   sendText,
@@ -61,10 +58,7 @@ const {
   loadHistory,
   registerSignalingHandler,
   sendSignaling,
-} = useChat(() => sessionId.value, {
-  textInputEnabled: textInputEnabled.value,
-  textInputHint: textInputHint.value,
-})
+} = useChat(() => sessionId.value)
 
 // Initialize idle video URLs from route query (if already cached at session creation)
 const routeIdleUrls = route.query.idle_video_urls
@@ -316,9 +310,6 @@ function formatTime(s: number): string {
         :current-transcript="currentTranscript"
         :current-l-l-m-response="currentLLMResponse"
         :avatar-status="avatarStatus"
-        :error-message="errorMessage"
-        :text-input-enabled="textInputEnabled"
-        :text-input-hint="textInputHint"
         :history-loading="historyLoading"
         :history-has-more="historyHasMore"
         @send-text="sendText"
@@ -328,9 +319,7 @@ function formatTime(s: number): string {
 
       <!-- Footer hint -->
       <div class="h-6 flex items-center justify-center shrink-0">
-        <span class="text-[11px] text-cv-text-muted">
-          {{ textInputHint || 'Shift+Enter 换行 · VoiceLLM 模式下可直接语音对话' }}
-        </span>
+        <span class="text-[11px] text-cv-text-muted">Shift+Enter 换行 · VoiceLLM 模式下可直接语音对话</span>
       </div>
     </div>
   </div>

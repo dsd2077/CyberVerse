@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,14 +21,11 @@ type CreateSessionRequest struct {
 
 type CreateSessionResponse struct {
 	SessionID     string   `json:"session_id"`
-	Mode          string   `json:"mode"`
 	StreamingMode string   `json:"streaming_mode"`
 	LiveKitURL    string   `json:"livekit_url,omitempty"`
 	Token         string   `json:"livekit_token,omitempty"`
 	IdleVideoURL  string   `json:"idle_video_url,omitempty"`
 	IdleVideoURLs []string `json:"idle_video_urls,omitempty"`
-	TextInputEnabled bool   `json:"text_input_enabled"`
-	TextInputHint    string `json:"text_input_hint,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -39,26 +34,6 @@ type SendMessageRequest struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
-}
-
-func sessionModeName(mode orchestrator.PipelineMode) string {
-	if mode == orchestrator.ModeStandard {
-		return "standard"
-	}
-	return "voice_llm"
-}
-
-func textInputAvailability(mode orchestrator.PipelineMode) (bool, string) {
-	if strings.TrimSpace(os.Getenv("QWEN_API_KEY")) == "" {
-		if mode == orchestrator.ModeVoiceLLM {
-			return false, "当前未配置 QWEN_API_KEY，键盘输入暂不可用。请先在系统设置里填写 Qwen API Key，或直接使用麦克风对话。"
-		}
-		return false, "当前未配置 QWEN_API_KEY，文本聊天暂不可用。请先在系统设置里填写 Qwen API Key。"
-	}
-	if mode == orchestrator.ModeVoiceLLM {
-		return true, "键盘输入会走 Qwen 文本与语音合成链路。"
-	}
-	return true, ""
 }
 
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
@@ -127,9 +102,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 
 	resp := CreateSessionResponse{
 		SessionID: sessionID,
-		Mode:      sessionModeName(mode),
 	}
-	resp.TextInputEnabled, resp.TextInputHint = textInputAvailability(mode)
 
 	if r.orch != nil && body.CharacterID != "" {
 		// Return any already-cached idle video URLs immediately; generation happens in background.
@@ -232,8 +205,7 @@ func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) handleSendMessage(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	session, err := r.sessionMgr.Get(id)
-	if err != nil {
+	if _, err := r.sessionMgr.Get(id); err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -247,17 +219,13 @@ func (r *Router) handleSendMessage(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "text is required"})
 		return
 	}
-	if ok, hint := textInputAvailability(session.Mode); !ok {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: hint})
-		return
-	}
 
 	// Note: HandleTextInput already calls session.AddMessage for user role,
 	// so we do NOT add it here to avoid duplicate messages.
 
 	// Trigger the standard pipeline via orchestrator
 	if r.orch != nil {
-		if err := r.orch.HandleTextInput(req.Context(), id, body.Text); err != nil {
+		if err := r.orch.HandleTextInput(context.Background(), id, body.Text); err != nil {
 			log.Printf("Failed to handle text input for session %s: %v", id, err)
 			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "failed to process message"})
 			return
@@ -293,23 +261,9 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		func(sessionID string, msg ws.WSMessage) {
 			switch msg.Type {
 			case "text_input":
-				session, sErr := r.sessionMgr.Get(sessionID)
-				if sErr != nil {
-					r.wsHub.BroadcastJSON(sessionID, map[string]any{
-						"type":    "error",
-						"message": sErr.Error(),
-					})
-					return
-				}
-				if ok, hint := textInputAvailability(session.Mode); !ok {
-					r.wsHub.BroadcastJSON(sessionID, map[string]any{
-						"type":    "error",
-						"message": hint,
-					})
-					return
-				}
 				if r.orch != nil && msg.Text != "" {
 					go func() {
+						// Detach from request context to avoid cancelling an in-flight text turn.
 						if err := r.orch.HandleTextInput(context.Background(), sessionID, msg.Text); err != nil {
 							log.Printf("Failed to handle WS text input for session %s: %v", sessionID, err)
 						}
@@ -321,7 +275,7 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 						log.Printf("Failed to interrupt session %s: %v", sessionID, err)
 					}
 				}
-			case "webrtc_ready", "webrtc_answer", "ice_candidate", "webrtc_error":
+			case "webrtc_ready", "webrtc_answer", "ice_candidate":
 				if r.orch != nil {
 					r.orch.HandleSignaling(sessionID, msg)
 				}

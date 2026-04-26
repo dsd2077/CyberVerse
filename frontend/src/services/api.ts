@@ -32,14 +32,11 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export interface CreateSessionResponse {
   session_id: string
-  mode: string
   streaming_mode: string  // "direct" or "livekit"
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
-  text_input_enabled: boolean
-  text_input_hint?: string
 }
 
 export interface SessionInfo {

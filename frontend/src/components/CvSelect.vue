@@ -10,6 +10,7 @@ const props = defineProps<{
   modelValue: string
   options: (Option | string)[]
   placeholder?: string
+  success?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -47,13 +48,31 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
     <button
       type="button"
       @click="open = !open"
-      class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-9 text-sm text-cv-text text-left cursor-pointer transition-all focus:outline-none"
-      :class="open ? 'border-cv-accent shadow-[0_0_0_2px_rgba(59,130,246,0.15)]' : 'hover:border-cv-text-muted'"
+      class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text text-left cursor-pointer transition-all focus:outline-none"
+      :class="[
+        props.success ? 'pr-16 border-cv-success shadow-[0_0_0_2px_rgba(34,197,94,0.15)]' : 'pr-9',
+        open
+          ? props.success
+            ? 'border-cv-success shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
+            : 'border-cv-accent shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'
+          : props.success
+            ? 'border-cv-success hover:border-cv-success'
+            : 'hover:border-cv-text-muted',
+      ]"
     >
       <span :class="selectedLabel ? 'text-cv-text' : 'text-cv-text-muted'">
         {{ selectedLabel || placeholder || '' }}
       </span>
     </button>
+
+    <span
+      v-if="props.success"
+      class="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 text-cv-success"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
 
     <!-- Chevron -->
     <span

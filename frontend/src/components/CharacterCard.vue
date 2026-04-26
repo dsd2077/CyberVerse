@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import type { Character } from '../types'
+import { formatVoiceTypeDisplay } from '../utils/voice'
 
 const router = useRouter()
 const props = defineProps<{ character: Character }>()
@@ -21,16 +22,6 @@ function launch() {
 
 function edit() {
   router.push(`/characters/${props.character.id}/edit`)
-}
-
-// Voice type display name
-const voiceLabels: Record<string, string> = {
-  zh_female_default: '女声-默认',
-  zh_male_default: '男声-默认',
-  zh_female_vv_jupiter_bigtts: '女声-VV',
-  zh_female_xiaohe_jupiter_bigtts: '女声-小禾',
-  zh_male_yunzhou_jupiter_bigtts: '男声-云舟',
-  zh_male_xiaotian_jupiter_bigtts: '男声-小天',
 }
 </script>
 
@@ -75,7 +66,12 @@ const voiceLabels: Record<string, string> = {
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5">
           <span class="w-1.5 h-1.5 rounded-full bg-cv-success" />
-          <span class="text-[11px] text-cv-text-muted">{{ voiceLabels[character.voice_type] || character.voice_type }}</span>
+          <span
+            class="max-w-[165px] truncate text-[11px] text-cv-text-muted"
+            :title="formatVoiceTypeDisplay(character.voice_type)"
+          >
+            {{ formatVoiceTypeDisplay(character.voice_type) }}
+          </span>
         </div>
         <button @click.stop="launch"
                 class="px-4 py-1.5 bg-cv-accent text-white text-[13px] font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer">
