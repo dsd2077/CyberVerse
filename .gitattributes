@@ -1,0 +1,6 @@
+# Ensure shell scripts always use LF line endings
+*.sh text eol=lf
+*.py text eol=lf
+
+# Windows-safe defaults for other text files
+* text=auto

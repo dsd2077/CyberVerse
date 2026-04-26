@@ -80,7 +80,7 @@ export OMP_NUM_THREADS=1
 export TORCH_CPP_LOG_LEVEL
 
 # ── torch.compile inductor cache (persists across restarts) ────────────────
-: "${TORCHINDUCTOR_CACHE_DIR:=/root/autodl-tmp/cache/torch_inductor}"
+: "${TORCHINDUCTOR_CACHE_DIR:=${HOME}/.cache/torch_inductor}"
 export TORCHINDUCTOR_FX_GRAPH_CACHE=1
 export TORCHINDUCTOR_CACHE_DIR
 mkdir -p "${TORCHINDUCTOR_CACHE_DIR}"
