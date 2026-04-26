@@ -87,7 +87,7 @@
 ### 1단계: 클론
 
 ```bash
-git clone https://github.com/anthropics/CyberVerse.git
+git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
