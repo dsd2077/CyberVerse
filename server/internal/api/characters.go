@@ -26,37 +26,78 @@ type testCharacterVoiceRequest struct {
 	VoiceType     string `json:"voice_type"`
 }
 
-// idleVideoURLs returns all idle video URLs for a character's active image.
-func (r *Router) idleVideoURLs(characterID, imageFilename string) []string {
+type idleVideoTarget struct {
+	width  int
+	height int
+}
+
+func (t idleVideoTarget) valid() bool {
+	return t.width > 0 && t.height > 0
+}
+
+func characterIdleVideoSizeDir(target idleVideoTarget) string {
+	if !target.valid() {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", target.width, target.height)
+}
+
+func (r *Router) currentIdleVideoTarget(ctx context.Context) idleVideoTarget {
+	if r == nil || r.orch == nil {
+		return idleVideoTarget{}
+	}
+
+	info, err := r.orch.AvatarInfo(ctx)
+	if err != nil {
+		return idleVideoTarget{}
+	}
+
+	target := idleVideoTarget{
+		width:  int(info.GetOutputWidth()),
+		height: int(info.GetOutputHeight()),
+	}
+	if !target.valid() {
+		return idleVideoTarget{}
+	}
+	return target
+}
+
+// idleVideoURLs returns idle video URLs for the current output resolution.
+func (r *Router) idleVideoURLs(characterID, imageFilename string, target idleVideoTarget) []string {
 	if r.charStore == nil || characterID == "" || imageFilename == "" {
 		return nil
 	}
+	if !target.valid() {
+		return nil
+	}
 	imgBase := strings.TrimSuffix(imageFilename, filepath.Ext(imageFilename))
-	files, err := r.charStore.ListIdleVideos(characterID, imageFilename)
+	sizeDir := characterIdleVideoSizeDir(target)
+	files, err := r.charStore.ListIdleVideos(characterID, imageFilename, target.width, target.height)
 	if err != nil || len(files) == 0 {
 		return nil
 	}
+
 	urls := make([]string, 0, len(files))
-	for _, f := range files {
-		urls = append(urls, fmt.Sprintf("/api/v1/characters/%s/idle-videos/%s/%s", characterID, imgBase, f))
+	for _, filename := range files {
+		urls = append(urls, fmt.Sprintf("/api/v1/characters/%s/idle-videos/%s/%s/%s", characterID, imgBase, sizeDir, filename))
 	}
 	return urls
 }
 
 // idleVideoURL returns the first idle video URL (backward compatibility).
-func (r *Router) idleVideoURL(characterID, imageFilename string) string {
-	urls := r.idleVideoURLs(characterID, imageFilename)
+func (r *Router) idleVideoURL(characterID, imageFilename string, target idleVideoTarget) string {
+	urls := r.idleVideoURLs(characterID, imageFilename, target)
 	if len(urls) == 0 {
 		return ""
 	}
 	return urls[0]
 }
 
-func (r *Router) buildCharacterResponse(c *character.Character) characterResponse {
+func (r *Router) buildCharacterResponse(c *character.Character, target idleVideoTarget) characterResponse {
 	if c == nil {
 		return characterResponse{}
 	}
-	urls := r.idleVideoURLs(c.ID, c.ActiveImage)
+	urls := r.idleVideoURLs(c.ID, c.ActiveImage, target)
 	firstURL := ""
 	if len(urls) > 0 {
 		firstURL = urls[0]
@@ -70,9 +111,10 @@ func (r *Router) buildCharacterResponse(c *character.Character) characterRespons
 
 func (r *Router) handleListCharacters(w http.ResponseWriter, req *http.Request) {
 	chars := r.charStore.List()
+	target := r.currentIdleVideoTarget(req.Context())
 	result := make([]characterResponse, 0, len(chars))
 	for _, c := range chars {
-		result = append(result, r.buildCharacterResponse(c))
+		result = append(result, r.buildCharacterResponse(c, target))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -84,7 +126,7 @@ func (r *Router) handleGetCharacter(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, r.buildCharacterResponse(c))
+	writeJSON(w, http.StatusOK, r.buildCharacterResponse(c, r.currentIdleVideoTarget(req.Context())))
 }
 
 func (r *Router) handleCreateCharacter(w http.ResponseWriter, req *http.Request) {
@@ -103,7 +145,7 @@ func (r *Router) handleCreateCharacter(w http.ResponseWriter, req *http.Request)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, r.buildCharacterResponse(created))
+	writeJSON(w, http.StatusCreated, r.buildCharacterResponse(created, r.currentIdleVideoTarget(req.Context())))
 }
 
 func (r *Router) handleUpdateCharacter(w http.ResponseWriter, req *http.Request) {
@@ -119,7 +161,7 @@ func (r *Router) handleUpdateCharacter(w http.ResponseWriter, req *http.Request)
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, r.buildCharacterResponse(updated))
+	writeJSON(w, http.StatusOK, r.buildCharacterResponse(updated, r.currentIdleVideoTarget(req.Context())))
 }
 
 func (r *Router) handleDeleteCharacter(w http.ResponseWriter, req *http.Request) {
@@ -298,10 +340,15 @@ func (r *Router) handleGetCharacterImage(w http.ResponseWriter, req *http.Reques
 func (r *Router) handleGetIdleVideo(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
 	imgbase := req.PathValue("imgbase")
+	variant := req.PathValue("variant")
 	filename := req.PathValue("filename")
 
 	// Validate path components to prevent traversal
-	for _, part := range []string{imgbase, filename} {
+	parts := []string{imgbase, filename}
+	if variant != "" {
+		parts = append(parts, variant)
+	}
+	for _, part := range parts {
 		if part == "" || part != filepath.Base(part) || strings.Contains(part, "..") {
 			http.NotFound(w, req)
 			return
@@ -314,7 +361,11 @@ func (r *Router) handleGetIdleVideo(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	videoPath := filepath.Join(videoDir, imgbase, filename)
+	videoPath := filepath.Join(videoDir, imgbase)
+	if variant != "" {
+		videoPath = filepath.Join(videoPath, variant)
+	}
+	videoPath = filepath.Join(videoPath, filename)
 	if _, err := os.Stat(videoPath); err != nil {
 		http.NotFound(w, req)
 		return
@@ -362,11 +413,12 @@ func (r *Router) handleActivateImage(w http.ResponseWriter, req *http.Request) {
 	}
 
 	c, _ := r.charStore.Get(id)
+	target := r.currentIdleVideoTarget(req.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"active_image":    c.ActiveImage,
 		"avatar_image":    c.AvatarImage,
-		"idle_video_url":  r.idleVideoURL(c.ID, c.ActiveImage),
-		"idle_video_urls": r.idleVideoURLs(c.ID, c.ActiveImage),
+		"idle_video_url":  r.idleVideoURL(c.ID, c.ActiveImage, target),
+		"idle_video_urls": r.idleVideoURLs(c.ID, c.ActiveImage, target),
 	})
 }
 

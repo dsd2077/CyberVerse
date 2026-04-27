@@ -42,6 +42,9 @@ class MockAvatarPlugin(AvatarPlugin):
     def get_fps(self):
         return 25
 
+    def get_output_dimensions(self):
+        return 320, 480
+
 
 class MockLLMPlugin(LLMPlugin):
     name = "llm.mock"
@@ -110,6 +113,8 @@ async def test_avatar_get_info(registry):
     info = await svc.GetInfo(request, context)
     assert info.model_name == "avatar.mock"
     assert info.output_fps == 25
+    assert info.output_width == 320
+    assert info.output_height == 480
 
 
 @pytest.mark.asyncio

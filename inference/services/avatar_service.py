@@ -68,11 +68,12 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
 
     async def GetInfo(self, request, context):
         plugin = self._get_plugin()
+        output_width, output_height = plugin.get_output_dimensions()
         return avatar_pb2.AvatarInfo(
             model_name=plugin.name,
             output_fps=plugin.get_fps(),
-            output_width=512,
-            output_height=512,
+            output_width=output_width,
+            output_height=output_height,
             frames_per_chunk=28,
             chunk_duration_s=1.12,
         )

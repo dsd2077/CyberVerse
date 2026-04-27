@@ -256,58 +256,57 @@ func (s *Store) IdleVideosForImageDir(id, imageFilename string) string {
 	return filepath.Join(dir, base)
 }
 
-// IdleVideoFilename returns a stable MP4 filename for one source image + profile.
-func (s *Store) IdleVideoFilename(imageFilename, profile string) string {
+func idleVideoBaseName(imageFilename string) string {
 	base := strings.TrimSuffix(filepath.Base(imageFilename), filepath.Ext(imageFilename))
 	if base == "" {
 		base = "avatar"
 	}
-	if profile == "" {
-		profile = DefaultIdleVideoProfile
-	}
-	return fmt.Sprintf("%s__%s.mp4", base, profile)
+	return base
 }
 
-// IdleVideoPath returns the absolute path for a cached idle video (inside per-image subdir).
-func (s *Store) IdleVideoPath(id, imageFilename, profile string) string {
+func idleVideoProfileName(profile string) string {
+	if profile == "" {
+		return DefaultIdleVideoProfile
+	}
+	return profile
+}
+
+func idleVideoSizeDirName(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", width, height)
+}
+
+// IdleVideosForSizeDir returns the per-image, per-resolution cache directory.
+// e.g. {charDir}/idle_videos/img_003/320x480/
+func (s *Store) IdleVideosForSizeDir(id, imageFilename string, width, height int) string {
 	dir := s.IdleVideosForImageDir(id, imageFilename)
+	sizeDir := idleVideoSizeDirName(width, height)
+	if dir == "" || sizeDir == "" {
+		return ""
+	}
+	return filepath.Join(dir, sizeDir)
+}
+
+// IdleVideoFilename returns a stable MP4 filename for one source image + profile.
+func (s *Store) IdleVideoFilename(imageFilename, profile string) string {
+	return fmt.Sprintf("%s__%s.mp4", idleVideoBaseName(imageFilename), idleVideoProfileName(profile))
+}
+
+// IdleVideoPath returns the absolute path for a cached idle video inside the
+// per-image, per-resolution subdirectory.
+func (s *Store) IdleVideoPath(id, imageFilename, profile string, width, height int) string {
+	dir := s.IdleVideosForSizeDir(id, imageFilename, width, height)
 	if dir == "" {
 		return ""
 	}
 	return filepath.Join(dir, s.IdleVideoFilename(imageFilename, profile))
 }
 
-// IdleVideoExists reports whether the cached idle video already exists.
-func (s *Store) IdleVideoExists(id, imageFilename, profile string) bool {
-	path := s.IdleVideoPath(id, imageFilename, profile)
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// HasIdleVideos checks whether the per-image subdirectory contains at least one .mp4 file.
-func (s *Store) HasIdleVideos(id, imageFilename string) bool {
-	dir := s.IdleVideosForImageDir(id, imageFilename)
-	if dir == "" {
-		return false
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".mp4") {
-			return true
-		}
-	}
-	return false
-}
-
-// ListIdleVideos returns all .mp4 filenames in the per-image idle video subdirectory, sorted.
-func (s *Store) ListIdleVideos(id, imageFilename string) ([]string, error) {
-	dir := s.IdleVideosForImageDir(id, imageFilename)
+// ListIdleVideos returns all .mp4 filenames in the target resolution directory, sorted.
+func (s *Store) ListIdleVideos(id, imageFilename string, width, height int) ([]string, error) {
+	dir := s.IdleVideosForSizeDir(id, imageFilename, width, height)
 	if dir == "" {
 		return nil, fmt.Errorf("idle video dir unavailable for character %s", id)
 	}

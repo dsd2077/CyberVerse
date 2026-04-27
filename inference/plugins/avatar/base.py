@@ -23,3 +23,7 @@ class AvatarPlugin(CyberVersePlugin):
     @abstractmethod
     def get_fps(self) -> int:
         ...
+
+    @abstractmethod
+    def get_output_dimensions(self) -> tuple[int, int]:
+        ...

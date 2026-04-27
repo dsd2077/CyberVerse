@@ -105,14 +105,15 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if r.orch != nil && body.CharacterID != "" {
+		target := r.currentIdleVideoTarget(req.Context())
 		// Return any already-cached idle video URLs immediately; generation happens in background.
 		if char, err := r.charStore.Get(body.CharacterID); err == nil {
-			resp.IdleVideoURLs = r.idleVideoURLs(char.ID, char.ActiveImage)
+			resp.IdleVideoURLs = r.idleVideoURLs(char.ID, char.ActiveImage, target)
 			if len(resp.IdleVideoURLs) > 0 {
 				resp.IdleVideoURL = resp.IdleVideoURLs[0]
 			}
 		}
-		// Trigger background generation only if no idle videos exist yet.
+		// Trigger background generation only if the current-resolution idle video does not exist yet.
 		// Once ready, push the URLs to the frontend via WebSocket so the idle
 		// videos can start playing without a page reload.
 		if len(resp.IdleVideoURLs) == 0 {
@@ -128,7 +129,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 					log.Printf("Idle video background generation failed for character %s: %v", charID, err)
 					return
 				}
-				urls := r.idleVideoURLs(charID, img)
+				urls := r.idleVideoURLs(charID, img, r.currentIdleVideoTarget(bgCtx))
 				if len(urls) > 0 {
 					r.wsHub.BroadcastJSON(sessID, map[string]any{
 						"type": "idle_video_ready",

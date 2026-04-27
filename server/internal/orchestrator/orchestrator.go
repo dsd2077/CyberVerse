@@ -274,6 +274,20 @@ func (o *Orchestrator) idleVideoProfile() string {
 	return character.DefaultIdleVideoProfile
 }
 
+func (o *Orchestrator) idleVideoOutputSize(ctx context.Context) (int, int, error) {
+	info, err := o.AvatarInfo(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get avatar info for idle video: %w", err)
+	}
+
+	width := int(info.GetOutputWidth())
+	height := int(info.GetOutputHeight())
+	if width <= 0 || height <= 0 {
+		return 0, 0, fmt.Errorf("invalid idle video output size: %dx%d", width, height)
+	}
+	return width, height, nil
+}
+
 func (o *Orchestrator) activeCharacterImage(characterID string) (*character.Character, string, error) {
 	if o == nil || o.charStore == nil {
 		return nil, "", errors.New("character store is not configured")
@@ -441,14 +455,22 @@ func (o *Orchestrator) EnsureIdleVideo(ctx context.Context, characterID string) 
 		return "", err
 	}
 
-	// If the per-image subdirectory already has any idle videos, skip generation.
-	if o.charStore.HasIdleVideos(characterID, imageFilename) {
-		outPath := o.charStore.IdleVideoPath(characterID, imageFilename, o.idleVideoProfile())
-		return outPath, nil
+	profile := o.idleVideoProfile()
+	targetWidth, targetHeight, err := o.idleVideoOutputSize(ctx)
+	if err != nil {
+		return "", err
 	}
 
-	profile := o.idleVideoProfile()
-	outPath := o.charStore.IdleVideoPath(characterID, imageFilename, profile)
+	sizeDir := o.charStore.IdleVideosForSizeDir(characterID, imageFilename, targetWidth, targetHeight)
+	if sizeDir == "" {
+		return "", fmt.Errorf("idle video dir unavailable for character %s", characterID)
+	}
+	files, err := o.charStore.ListIdleVideos(characterID, imageFilename, targetWidth, targetHeight)
+	if err == nil && len(files) > 0 {
+		return filepath.Join(sizeDir, files[0]), nil
+	}
+
+	outPath := o.charStore.IdleVideoPath(characterID, imageFilename, profile, targetWidth, targetHeight)
 	if outPath == "" {
 		return "", fmt.Errorf("idle video path unavailable for character %s", characterID)
 	}
@@ -456,9 +478,6 @@ func (o *Orchestrator) EnsureIdleVideo(ctx context.Context, characterID string) 
 	imageData, format, err := o.loadCharacterImage(characterID, imageFilename)
 	if err != nil {
 		return "", err
-	}
-	if err := os.MkdirAll(o.charStore.IdleVideosForImageDir(characterID, imageFilename), 0755); err != nil {
-		return "", fmt.Errorf("create idle video dir: %w", err)
 	}
 
 	const (
@@ -530,6 +549,16 @@ loop:
 	}
 	if len(rgbChunks) == 0 || width <= 0 || height <= 0 || totalFrames <= 0 {
 		return "", errors.New("idle avatar generation produced no video frames")
+	}
+	if width != targetWidth || height != targetHeight {
+		sizeDir = o.charStore.IdleVideosForSizeDir(characterID, imageFilename, width, height)
+		if sizeDir == "" {
+			return "", fmt.Errorf("idle video dir unavailable for character %s", characterID)
+		}
+		outPath = o.charStore.IdleVideoPath(characterID, imageFilename, profile, width, height)
+		if outPath == "" {
+			return "", fmt.Errorf("idle video path unavailable for character %s", characterID)
+		}
 	}
 
 	pcm = fitPCMToVideoDuration(pcm, idleSampleRate, totalFrames, fps)

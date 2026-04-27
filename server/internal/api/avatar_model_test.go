@@ -151,7 +151,7 @@ inference:
 		t.Fatal(err)
 	}
 	inf := &fakeInferenceService{
-		avatarInfo: &pb.AvatarInfo{ModelName: "avatar." + activeModel, OutputFps: 24},
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar." + activeModel, OutputFps: 24, OutputWidth: 320, OutputHeight: 480},
 	}
 	orch := orchestrator.New(inf, nil, orchestrator.NewSessionManager(4), nil, charStore)
 	return NewRouter(orchestrator.NewSessionManager(4), orch, nil, nil, cfg, charStore, "", configPath), charStore

@@ -91,3 +91,16 @@ func TestLoadLegacyCharacterStripsAvatarModelOnSave(t *testing.T) {
 		t.Fatalf("expected avatar_model to be removed from saved JSON")
 	}
 }
+
+func TestIdleVideoFilenameIncludesResolutionVariant(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := store.IdleVideoFilename("img_003.png", DefaultIdleVideoProfile)
+	want := "img_003__breathing10s_v1.mp4"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}

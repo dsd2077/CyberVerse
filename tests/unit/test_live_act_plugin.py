@@ -96,3 +96,11 @@ def test_init_sync_skips_warmup_when_disabled():
 
     warmup.assert_not_called()
     assert order == ["avatar"]
+
+
+def test_get_output_dimensions_aligns_to_vae_stride():
+    plugin = LiveActAvatarPlugin()
+    plugin._width = 256
+    plugin._height = 417
+
+    assert plugin.get_output_dimensions() == (256, 416)

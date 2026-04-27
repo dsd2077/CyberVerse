@@ -30,13 +30,13 @@ func newTestCharStore(t *testing.T) *character.Store {
 
 func newTestRouter() *Router {
 	return newTestRouterWithInference(&fakeInferenceService{
-		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25},
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
 	})
 }
 
 func newTestRouterWithMgr(mgr *orchestrator.SessionManager) *Router {
 	return newTestRouterWithMgrAndInference(mgr, &fakeInferenceService{
-		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25},
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
 	})
 }
 
@@ -49,7 +49,7 @@ func newTestRouterWithMgrAndInference(mgr *orchestrator.SessionManager, inf *fak
 	dir, _ := os.MkdirTemp("", "chartest-*")
 	cs, _ := character.NewStore(dir)
 	if inf.avatarInfo == nil {
-		inf.avatarInfo = &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25}
+		inf.avatarInfo = &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512}
 	}
 	orch := orchestrator.New(inf, hub, mgr, nil, cs)
 	return NewRouter(mgr, orch, hub, nil, nil, cs, "", "")

@@ -809,6 +809,12 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
     def get_fps(self) -> int:
         return self.infer_params.get("tgt_fps", 25)
 
+    def get_output_dimensions(self) -> tuple[int, int]:
+        return (
+            int(self.infer_params.get("width", 512)),
+            int(self.infer_params.get("height", 512)),
+        )
+
     async def shutdown(self) -> None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._shutdown_sync)

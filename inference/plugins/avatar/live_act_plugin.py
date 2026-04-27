@@ -370,10 +370,11 @@ class LiveActAvatarPlugin(AvatarPlugin):
                     self._world_size,
                 )
             if _is_primary_rank(self._rank, self._world_size):
+                output_width, output_height = self._actual_output_dimensions()
                 logger.info(
                     "LiveAct initialized: size=%dx%d fps=%d ckpt=%s wav2vec=%s "
                     "avatar=%s seed=%d world_size=%d device=%d",
-                    self._width, self._height, self._fps,
+                    output_width, output_height, self._fps,
                     config.params.get("ckpt_dir", ""),
                     config.params.get("wav2vec_dir", ""),
                     image_path, base_seed, self._world_size, self._device,
@@ -1088,6 +1089,14 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
     def get_fps(self) -> int:
         return self._fps
+
+    def _actual_output_dimensions(self) -> tuple[int, int]:
+        width = (self._width // self.VAE_STRIDE[2]) * self.VAE_STRIDE[2]
+        height = (self._height // self.VAE_STRIDE[1]) * self.VAE_STRIDE[1]
+        return width, height
+
+    def get_output_dimensions(self) -> tuple[int, int]:
+        return self._actual_output_dimensions()
 
     # ── Shutdown ──────────────────────────────────────────────────────────
 
