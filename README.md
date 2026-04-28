@@ -108,6 +108,12 @@ conda create -n cyberverse python=3.10
 conda activate cyberverse
 ```
 
+Install PyTorch (CUDA 12.8) in this environment:
+
+```bash
+pip3 install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
 ### Step 3: Configure environment variables
 
 ```bash
