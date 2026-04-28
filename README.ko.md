@@ -79,10 +79,20 @@
 
 - Python 3.10+
 - Node 18+
-- Go 1.22+
+- Go 1.22+ (`protoc-gen-go`, `protoc-gen-go-grpc` 필요)
 - PyTorch 2.8（CUDA 12.8）
 - CUDA 12.8+ 지원 GPU
 - FFmpeg(`libvpx` 포함, 영상 인코딩용)
+
+다음 명령으로 확인할 수 있습니다:
+
+```bash
+node --version
+go version
+protoc --version
+ffmpeg -version|grep libvpx
+conda --version
+```
 
 ### 1단계: 클론
 

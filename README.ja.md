@@ -79,10 +79,20 @@
 
 - Python 3.10+
 - Node 18+
-- Go 1.22+
+- Go 1.22+（必須: `protoc-gen-go`, `protoc-gen-go-grpc`）
 - PyTorch 2.8（CUDA 12.8）
 - CUDA 12.8+ に対応した GPU
 - FFmpeg（動画エンコードのため `libvpx` を含むこと）
+
+確認には次を実行します:
+
+```bash
+node --version
+go version
+protoc --version
+ffmpeg -version|grep libvpx
+conda --version
+```
 
 ### ステップ 1: クローンする
 

@@ -78,7 +78,7 @@ Real-time video conversation requires GPU acceleration. Below are benchmarks for
 ### Prerequisites
 
 - Node 18+
-- Go 1.22+
+- Go 1.22+ (required: `protoc-gen-go`, `protoc-gen-go-grpc`)
 - GPU with CUDA 12.8+
 - FFmpeg (must include `libvpx` for video encoding)
 - Conda
@@ -90,6 +90,7 @@ To verify, use:
 ```bash
 node --version
 go version
+protoc --version
 ffmpeg -version|grep libvpx
 conda --version
 ```

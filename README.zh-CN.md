@@ -79,10 +79,20 @@
 
 - Python 3.10+
 - Node 18+
-- Go 1.22+
+- Go 1.22+（需安装：`protoc-gen-go`、`protoc-gen-go-grpc`）
 - PyTorch 2.8（CUDA 12.8）
 - 支持 CUDA 12.8+ 的 GPU
 - FFmpeg（需包含 `libvpx`，用于视频编码）
+
+可用以下命令验证：
+
+```bash
+node --version
+go version
+protoc --version
+ffmpeg -version|grep libvpx
+conda --version
+```
 
 ### 第 1 步：克隆仓库
 
