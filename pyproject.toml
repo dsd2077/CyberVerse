@@ -22,7 +22,6 @@ llm = ["openai>=1.0"]
 tts = ["openai>=1.0"]
 voice_llm = ["websockets>=12.0"]
 flash_head = [
-    "opencv-python>=4.12.0",
     "opencv-python-headless>=4.12.0",
     "diffusers>=0.34.0",
     "transformers==4.57.3",
@@ -36,14 +35,14 @@ flash_head = [
     "scikit-image",
     "loguru",
     "gradio==5.50.0",
-    "xfuser>=0.4.3",
+    "xfuser==0.4.5",
     "pyloudnorm",
     "decord",
-    "xformers==0.0.31",
+    "xformers==0.0.32.post1",
     "librosa",
     "mediapipe>=0.10.13",
     "flask",
-    "nvidia-nccl-cu12==2.26.2",
+    "nvidia-nccl-cu12==2.27.3",
 ]
 live_act = [
     "opencv-python>=4.11.0",
