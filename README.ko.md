@@ -211,8 +211,11 @@ inference:
 ### 6단계: SageAttention 및 FlashAttention 설치(선택 사항)
 
 ```bash
-# SageAttention
-pip install sageattention==2.2.0 --no-build-isolation
+# SageAttention(소스 빌드)
+git clone https://github.com/thu-ml/SageAttention.git
+cd SageAttention
+export EXT_PARALLEL=4 NVCC_APPEND_FLAGS="--threads 8" MAX_JOBS=32 # Optional
+python setup.py install
 ```
 
 ```bash

@@ -211,8 +211,11 @@ inference:
 ### 第 6 步：安装 SageAttention 和 FlashAttention（可选）
 
 ```bash
-# SageAttention
-pip install sageattention==2.2.0 --no-build-isolation
+# SageAttention（源码编译）
+git clone https://github.com/thu-ml/SageAttention.git
+cd SageAttention
+export EXT_PARALLEL=4 NVCC_APPEND_FLAGS="--threads 8" MAX_JOBS=32 # Optional
+python setup.py install
 ```
 
 ```bash

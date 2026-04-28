@@ -220,8 +220,11 @@ You can skip editing paths here for now and adjust these options later in the we
 
 ### Step 6: Install SageAttention & FlashAttention (optional)
 ```bash
-# SageAttention 
-pip install sageattention==2.2.0 --no-build-isolation
+# SageAttention (source build)
+git clone https://github.com/thu-ml/SageAttention.git
+cd SageAttention
+export EXT_PARALLEL=4 NVCC_APPEND_FLAGS="--threads 8" MAX_JOBS=32 # Optional
+python setup.py install
 ```
 
 ```bash
