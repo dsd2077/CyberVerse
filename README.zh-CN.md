@@ -79,7 +79,7 @@
 
 - Python 3.10+
 - Node 18+
-- Go 1.22+（需安装：`protoc-gen-go`、`protoc-gen-go-grpc`）
+- Go 1.25（需安装：`protoc-gen-go`、`protoc-gen-go-grpc`）
 - PyTorch 2.8（CUDA 12.8）
 - 支持 CUDA 12.8+ 的 GPU
 - FFmpeg（需包含 `libvpx`，用于视频编码）
@@ -312,7 +312,7 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 
 ## 路线图
 
-### **数字人创建平台**
+### 1. **数字人创建平台**
 配置角色、推理参数，并启动实时数字人会话。
 
 - [x] 支持角色 CRUD，包含多张参考图、激活图、固定/随机展示模式、可选人脸裁剪、标签、声音字段、人格设定、欢迎语和系统提示词

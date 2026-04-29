@@ -78,7 +78,7 @@ Real-time video conversation requires GPU acceleration. Below are benchmarks for
 ### Prerequisites
 
 - Node 18+
-- Go 1.22+ (required: `protoc-gen-go`, `protoc-gen-go-grpc`)
+- Go 1.25 (required: `protoc-gen-go`, `protoc-gen-go-grpc`)
 - GPU with CUDA 12.8+
 - FFmpeg (must include `libvpx` for video encoding)
 - Conda
@@ -312,7 +312,7 @@ Open http://localhost:5173 in your browser — you're ready to go.
 
 ## Roadmap
 
-### **Digital Human Creation Platform**  
+### 1. **Digital Human Creation Platform**  
 Configure characters, inference, and launch real-time digital-human sessions.
 
 - [x] Character CRUD with multiple reference images, active image, fixed/random display mode, optional face crop, tags, voice fields, personality, welcome message, and system prompt
