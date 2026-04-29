@@ -10,7 +10,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const isConfigured = computed(() => {
     if (!settings.value) return false
     const s = settings.value
-    return !!(s.doubao.access_token && s.livekit.url)
+    return !!s.doubao.access_token
   })
 
   async function fetch() {
