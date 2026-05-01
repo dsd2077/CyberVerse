@@ -213,6 +213,126 @@ class TestDoubaoRealtimePlugin:
         assert any(r.is_final for r in results)
 
     @pytest.mark.asyncio
+    async def test_converse_stream_emits_barge_in_and_ids(self):
+        plugin = DoubaoRealtimePlugin()
+        config = PluginConfig(
+            plugin_name="voice_llm.doubao",
+            params={
+                "access_token": "key",
+                "app_id": "app",
+                "ws_url": "wss://test.example.com",
+                "voice_type": "zh_female_default",
+                "system_prompt": "Hello",
+            },
+        )
+        await plugin.initialize(config)
+
+        session_uuid = uuid.UUID("00000000-0000-0000-0000-000000000021")
+        connect_uuid = uuid.UUID("00000000-0000-0000-0000-000000000022")
+        session_id = str(session_uuid)
+        audio_payload = b"\x01\x02" * 320
+
+        connection_started = encode_frame(
+            msg_type_bits=MSGTYPE_FULL_SERVER,
+            serialization_bits=SERIALIZATION_JSON,
+            event=50,
+            session_id=None,
+            connect_id="connect-test",
+            payload=b"{}",
+        )
+        session_started = encode_frame(
+            msg_type_bits=MSGTYPE_FULL_SERVER,
+            serialization_bits=SERIALIZATION_JSON,
+            event=150,
+            session_id=session_id,
+            payload=json.dumps({"dialog_id": "d"}).encode("utf-8"),
+        )
+        asr_start = encode_frame(
+            msg_type_bits=MSGTYPE_FULL_SERVER,
+            serialization_bits=SERIALIZATION_JSON,
+            event=DoubaoEvent.ASR_START,
+            session_id=session_id,
+            payload=json.dumps({"question_id": "q1", "reply_id": "r1"}).encode("utf-8"),
+        )
+        llm_token = encode_frame(
+            msg_type_bits=MSGTYPE_FULL_SERVER,
+            serialization_bits=SERIALIZATION_JSON,
+            event=DoubaoEvent.LLM_TOKEN,
+            session_id=session_id,
+            payload=json.dumps({
+                "content": "你好",
+                "question_id": "q1",
+                "reply_id": "r1",
+            }).encode("utf-8"),
+        )
+        audio_frame = encode_frame(
+            msg_type_bits=MSGTYPE_AUDIO_ONLY_SERVER,
+            serialization_bits=SERIALIZATION_RAW,
+            event=352,
+            session_id=session_id,
+            payload=audio_payload,
+        )
+        reply_done = encode_frame(
+            msg_type_bits=MSGTYPE_FULL_SERVER,
+            serialization_bits=SERIALIZATION_JSON,
+            event=DoubaoEvent.REPLY_DONE,
+            session_id=session_id,
+            payload=json.dumps({"question_id": "q1", "reply_id": "r1"}).encode("utf-8"),
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+
+        recv_iter = iter([connection_started, session_started])
+
+        async def mock_recv():
+            try:
+                return next(recv_iter)
+            except StopIteration:
+                raise RuntimeError("unexpected extra ws.recv() call")
+
+        mock_ws.recv = AsyncMock(side_effect=mock_recv)
+
+        messages_iter = iter([asr_start, llm_token, audio_frame, reply_done])
+
+        async def mock_anext(self):
+            try:
+                return next(messages_iter)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        mock_ws.__aiter__ = lambda self: self
+        mock_ws.__anext__ = mock_anext
+
+        class MockWSContext:
+            async def __aenter__(self):
+                return mock_ws
+
+            async def __aexit__(self, *args):
+                return None
+
+        async def user_audio():
+            yield b"\x00\x01" * 160
+
+        with patch.dict("sys.modules", {"websockets": MagicMock()}):
+            import inference.plugins.voice_llm.doubao_realtime as mod
+
+            mod_websockets = __import__("sys").modules["websockets"]
+            mod_websockets.connect.return_value = MockWSContext()
+            mod_websockets.ConnectionClosed = Exception
+
+            with patch.object(mod.uuid, "uuid4", side_effect=[session_uuid, connect_uuid]):
+                results = []
+                async for event in plugin.converse_stream(user_audio()):
+                    results.append(event)
+
+        assert results[0].barge_in is True
+        assert results[0].question_id == "q1"
+        assert results[0].reply_id == "r1"
+        assert any(r.audio and r.reply_id == "r1" for r in results)
+        assert any(r.is_final and r.question_id == "q1" and r.reply_id == "r1" for r in results)
+
+    @pytest.mark.asyncio
     async def test_check_voice_success(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(

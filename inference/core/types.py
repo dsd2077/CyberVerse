@@ -44,6 +44,9 @@ class VoiceLLMOutputEvent:
     transcript: str = ""
     user_transcript: str = ""
     is_final: bool = False
+    question_id: str = ""
+    reply_id: str = ""
+    barge_in: bool = False
 
 
 @dataclass

@@ -26,6 +26,7 @@ export function useChat(sessionId: () => string) {
   // Accumulation state for voice responses
   const accumulatedVoiceResponse = ref('')  // Accumulates all transcript texts
   const voiceResponseFinalized = ref(false) // Prevents duplicate finalization
+  const latestTurnSeq = ref(0)
 
   // Computed property to show the appropriate response based on active pipeline
   const currentLLMResponse = computed(() => {
@@ -43,6 +44,33 @@ export function useChat(sessionId: () => string) {
 
   // Signaling handler for Direct WebRTC mode
   let signalingHandler: ((data: any) => void) | null = null
+
+  function resetTransientState() {
+    pipelineMode.value = null
+    activeResponseId.value = ''
+    currentVoiceResponse.value = ''
+    currentTextResponse.value = ''
+    currentTranscript.value = ''
+    accumulatedVoiceResponse.value = ''
+    voiceResponseFinalized.value = false
+  }
+
+  function parseTurnSeq(data: any): number {
+    const turnSeq = Number(data?.turn_seq ?? 0)
+    return Number.isFinite(turnSeq) && turnSeq > 0 ? turnSeq : 0
+  }
+
+  function acceptTurnSeq(turnSeq: number): boolean {
+    if (!turnSeq) return true
+    if (turnSeq < latestTurnSeq.value) {
+      return false
+    }
+    if (turnSeq > latestTurnSeq.value) {
+      latestTurnSeq.value = turnSeq
+      resetTransientState()
+    }
+    return true
+  }
 
   function registerSignalingHandler(fn: (data: any) => void) {
     signalingHandler = fn
@@ -76,72 +104,82 @@ export function useChat(sessionId: () => string) {
       const data = JSON.parse(event.data)
 
       switch (data.type) {
-        case 'transcript':
+        case 'transcript': {
+          const turnSeq = parseTurnSeq(data)
+          if (!acceptTurnSeq(turnSeq)) {
+            break
+          }
           const role: ChatMessage['role'] = data.speaker === 'assistant' ? 'assistant' : 'user'
 
           if (role === 'assistant') {
-            // Initialize response on first transcript if not already active
-            if (!activeResponseId.value) {
-              activeResponseId.value = `voice-${Date.now()}`
+            const responseId = turnSeq ? `voice-${turnSeq}` : (activeResponseId.value || `voice-${Date.now()}`)
+            if (!activeResponseId.value || pipelineMode.value !== 'voice') {
+              activeResponseId.value = responseId
               accumulatedVoiceResponse.value = ''
               voiceResponseFinalized.value = false
               pipelineMode.value = 'voice'
-              console.log('[useChat] NEW voice response, id:', activeResponseId.value)
-            } else {
-              console.log('[useChat] REUSING voice response, id:', activeResponseId.value)
             }
-
-            // Update display with current text
-            currentVoiceResponse.value = data.text
+            activeResponseId.value = responseId
 
             if (data.is_final) {
-              // Backend sends complete turn text with is_final, use it directly
-              const finalText = data.text || currentVoiceResponse.value
+              const finalText = data.text || accumulatedVoiceResponse.value || currentVoiceResponse.value
               if (finalText) {
-                messages.value.push({
-                  id: activeResponseId.value,
-                  role,
-                  content: finalText,
-                  timestamp: Date.now(),
-                })
-                console.log('[useChat] PUSHED assistant message:', finalText.substring(0, 30), 'total:', messages.value.length)
+                const alreadyExists = messages.value.some(m => m.id === responseId)
+                if (!alreadyExists) {
+                  messages.value.push({
+                    id: responseId,
+                    role,
+                    content: finalText,
+                    timestamp: Date.now(),
+                  })
+                }
               }
 
-              // Reset for next turn
-              currentVoiceResponse.value = ''
-              accumulatedVoiceResponse.value = ''
-              activeResponseId.value = ''
-              pipelineMode.value = null
+              resetTransientState()
+            } else {
+              accumulatedVoiceResponse.value += data.text || ''
+              currentVoiceResponse.value = accumulatedVoiceResponse.value
             }
           } else {
-            // User transcript handling remains the same
             currentTranscript.value = data.text
             if (data.is_final) {
-              messages.value.push({
-                role,
-                content: data.text,
-                timestamp: Date.now(),
-              })
+              const messageId = turnSeq ? `user-${turnSeq}` : undefined
+              const alreadyExists = messageId ? messages.value.some(m => m.id === messageId) : false
+              if (!alreadyExists) {
+                messages.value.push({
+                  id: messageId,
+                  role,
+                  content: data.text,
+                  timestamp: Date.now(),
+                })
+              }
               currentTranscript.value = ''
             }
           }
           break
+        }
 
-        case 'llm_token':
-          // Set pipeline mode on first token
+        case 'llm_token': {
+          const turnSeq = parseTurnSeq(data)
+          if (!acceptTurnSeq(turnSeq)) {
+            break
+          }
+          const responseId = turnSeq ? `text-${turnSeq}` : (activeResponseId.value || `text-${Date.now()}`)
+
           if (!pipelineMode.value) {
             pipelineMode.value = 'text'
-            activeResponseId.value = `text-${Date.now()}`
-            console.log('[useChat] NEW text response, id:', activeResponseId.value)
+            activeResponseId.value = responseId
           }
+          if (pipelineMode.value !== 'text') {
+            resetTransientState()
+            pipelineMode.value = 'text'
+          }
+          activeResponseId.value = responseId
 
           currentTextResponse.value = data.accumulated
 
           if (data.is_final) {
-            const responseId = activeResponseId.value
             const alreadyExists = messages.value.some(m => m.id === responseId)
-            console.log('[useChat] FINAL llm_token, responseId:', responseId, 'alreadyExists:', alreadyExists)
-            console.log('[useChat] Current messages ids:', messages.value.map(m => m.id))
 
             if (responseId && !alreadyExists) {
               messages.value.push({
@@ -150,18 +188,16 @@ export function useChat(sessionId: () => string) {
                 content: data.accumulated,
                 timestamp: Date.now(),
               })
-              console.log('[useChat] PUSHED text assistant message, total:', messages.value.length)
             }
 
             currentTextResponse.value = ''
-            // Only clear pipeline mode if no voice response is active
             if (!currentVoiceResponse.value) {
               pipelineMode.value = null
               activeResponseId.value = ''
-              console.log('[useChat] Cleared pipeline state after text final')
             }
           }
           break
+        }
 
         case 'idle_video_ready':
           if (data.urls && data.urls.length > 0) {
@@ -171,20 +207,17 @@ export function useChat(sessionId: () => string) {
           }
           break
 
-        case 'avatar_status':
-          console.log('[useChat] Avatar status changed to:', data.status, 'activeResponseId:', activeResponseId.value)
+        case 'avatar_status': {
+          const turnSeq = parseTurnSeq(data)
+          if (!acceptTurnSeq(turnSeq)) {
+            break
+          }
           avatarStatus.value = data.status
-          // Reset everything when idle (true end of response turn)
           if (data.status === 'idle') {
-            console.log('[useChat] IDLE reset. Messages before reset:', messages.value.length, messages.value.map(m => ({ id: m.id, role: m.role, content: m.content.substring(0, 30) })))
-            pipelineMode.value = null
-            activeResponseId.value = ''
-            currentVoiceResponse.value = ''
-            currentTextResponse.value = ''
-            accumulatedVoiceResponse.value = ''
-            voiceResponseFinalized.value = false
+            resetTransientState()
           }
           break
+        }
 
         case 'webrtc_config':
         case 'webrtc_offer':
@@ -286,14 +319,8 @@ export function useChat(sessionId: () => string) {
     ws.value?.close()
     ws.value = null
     isConnected.value = false
-    // Clear all temporary states
-    currentVoiceResponse.value = ''
-    currentTextResponse.value = ''
-    currentTranscript.value = ''
-    accumulatedVoiceResponse.value = ''
-    voiceResponseFinalized.value = false
-    pipelineMode.value = null
-    activeResponseId.value = ''
+    latestTurnSeq.value = 0
+    resetTransientState()
   }
 
   return {

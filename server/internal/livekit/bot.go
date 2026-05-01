@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cyberverse/server/internal/mediapeer"
@@ -53,6 +54,7 @@ type Bot struct {
 	avPipelineCtx    context.Context
 	avPipelineCancel context.CancelFunc
 	avPipelineWg     sync.WaitGroup
+	playbackEpoch    atomic.Uint64
 }
 
 // NewBot creates a new bot for the given room.
@@ -420,11 +422,29 @@ func (b *Bot) StopAVPipeline() {
 // causing audio-video desync.
 func (b *Bot) SendAVSegment(seg *RawAVSegment) error {
 	seg.QueuedAt = time.Now()
+	if b.isPlaybackStale(seg.Epoch) {
+		return nil
+	}
 	select {
 	case b.encodeCh <- seg:
 		return nil
 	case <-b.avPipelineCtx.Done():
 		return b.avPipelineCtx.Err()
+	}
+}
+
+func (b *Bot) AdvancePlaybackEpoch(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	for {
+		current := b.playbackEpoch.Load()
+		if epoch <= current {
+			return
+		}
+		if b.playbackEpoch.CompareAndSwap(current, epoch) {
+			return
+		}
 	}
 }
 
@@ -470,6 +490,9 @@ func (b *Bot) runEncoder() {
 			}
 			continue
 		}
+		if b.isPlaybackStale(raw.Epoch) {
+			continue
+		}
 
 		vp8Samples, err := encodeRGBChunkToVP8Samples(raw.RGB, raw.Width, raw.Height, raw.NumFrames, raw.FPS)
 		if err != nil {
@@ -481,6 +504,7 @@ func (b *Bot) runEncoder() {
 		}
 		seg := &AVSegment{
 			TraceLabel: raw.TraceLabel,
+			Epoch:      raw.Epoch,
 			VP8Samples: vp8Samples,
 			PCM:        raw.PCM,
 			SampleRate: raw.SampleRate,
@@ -509,6 +533,9 @@ func (b *Bot) runPublisher() {
 		// Fence marker: signal drain completion without publishing.
 		if seg.Fence != nil && len(seg.VP8Samples) == 0 {
 			close(seg.Fence)
+			continue
+		}
+		if b.isPlaybackStale(seg.Epoch) {
 			continue
 		}
 		b.publishAVSegment(seg)
@@ -545,6 +572,9 @@ func (b *Bot) publishAVSegment(seg *AVSegment) {
 	hasPCM := len(seg.PCM) > 0 && seg.SampleRate > 0
 
 	for i := range seg.VP8Samples {
+		if b.isPlaybackStale(seg.Epoch) {
+			return
+		}
 		frameStart := time.Now()
 
 		if hasPCM && i < len(pcmSlices) && len(pcmSlices[i]) > 0 {
@@ -573,6 +603,14 @@ func (b *Bot) publishAVSegment(seg *AVSegment) {
 	b.mu.Lock()
 	b.lastPublishEnd = time.Now()
 	b.mu.Unlock()
+}
+
+func (b *Bot) isPlaybackStale(epoch uint64) bool {
+	if epoch == 0 {
+		return false
+	}
+	current := b.playbackEpoch.Load()
+	return current > 0 && epoch < current
 }
 
 // Disconnect leaves the room and cleans up.

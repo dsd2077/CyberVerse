@@ -46,6 +46,43 @@ async def test_converse_yields_audio_only():
 
 
 @pytest.mark.asyncio
+async def test_converse_copies_turn_metadata():
+    reg = MagicMock()
+    voice = MagicMock()
+
+    async def fake_converse(_stream, session_config=None):
+        yield VoiceLLMOutputEvent(
+            transcript="你好",
+            user_transcript="打断一下",
+            is_final=True,
+            question_id="question-1",
+            reply_id="reply-1",
+            barge_in=True,
+        )
+
+    voice.converse_stream = fake_converse
+    reg.get_by_category = MagicMock(return_value=voice)
+
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import voice_llm_pb2
+
+    async def requests():
+        yield voice_llm_pb2.VoiceLLMInput(text="hello")
+
+    outs = []
+    async for o in svc.Converse(requests(), MagicMock()):
+        outs.append(o)
+
+    assert len(outs) == 1
+    assert outs[0].transcript == "你好"
+    assert outs[0].user_transcript == "打断一下"
+    assert outs[0].question_id == "question-1"
+    assert outs[0].reply_id == "reply-1"
+    assert outs[0].barge_in is True
+
+
+@pytest.mark.asyncio
 async def test_converse_without_voice_llm_plugin_raises():
     reg = MagicMock()
     reg.get_by_category = MagicMock(return_value=None)

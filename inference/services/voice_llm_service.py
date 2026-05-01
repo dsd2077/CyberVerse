@@ -103,6 +103,12 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
                 output.transcript = event.transcript
             if event.user_transcript:
                 output.user_transcript = event.user_transcript
+            if event.question_id:
+                output.question_id = event.question_id
+            if event.reply_id:
+                output.reply_id = event.reply_id
+            if event.barge_in:
+                output.barge_in = True
             yield output
 
     async def CheckVoice(self, request, context):

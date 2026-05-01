@@ -125,6 +125,9 @@ type VoiceLLMOutput struct {
 	Transcript     string                 `protobuf:"bytes,2,opt,name=transcript,proto3" json:"transcript,omitempty"`
 	UserTranscript string                 `protobuf:"bytes,3,opt,name=user_transcript,json=userTranscript,proto3" json:"user_transcript,omitempty"`
 	IsFinal        bool                   `protobuf:"varint,4,opt,name=is_final,json=isFinal,proto3" json:"is_final,omitempty"`
+	QuestionId     string                 `protobuf:"bytes,6,opt,name=question_id,json=questionId,proto3" json:"question_id,omitempty"`
+	ReplyId        string                 `protobuf:"bytes,7,opt,name=reply_id,json=replyId,proto3" json:"reply_id,omitempty"`
+	BargeIn        bool                   `protobuf:"varint,8,opt,name=barge_in,json=bargeIn,proto3" json:"barge_in,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -183,6 +186,27 @@ func (x *VoiceLLMOutput) GetUserTranscript() string {
 func (x *VoiceLLMOutput) GetIsFinal() bool {
 	if x != nil {
 		return x.IsFinal
+	}
+	return false
+}
+
+func (x *VoiceLLMOutput) GetQuestionId() string {
+	if x != nil {
+		return x.QuestionId
+	}
+	return ""
+}
+
+func (x *VoiceLLMOutput) GetReplyId() string {
+	if x != nil {
+		return x.ReplyId
+	}
+	return ""
+}
+
+func (x *VoiceLLMOutput) GetBargeIn() bool {
+	if x != nil {
+		return x.BargeIn
 	}
 	return false
 }
@@ -473,14 +497,18 @@ const file_voice_llm_proto_rawDesc = "" +
 	"\x05audio\x18\x01 \x01(\v2\x16.cyberverse.AudioChunkH\x00R\x05audio\x12\x14\n" +
 	"\x04text\x18\x02 \x01(\tH\x00R\x04text\x124\n" +
 	"\x06config\x18\x03 \x01(\v2\x1a.cyberverse.VoiceLLMConfigH\x00R\x06configB\a\n" +
-	"\x05input\"\xa8\x01\n" +
+	"\x05input\"\xff\x01\n" +
 	"\x0eVoiceLLMOutput\x12,\n" +
 	"\x05audio\x18\x01 \x01(\v2\x16.cyberverse.AudioChunkR\x05audio\x12\x1e\n" +
 	"\n" +
 	"transcript\x18\x02 \x01(\tR\n" +
 	"transcript\x12'\n" +
 	"\x0fuser_transcript\x18\x03 \x01(\tR\x0euserTranscript\x12\x19\n" +
-	"\bis_final\x18\x04 \x01(\bR\aisFinalJ\x04\b\x05\x10\x06\"\xf7\x01\n" +
+	"\bis_final\x18\x04 \x01(\bR\aisFinal\x12\x1f\n" +
+	"\vquestion_id\x18\x06 \x01(\tR\n" +
+	"questionId\x12\x19\n" +
+	"\breply_id\x18\a \x01(\tR\areplyId\x12\x19\n" +
+	"\bbarge_in\x18\b \x01(\bR\abargeInJ\x04\b\x05\x10\x06\"\xf7\x01\n" +
 	"\x0eVoiceLLMConfig\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12#\n" +

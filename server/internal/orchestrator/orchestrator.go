@@ -156,6 +156,65 @@ func (b *voiceAVSyncBuffer) snapshot() (bufferedSamples int, totalIn int64, tota
 	return len(b.pcmBytes) / 2, b.totalAudioIn, b.totalAudioOut, b.sampleRate
 }
 
+type voicePipelineTurn struct {
+	seq               uint64
+	key               string
+	assistantText     string
+	recTurnID         string
+	recAudioBuf       []byte
+	recAudioSR        int
+	sessionDir        string
+	turnStart         time.Time
+	syncBuf           *voiceAVSyncBuffer
+	avatarStarted     bool
+	avatarInputClosed bool
+	avatarAudioCh     chan *pb.AudioChunk
+	avatarCtx         context.Context
+	avatarCancel      context.CancelFunc
+	doneCh            chan voicePipelineTurnResult
+	aborted           bool
+}
+
+type voicePipelineTurnResult struct {
+	turn *voicePipelineTurn
+	err  error
+}
+
+func voiceOutputTurnKey(output *pb.VoiceLLMOutput) string {
+	if output == nil {
+		return ""
+	}
+	if replyID := strings.TrimSpace(output.GetReplyId()); replyID != "" {
+		return "reply:" + replyID
+	}
+	if questionID := strings.TrimSpace(output.GetQuestionId()); questionID != "" {
+		return "question:" + questionID
+	}
+	return ""
+}
+
+func voiceOutputHasAssistantContent(output *pb.VoiceLLMOutput) bool {
+	if output == nil {
+		return false
+	}
+	if output.GetTranscript() != "" {
+		return true
+	}
+	audio := output.GetAudio()
+	return audio != nil && len(audio.GetData()) > 0
+}
+
+func voiceOutputIsFinal(output *pb.VoiceLLMOutput) bool {
+	if output == nil {
+		return false
+	}
+	if output.GetIsFinal() {
+		return true
+	}
+	audio := output.GetAudio()
+	return audio != nil && audio.GetIsFinal()
+}
+
 // Orchestrator manages the inference pipeline for each session,
 // coordinating between the gRPC inference client, media peers,
 // and WebSocket hub for real-time updates.
@@ -743,7 +802,14 @@ func (o *Orchestrator) handleStandardTextInput(ctx context.Context, session *Ses
 }
 
 func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Session, sessionID string, text string) error {
-	o.stopPipelineAndWait(session, sessionID, true)
+	turnSeq := session.MarkTurnStarted()
+	o.advancePlaybackEpoch(sessionID, turnSeq)
+	if o.inference != nil {
+		if err := o.inference.Interrupt(context.Background(), sessionID); err != nil {
+			log.Printf("Failed to interrupt VoiceLLM for session %s: %v", sessionID, err)
+		}
+	}
+	o.cancelPipeline(session)
 
 	pipeCtx, cancel := context.WithCancel(ctx)
 	session.mu.Lock()
@@ -751,11 +817,13 @@ func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Ses
 	session.mu.Unlock()
 
 	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	session.SetState(StateProcessing)
+	o.broadcastStatusTurn(sessionID, "processing", turnSeq)
 	pipelineSeq := session.MarkPipelineRunning()
 	inputCh := singleVoiceTextInput(text)
 
 	go func(seq uint64) {
-		o.runVoiceLLMPipeline(pipeCtx, session, sessionID, inputCh, seq)
+		o.runVoiceLLMPipeline(pipeCtx, session, sessionID, inputCh, seq, turnSeq)
 		if pipeCtx.Err() != nil || !session.IsCurrentPipeline(seq) {
 			return
 		}
@@ -1054,385 +1122,497 @@ func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, 
 	session.mu.Unlock()
 
 	pipelineSeq := session.MarkPipelineRunning()
-	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq)
+	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq, 0)
 	return nil
 }
 
 // runVoiceLLMPipeline executes a VoiceLLM turn source -> VoiceLLM -> Avatar (video).
-//
-// Serial flow: collect all audio for one turn, merge into a single chunk,
-// generate avatar video, and publish each video chunk immediately.
-func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64) {
-	// Function-level message accumulators: track pending user/assistant text
-	// so we can store them even when ctx is cancelled mid-turn.
-	var pendingUserText string
-	var pendingAssistantText string
-
-	defer func() {
-		// Store any pending messages before cleanup
-		log.Printf("voiceLLM defer: session=%s pendingUser=%q pendingAssistant=%q historyLen=%d",
-			sessionID, pendingUserText, pendingAssistantText, len(session.History))
-		if pendingUserText != "" {
-			session.AddMessage(ChatMessage{Role: "user", Content: pendingUserText})
-		}
-		if pendingAssistantText != "" {
-			session.AddMessage(ChatMessage{Role: "assistant", Content: pendingAssistantText})
-		}
-		log.Printf("voiceLLM defer done: session=%s finalHistoryLen=%d", sessionID, len(session.History))
-		session.MarkPipelineFinished(pipelineSeq)
-		session.SetState(StateListening)
-		o.broadcastStatus(sessionID, "idle")
-	}()
-
+func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64, initialTurnSeq uint64) {
 	sessionDir := ""
 	if o.recorder != nil {
 		sessionDir = o.sessionRecordingDir(session)
 	}
 	var recTurnNum int
 
-	session.SetState(StateProcessing)
-	o.broadcastStatus(sessionID, "processing")
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	voiceConfig := o.buildVoiceLLMSessionConfig(session, sessionID)
-
-	// outputCh stays open for the entire session; a single turn ends with
-	// audio.IsFinal=true. The channel closes when the bot disconnects.
 	outputCh, errCh := o.inference.ConverseStream(ctx, inputCh, voiceConfig)
 
-	// Outer loop: one iteration = one complete assistant turn.
-	for {
-		if ctx.Err() != nil {
+	pendingTurnSeq := initialTurnSeq
+	pendingTurnAssistantReady := initialTurnSeq > 0
+	ignoredTurnKeys := make(map[string]struct{})
+
+	var currentTurn *voicePipelineTurn
+	var currentTurnDone <-chan voicePipelineTurnResult
+	var streamErr error
+
+	lookupPeer := func() mediapeer.MediaPeer {
+		o.mu.RLock()
+		defer o.mu.RUnlock()
+		return o.peers[sessionID]
+	}
+
+	reservePendingTurn := func() uint64 {
+		if pendingTurnSeq == 0 {
+			pendingTurnSeq = session.MarkTurnStarted()
+			o.advancePlaybackEpoch(sessionID, pendingTurnSeq)
+		}
+		return pendingTurnSeq
+	}
+
+	broadcastProcessing := func(turnSeq uint64) {
+		if turnSeq == 0 || !session.IsCurrentPipeline(pipelineSeq) {
 			return
 		}
+		session.SetState(StateProcessing)
+		o.broadcastStatusTurn(sessionID, "processing", turnSeq)
+	}
 
-		// ── Phase 1: collect this turn's audio ──────────────────────────────
-		var (
-			audioChunks []*pb.AudioChunk
-			recAudioBuf []byte
-			recAudioSR  int
-			recTurnID   string
-			turnDone    bool
-			sessionDone bool
-		)
-		// Reset pending text for this turn
-		pendingUserText = ""
-		pendingAssistantText = ""
-	collectLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case output, ok := <-outputCh:
-				if !ok {
-					sessionDone = true
-					break collectLoop
-				}
-				payload := map[string]any{
-					"type":     "transcript",
-					"text":     output.GetTranscript(),
-					"is_final": output.GetIsFinal(),
-					"speaker":  "assistant",
-				}
-				if output.GetTranscript() != "" {
-					o.broadcastJSON(sessionID, payload)
-					// Track assistant transcript for history storage (function-level)
-					pendingAssistantText = output.GetTranscript()
-				}
-				if output.GetUserTranscript() != "" {
-					o.broadcastJSON(sessionID, map[string]any{
-						"type":     "transcript",
-						"text":     output.GetUserTranscript(),
-						"is_final": true,
-						"speaker":  "user",
-					})
-					// Track user transcript for history storage (function-level)
-					pendingUserText = output.GetUserTranscript()
-				}
-
-				audio := output.GetAudio()
-				hasA := audio != nil && (len(audio.GetData()) > 0 || audio.GetIsFinal())
-				if o.recorder != nil && recTurnID == "" && (output.GetTranscript() != "" || hasA) {
-					recTurnNum++
-					recTurnID = fmt.Sprintf("turn%d", recTurnNum)
-				}
-				if !hasA {
-					if output.GetIsFinal() {
-						turnDone = true
-						break collectLoop
-					}
-					continue
-				}
-
-				if recTurnID != "" && len(audio.GetData()) > 0 {
-					recAudioBuf = append(recAudioBuf, audio.GetData()...)
-					if recAudioSR == 0 {
-						recAudioSR = int(audio.GetSampleRate())
-					}
-				}
-
-				audioChunks = append(audioChunks, proto.Clone(audio).(*pb.AudioChunk))
-
-				if audio.GetIsFinal() {
-					turnDone = true
-					if o.recorder != nil && recTurnID != "" {
-						log.Printf("recording: SaveRawAudio session=%s turn=%s pcmLen=%d sampleRate=%d dir=%s",
-							sessionID, recTurnID, len(recAudioBuf), recAudioSR, sessionDir)
-						saveTurnID, savePCM, saveSR := recTurnID, recAudioBuf, recAudioSR
-						saveDir := sessionDir
-						go func() {
-							if err := o.recorder.SaveRawAudio(saveDir, saveTurnID, savePCM, saveSR); err != nil {
-								log.Printf("recording: SaveRawAudio error session=%s turn=%s: %v", sessionID, saveTurnID, err)
-							}
-						}()
-					}
-					break collectLoop
-				}
-			}
-		}
-
-		if turnDone && o.recorder != nil && recTurnID != "" && pendingAssistantText != "" {
-			log.Printf("recording: SaveTranscript session=%s turn=%s chars=%d dir=%s",
-				sessionID, recTurnID, len(pendingAssistantText), sessionDir)
-			if err := o.recorder.SaveTranscript(sessionDir, recTurnID, pendingAssistantText); err != nil {
-				log.Printf("recording: SaveTranscript error session=%s turn=%s: %v", sessionID, recTurnID, err)
-			}
-		}
-
-		turnStart := time.Now()
-
-		// Commit this turn's messages to session history and clear pending
-		log.Printf("voiceLLM turn commit: session=%s pendingUser=%q pendingAssistant=%q",
-			sessionID, pendingUserText, pendingAssistantText)
-		if pendingUserText != "" {
-			session.AddMessage(ChatMessage{Role: "user", Content: pendingUserText})
-			pendingUserText = ""
-		}
-		if pendingAssistantText != "" {
-			session.AddMessage(ChatMessage{Role: "assistant", Content: pendingAssistantText})
-			pendingAssistantText = ""
-		}
-
-		if sessionDone {
-			if err := <-errCh; err != nil {
-				log.Printf("VoiceLLM stream error for session %s: %v", sessionID, err)
-				o.broadcastError(sessionID, "Voice conversation failed")
-			}
+	abortTurn := func(turn *voicePipelineTurn, ignoreKey bool) {
+		if turn == nil {
 			return
 		}
-		if len(audioChunks) == 0 {
-			continue
+		turn.aborted = true
+		if ignoreKey && turn.key != "" {
+			ignoredTurnKeys[turn.key] = struct{}{}
 		}
+		if turn.avatarCancel != nil {
+			turn.avatarCancel()
+		}
+	}
 
-		// ── Phase 2: merge audio + prepare syncBuf + generate video ─────────
-		var mergedData []byte
-		var mergedSR int32
-		var mergedChannels int32
-		var mergedFormat string
-		for _, c := range audioChunks {
-			mergedData = append(mergedData, c.GetData()...)
-			if mergedSR == 0 {
-				mergedSR = c.GetSampleRate()
-				mergedChannels = c.GetChannels()
-				mergedFormat = c.GetFormat()
+	saveCompletedTurn := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.aborted {
+			return
+		}
+		if turn.assistantText != "" {
+			session.AddMessage(ChatMessage{Role: "assistant", Content: turn.assistantText})
+		}
+		if o.recorder == nil || turn.recTurnID == "" {
+			return
+		}
+		if len(turn.recAudioBuf) > 0 {
+			saveTurnID, savePCM, saveSR := turn.recTurnID, turn.recAudioBuf, turn.recAudioSR
+			saveDir := turn.sessionDir
+			go func() {
+				if err := o.recorder.SaveRawAudio(saveDir, saveTurnID, savePCM, saveSR); err != nil {
+					log.Printf("recording: SaveRawAudio error session=%s turn=%s: %v", sessionID, saveTurnID, err)
+				}
+			}()
+		}
+		if turn.assistantText != "" {
+			if err := o.recorder.SaveTranscript(turn.sessionDir, turn.recTurnID, turn.assistantText); err != nil {
+				log.Printf("recording: SaveTranscript error session=%s turn=%s: %v", sessionID, turn.recTurnID, err)
 			}
 		}
-		// Append trailing silence so the avatar closes its mouth naturally.
-		sr := int(mergedSR)
-		if sr <= 0 {
-			sr = 16000
+	}
+
+	setIdleIfCurrent := func(turnSeq uint64) {
+		if turnSeq == 0 || !session.IsCurrentPipeline(pipelineSeq) || !session.IsCurrentTurn(turnSeq) {
+			return
 		}
-		silenceBytes := make([]byte, sr*2*3/2) // 1.5 seconds of silence (s16le mono)
-		mergedData = append(mergedData, silenceBytes...)
+		session.SetState(StateListening)
+		o.broadcastStatusTurn(sessionID, "idle", turnSeq)
+	}
 
-		mergedChunk := &pb.AudioChunk{
-			Data:       mergedData,
-			SampleRate: mergedSR,
-			Channels:   mergedChannels,
-			Format:     mergedFormat,
-			IsFinal:    true,
+	startTurn := func(key string) *voicePipelineTurn {
+		seq := pendingTurnSeq
+		if seq == 0 {
+			seq = session.MarkTurnStarted()
+			o.advancePlaybackEpoch(sessionID, seq)
 		}
-
-		syncBuf := newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples)
-		if dropped := syncBuf.appendPCM(mergedChunk.GetData(), int(mergedChunk.GetSampleRate())); dropped > 0 {
-			bufferedSamples, _, _, _ := syncBuf.snapshot()
-			log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+		if key != "" {
+			delete(ignoredTurnKeys, key)
 		}
+		recTurnNum++
+		turn := &voicePipelineTurn{
+			seq:        seq,
+			key:        key,
+			recTurnID:  fmt.Sprintf("turn%d", recTurnNum),
+			recAudioSR: 16000,
+			sessionDir: sessionDir,
+			turnStart:  time.Now(),
+			syncBuf:    newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples),
+		}
+		pendingTurnSeq = 0
+		pendingTurnAssistantReady = false
+		broadcastProcessing(seq)
+		return turn
+	}
 
-		// Serialize with concurrent avatar operations (e.g. background EnsureIdleVideo)
-		// to prevent deadlock on the Python-side FlashHead threading.Lock.
-		// The FlashHead plugin runs inference on the asyncio event-loop thread when
-		// world_size > 1; a second GenerateStream gRPC call arriving while the first
-		// holds the plugin lock causes a permanent deadlock.
-		o.avatarMu.Lock()
-		videoCh, avatarErrCh := o.inference.GenerateAvatar(ctx, []*pb.AudioChunk{mergedChunk})
+	startAvatarWorker := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.aborted || turn.avatarStarted {
+			return
+		}
+		turn.avatarStarted = true
+		turn.doneCh = make(chan voicePipelineTurnResult, 1)
+		turn.avatarAudioCh = make(chan *pb.AudioChunk, 64)
+		turn.avatarCtx, turn.avatarCancel = context.WithCancel(ctx)
+		currentTurnDone = turn.doneCh
 
-		// ── Phase 3: stream video chunks ────────────────────────────────────
-		// Delay speaking status until first video frame arrives (avoids frozen-frame stall on frontend).
-		speakingBroadcasted := false
+		go func(turn *voicePipelineTurn) {
+			result := voicePipelineTurnResult{turn: turn}
+			defer func() {
+				turn.doneCh <- result
+			}()
 
-		var turnRec *recording.TurnRecording
+			o.avatarMu.Lock()
+			defer o.avatarMu.Unlock()
 
-		var (
-			segVideo            []byte
-			segFrames           int
-			segWidth            int
-			segHeight           int
-			segFPS              int
-			segCount            int
-			segSeq              int64
-			cumulativeDriftMs   int64
-			lastKnownSampleRate int
-			firstFrameSent      bool
-		)
-		flushVoiceSeg := func(isFinalSeg bool) {
-			if segCount == 0 {
+			if turn.avatarCtx.Err() != nil {
 				return
 			}
-			segSeq++
-			o.mu.RLock()
-			peer := o.peers[sessionID]
-			o.mu.RUnlock()
-			if peer != nil {
-				traceLabel := "voice-trace session=" + sessionID + " seg=" + strconv.FormatInt(segSeq, 10)
-				segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := syncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
-				bufferedSamples, _, _, sampleRate := syncBuf.snapshot()
-				if sampleRate > 0 {
-					lastKnownSampleRate = sampleRate
-				} else {
-					sampleRate = lastKnownSampleRate
+
+			videoCh, avatarErrCh := o.inference.GenerateAvatarStream(turn.avatarCtx, turn.avatarAudioCh)
+
+			var turnRec *recording.TurnRecording
+			var (
+				segVideo            []byte
+				segFrames           int
+				segWidth            int
+				segHeight           int
+				segFPS              int
+				segCount            int
+				segSeq              int64
+				lastKnownSampleRate int
+				firstFrameSent      bool
+				speakingBroadcasted bool
+			)
+
+			flushVoiceSeg := func(isFinalSeg bool) {
+				if segCount == 0 {
+					return
 				}
-				audioSpanMs := 0
-				videoSpanMs := 0
-				if sampleRate > 0 {
-					audioSpanMs = outSamples * 1000 / sampleRate
-				}
-				if segFPS > 0 {
-					videoSpanMs = segFrames * 1000 / segFPS
-				}
-				deltaMs := audioSpanMs - videoSpanMs
-				cumulativeDriftMs += int64(deltaMs)
-				if outSamples < wantSamples {
-					log.Printf("voice av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
-						sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
-					if sampleRate <= 0 {
-						sampleRate = 16000
+				segSeq++
+				peer := lookupPeer()
+				if peer != nil {
+					traceLabel := "voice-trace session=" + sessionID + " seg=" + strconv.FormatInt(segSeq, 10)
+					segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := turn.syncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
+					bufferedSamples, _, _, sampleRate := turn.syncBuf.snapshot()
+					if sampleRate > 0 {
+						lastKnownSampleRate = sampleRate
+					} else {
+						sampleRate = lastKnownSampleRate
 					}
-					log.Printf("voice av strict pad session=%s: %d→%d samples (%.3fs silence added)",
-						sessionID, outSamples, wantSamples,
-						float64(wantSamples-outSamples)/float64(sampleRate))
+					if outSamples < wantSamples {
+						if sampleRate <= 0 {
+							sampleRate = 16000
+						}
+						log.Printf("voice av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
+							sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
+					}
+					if isFinalSeg && bufferedSamplesAfterTake > 0 {
+						log.Printf("voice av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
+					}
+					raw := &mediapeer.RawAVSegment{
+						TraceLabel: traceLabel,
+						Epoch:      turn.seq,
+						RGB:        segVideo,
+						PCM:        segPCM,
+						SampleRate: sampleRate,
+						Width:      segWidth,
+						Height:     segHeight,
+						FPS:        segFPS,
+						NumFrames:  segFrames,
+					}
+					if err := peer.SendAVSegment(raw); err != nil {
+						log.Printf("voice av SendAVSegment failed session=%s seg=%d: %v", sessionID, segSeq, err)
+					}
+					if turnRec != nil {
+						turnRec.WriteVideoChunk(segVideo)
+						turnRec.WriteAudioChunk(segPCM, sampleRate)
+					}
 				}
-				if isFinalSeg && bufferedSamplesAfterTake > 0 {
-					log.Printf("voice av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
-				}
-				// Send to AV pipeline (non-blocking encode+publish).
-				raw := &mediapeer.RawAVSegment{
-					TraceLabel: traceLabel,
-					RGB:        segVideo,
-					PCM:        segPCM,
-					SampleRate: sampleRate,
-					Width:      segWidth,
-					Height:     segHeight,
-					FPS:        segFPS,
-					NumFrames:  segFrames,
-				}
-				if err := peer.SendAVSegment(raw); err != nil {
-					log.Printf("voice av SendAVSegment failed session=%s seg=%d: %v", sessionID, segSeq, err)
-				}
-				if turnRec != nil {
-					turnRec.WriteVideoChunk(segVideo)
-					turnRec.WriteAudioChunk(segPCM, sampleRate)
-				}
+				segVideo = nil
+				segFrames = 0
+				segCount = 0
 			}
-			segVideo = nil
-			segFrames = 0
-			segCount = 0
-		}
 
-	videoLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				flushVoiceSeg(false)
-				if turnRec != nil {
-					_ = turnRec.Finish()
-				}
-				o.avatarMu.Unlock()
-				return
-			case chunk, ok := <-videoCh:
-				if !ok {
+			for {
+				select {
+				case <-turn.avatarCtx.Done():
 					flushVoiceSeg(false)
 					if turnRec != nil {
 						_ = turnRec.Finish()
-						turnRec = nil
 					}
-					if remain, totalIn, totalOut, _ := syncBuf.snapshot(); remain > 0 {
-						log.Printf("voice sync tail flush for session %s: dropping_unaligned_samples=%d total_in=%d total_out=%d", sessionID, remain, totalIn, totalOut)
+					return
+				case chunk, ok := <-videoCh:
+					if !ok {
+						flushVoiceSeg(false)
+						if turnRec != nil {
+							_ = turnRec.Finish()
+							turnRec = nil
+						}
+						if remain, totalIn, totalOut, _ := turn.syncBuf.snapshot(); remain > 0 {
+							log.Printf("voice sync tail flush for session %s: dropping_unaligned_samples=%d total_in=%d total_out=%d", sessionID, remain, totalIn, totalOut)
+						}
+						if err := <-avatarErrCh; err != nil && turn.avatarCtx.Err() == nil && !errors.Is(err, context.Canceled) {
+							result.err = err
+						}
+						if turn.avatarCtx.Err() == nil {
+							if peer := lookupPeer(); peer != nil {
+								peer.WaitAVDrain(10 * time.Second)
+							}
+						}
+						return
 					}
-					if err := <-avatarErrCh; err != nil {
-						log.Printf("Avatar stream error for session %s (voice_llm): %v", sessionID, err)
-						o.broadcastError(sessionID, "Avatar generation failed")
+
+					nf := int(chunk.GetNumFrames())
+					if nf <= 0 && int(chunk.GetWidth())*int(chunk.GetHeight())*3 > 0 {
+						nf = len(chunk.GetData()) / (int(chunk.GetWidth()) * int(chunk.GetHeight()) * 3)
 					}
-					break videoLoop
-				}
-				nf := int(chunk.GetNumFrames())
-				if nf <= 0 && int(chunk.GetWidth())*int(chunk.GetHeight())*3 > 0 {
-					nf = len(chunk.GetData()) / (int(chunk.GetWidth()) * int(chunk.GetHeight()) * 3)
-				}
-				fps := int(chunk.GetFps())
-				if fps <= 0 {
-					fps = 20 // FlashHead 固定输出 20fps
-				}
-				if !firstFrameSent {
-					firstFrameSent = true
-					log.Printf("TTFF voice pipeline session=%s first_video_chunk=%.3fs", sessionID, time.Since(turnStart).Seconds())
-					if !speakingBroadcasted {
-						speakingBroadcasted = true
-						session.SetState(StateSpeaking)
-						o.broadcastStatus(sessionID, "speaking")
+					fps := int(chunk.GetFps())
+					if fps <= 0 {
+						fps = 20
 					}
-				}
-				// 懒初始化录制：使用第一个 chunk 的实际 FPS 和尺寸
-				if turnRec == nil && o.recorder != nil && nf > 0 {
-					log.Printf("recording: BeginTurn session=%s turn=turn%d width=%d height=%d fps=%d dir=%s",
-						sessionID, recTurnNum, chunk.GetWidth(), chunk.GetHeight(), fps, sessionDir)
-					turnRec = o.recorder.BeginTurn(sessionDir, fmt.Sprintf("turn%d", recTurnNum), int(chunk.GetWidth()), int(chunk.GetHeight()), fps)
-				}
-				segVideo = append(segVideo, chunk.GetData()...)
-				segFrames += nf
-				segWidth = int(chunk.GetWidth())
-				segHeight = int(chunk.GetHeight())
-				segFPS = fps
-				segCount++
-				// Serial path: flush every chunk immediately.
-				flushVoiceSeg(chunk.GetIsFinal())
-				if chunk.GetIsFinal() {
-					if turnRec != nil {
+					if !firstFrameSent {
+						firstFrameSent = true
+						log.Printf("TTFF voice pipeline session=%s turn=%d first_video_chunk=%.3fs", sessionID, turn.seq, time.Since(turn.turnStart).Seconds())
+						if !speakingBroadcasted && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(turn.seq) {
+							speakingBroadcasted = true
+							session.SetState(StateSpeaking)
+							o.broadcastStatusTurn(sessionID, "speaking", turn.seq)
+						}
+					}
+					if turnRec == nil && o.recorder != nil && turn.recTurnID != "" && nf > 0 {
+						turnRec = o.recorder.BeginTurn(turn.sessionDir, turn.recTurnID, int(chunk.GetWidth()), int(chunk.GetHeight()), fps)
+					}
+
+					segVideo = append(segVideo, chunk.GetData()...)
+					segFrames += nf
+					segWidth = int(chunk.GetWidth())
+					segHeight = int(chunk.GetHeight())
+					segFPS = fps
+					segCount++
+					flushVoiceSeg(chunk.GetIsFinal())
+					if chunk.GetIsFinal() && turnRec != nil {
 						_ = turnRec.Finish()
 						turnRec = nil
 					}
 				}
 			}
+		}(turn)
+	}
+
+	closeTurnInput := func(turn *voicePipelineTurn) {
+		if turn == nil || !turn.avatarStarted || turn.avatarInputClosed {
+			return
 		}
-
-		o.avatarMu.Unlock()
-
-		// Wait for the peer's AV pipeline to finish publishing all queued
-		// segments (encoding + real-time paced output) before changing status.
-		// Without this, the frontend switches to idle video while the last
-		// few seconds of speech are still being delivered via WebRTC.
-		o.mu.RLock()
-		peer := o.peers[sessionID]
-		o.mu.RUnlock()
-		if peer != nil {
-			peer.WaitAVDrain(10 * time.Second)
+		sampleRate := turn.recAudioSR
+		if sampleRate <= 0 {
+			if _, _, _, bufferedSR := turn.syncBuf.snapshot(); bufferedSR > 0 {
+				sampleRate = bufferedSR
+			}
 		}
+		silence := buildTrailingSilence(sampleRate)
+		if dropped := turn.syncBuf.appendPCM(silence.GetData(), int(silence.GetSampleRate())); dropped > 0 {
+			bufferedSamples, _, _, _ := turn.syncBuf.snapshot()
+			log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+		}
+		select {
+		case turn.avatarAudioCh <- silence:
+		case <-turn.avatarCtx.Done():
+		}
+		close(turn.avatarAudioCh)
+		turn.avatarInputClosed = true
+	}
 
-		// Turn done, go back to processing for the next turn.
-		session.SetState(StateProcessing)
-		o.broadcastStatus(sessionID, "processing")
+	currentStatusTurnSeq := func() uint64 {
+		if currentTurn != nil {
+			return currentTurn.seq
+		}
+		if pendingTurnSeq != 0 {
+			return pendingTurnSeq
+		}
+		return session.CurrentTurnSeq()
+	}
+
+	defer func() {
+		if currentTurn != nil {
+			abortTurn(currentTurn, false)
+		}
+		session.MarkPipelineFinished(pipelineSeq)
+		if session.IsCurrentPipeline(pipelineSeq) {
+			session.SetState(StateListening)
+			o.broadcastStatusTurn(sessionID, "idle", currentStatusTurnSeq())
+		}
+	}()
+
+	if initialTurnSeq == 0 && session.IsCurrentPipeline(pipelineSeq) {
+		session.SetState(StateListening)
+	}
+
+	for outputCh != nil || currentTurn != nil || errCh != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-currentTurnDone:
+			if currentTurn == nil || result.turn != currentTurn {
+				continue
+			}
+			turn := currentTurn
+			currentTurn = nil
+			currentTurnDone = nil
+			if result.err != nil && !turn.aborted {
+				log.Printf("Avatar stream error for session %s (voice_llm): %v", sessionID, result.err)
+				if session.IsCurrentPipeline(pipelineSeq) {
+					o.broadcastError(sessionID, "Avatar generation failed")
+				}
+			}
+			if turn.aborted {
+				continue
+			}
+			saveCompletedTurn(turn)
+			setIdleIfCurrent(turn.seq)
+		case output, ok := <-outputCh:
+			if !ok {
+				outputCh = nil
+				continue
+			}
+
+			if output.GetBargeIn() {
+				if currentTurn != nil || pendingTurnSeq == 0 {
+					seq := reservePendingTurn()
+					pendingTurnAssistantReady = false
+					if currentTurn != nil {
+						abortTurn(currentTurn, true)
+						currentTurn = nil
+						currentTurnDone = nil
+						broadcastProcessing(seq)
+					}
+				}
+				continue
+			}
+
+			if userText := strings.TrimSpace(output.GetUserTranscript()); userText != "" {
+				if currentTurn != nil {
+					abortTurn(currentTurn, true)
+					currentTurn = nil
+					currentTurnDone = nil
+				}
+				seq := reservePendingTurn()
+				pendingTurnAssistantReady = true
+				session.AddMessage(ChatMessage{Role: "user", Content: userText})
+				o.broadcastJSON(sessionID, map[string]any{
+					"type":     "transcript",
+					"text":     userText,
+					"is_final": true,
+					"speaker":  "user",
+					"turn_seq": seq,
+				})
+				broadcastProcessing(seq)
+			}
+
+			turnKey := voiceOutputTurnKey(output)
+			if turnKey != "" {
+				if _, ignored := ignoredTurnKeys[turnKey]; ignored {
+					if voiceOutputIsFinal(output) {
+						delete(ignoredTurnKeys, turnKey)
+					}
+					continue
+				}
+			}
+
+			if pendingTurnSeq != 0 && !pendingTurnAssistantReady && currentTurn == nil && voiceOutputHasAssistantContent(output) {
+				continue
+			}
+
+			if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) {
+				continue
+			}
+			if currentTurn == nil && !voiceOutputHasAssistantContent(output) {
+				continue
+			}
+
+			if currentTurn != nil {
+				if currentTurn.key == "" && turnKey != "" {
+					currentTurn.key = turnKey
+				} else if turnKey != "" && currentTurn.key != "" && turnKey != currentTurn.key {
+					abortTurn(currentTurn, true)
+					currentTurn = nil
+					currentTurnDone = nil
+				}
+			}
+
+			if currentTurn == nil {
+				if pendingTurnSeq != 0 && !pendingTurnAssistantReady {
+					continue
+				}
+				currentTurn = startTurn(turnKey)
+			}
+			if currentTurn.key == "" && turnKey != "" {
+				currentTurn.key = turnKey
+			}
+
+			isFinal := voiceOutputIsFinal(output)
+			if transcript := output.GetTranscript(); transcript != "" {
+				o.broadcastJSON(sessionID, map[string]any{
+					"type":     "transcript",
+					"text":     transcript,
+					"is_final": isFinal,
+					"speaker":  "assistant",
+					"turn_seq": currentTurn.seq,
+				})
+				if isFinal {
+					currentTurn.assistantText = transcript
+				} else {
+					currentTurn.assistantText += transcript
+				}
+			}
+
+			audio := output.GetAudio()
+			if audio != nil && len(audio.GetData()) > 0 {
+				if !currentTurn.avatarStarted {
+					startAvatarWorker(currentTurn)
+				}
+				if dropped := currentTurn.syncBuf.appendPCM(audio.GetData(), int(audio.GetSampleRate())); dropped > 0 {
+					bufferedSamples, _, _, _ := currentTurn.syncBuf.snapshot()
+					log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+				}
+				currentTurn.recAudioBuf = append(currentTurn.recAudioBuf, audio.GetData()...)
+				if int(audio.GetSampleRate()) > 0 {
+					currentTurn.recAudioSR = int(audio.GetSampleRate())
+				}
+				audioClone := proto.Clone(audio).(*pb.AudioChunk)
+				select {
+				case currentTurn.avatarAudioCh <- audioClone:
+				case <-currentTurn.avatarCtx.Done():
+				}
+			}
+
+			if !isFinal {
+				continue
+			}
+
+			if currentTurn.avatarStarted {
+				closeTurnInput(currentTurn)
+				continue
+			}
+
+			turn := currentTurn
+			currentTurn = nil
+			currentTurnDone = nil
+			saveCompletedTurn(turn)
+			setIdleIfCurrent(turn.seq)
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil && !errors.Is(err, context.Canceled) {
+				streamErr = err
+			}
+			errCh = nil
+		}
+	}
+
+	if streamErr != nil {
+		log.Printf("VoiceLLM stream error for session %s: %v", sessionID, streamErr)
+		if session.IsCurrentPipeline(pipelineSeq) {
+			o.broadcastError(sessionID, "Voice conversation failed")
+		}
 	}
 }
 
@@ -1443,6 +1623,8 @@ func (o *Orchestrator) Interrupt(sessionID string) error {
 		return err
 	}
 
+	turnSeq := session.MarkTurnStarted()
+	o.advancePlaybackEpoch(sessionID, turnSeq)
 	o.cancelPipeline(session)
 
 	// Also interrupt VoiceLLM on the inference side
@@ -1451,7 +1633,7 @@ func (o *Orchestrator) Interrupt(sessionID string) error {
 	}
 
 	session.SetState(StateListening)
-	o.broadcastStatus(sessionID, "idle")
+	o.broadcastStatusTurn(sessionID, "idle", turnSeq)
 	return nil
 }
 
@@ -1517,12 +1699,35 @@ func (o *Orchestrator) cancelPipeline(session *Session) {
 	}
 }
 
+func (o *Orchestrator) advancePlaybackEpoch(sessionID string, turnSeq uint64) {
+	if turnSeq == 0 {
+		return
+	}
+	o.mu.RLock()
+	peer := o.peers[sessionID]
+	o.mu.RUnlock()
+	if peer != nil {
+		peer.AdvancePlaybackEpoch(turnSeq)
+	}
+}
+
 // broadcastStatus sends an avatar_status message to all WebSocket clients.
 func (o *Orchestrator) broadcastStatus(sessionID, status string) {
 	o.broadcastJSON(sessionID, map[string]string{
 		"type":   "avatar_status",
 		"status": status,
 	})
+}
+
+func (o *Orchestrator) broadcastStatusTurn(sessionID, status string, turnSeq uint64) {
+	payload := map[string]any{
+		"type":   "avatar_status",
+		"status": status,
+	}
+	if turnSeq > 0 {
+		payload["turn_seq"] = turnSeq
+	}
+	o.broadcastJSON(sessionID, payload)
 }
 
 // broadcastError sends an error message to all WebSocket clients.

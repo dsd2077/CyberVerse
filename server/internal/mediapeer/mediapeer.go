@@ -19,6 +19,9 @@ type MediaPeer interface {
 	// SendAVSegment enqueues a raw AV segment for encode+publish.
 	SendAVSegment(seg *RawAVSegment) error
 
+	// AdvancePlaybackEpoch invalidates any older queued or in-flight AV segments.
+	AdvancePlaybackEpoch(epoch uint64)
+
 	// WaitAVDrain blocks until all queued segments are published.
 	WaitAVDrain(timeout time.Duration)
 

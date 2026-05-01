@@ -384,6 +384,190 @@ gRPC oneof 发送规则：
 
 ## 后续建议
 
-- 补齐 `dialog_id` 复用在主路径上的接线
+- 完善 `dialog_id` 复用在长会话与重连场景下的稳定性验证与观测
 - 为文本模式补单测和集成测试
 - 在 `runVoiceLLMPipeline()` 中显式区分“typed user text”与“ASR user transcript”，避免重复入 history
+
+## `runVoiceLLMPipeline()` 运行时编排深度解析
+
+本节聚焦 `server/internal/orchestrator/orchestrator.go` 中 `runVoiceLLMPipeline()` 的 runtime 协调逻辑，特别是 turn 预留、barge-in 打断、assistant 放行门控、以及 AV epoch 切换。
+
+### 1. `reservePendingTurn()` 的职责与设计动机
+
+核心代码：
+
+```go
+reservePendingTurn := func() uint64 {
+	if pendingTurnSeq == 0 {
+		pendingTurnSeq = session.MarkTurnStarted()
+		o.advancePlaybackEpoch(sessionID, pendingTurnSeq)
+	}
+	return pendingTurnSeq
+}
+```
+
+解释：
+
+- 它是“懒分配 turn”的入口，只在 `pendingTurnSeq == 0` 时分配新 turn。
+- 多个分支重复调用不会重复创建 turn，具备幂等语义。
+- 分配 turn 后立刻调用 `advancePlaybackEpoch`，把媒体播放 epoch 推进到新 turn，减少旧轮次残留音视频污染新轮次的风险。
+
+### 2. `advancePlaybackEpoch()` 为什么这样写
+
+关键逻辑：
+
+```go
+func (o *Orchestrator) advancePlaybackEpoch(sessionID string, turnSeq uint64) {
+	if turnSeq == 0 {
+		return
+	}
+	o.mu.RLock()
+	peer := o.peers[sessionID]
+	o.mu.RUnlock()
+	if peer != nil {
+		peer.AdvancePlaybackEpoch(turnSeq)
+	}
+}
+```
+
+解释：
+
+- `turnSeq == 0` 直接返回，避免无效 epoch 污染下游状态。
+- `o.peers` 是共享 map，用 `RLock` 保护读取，保证并发安全。
+- 先取 `peer` 再释放锁，避免把外部调用（`peer.AdvancePlaybackEpoch`）放在锁内，减小锁竞争。
+- `peer != nil` 容错会话未建立或已断开的场景，保持函数幂等、无副作用 panic。
+
+### 3. barge-in 分支与 `userTranscript` 分支是否冲突
+
+相关片段：
+
+```go
+if output.GetBargeIn() {
+	if currentTurn != nil || pendingTurnSeq == 0 {
+		seq := reservePendingTurn()
+		pendingTurnAssistantReady = false
+		if currentTurn != nil {
+			abortTurn(currentTurn, true)
+			currentTurn = nil
+			currentTurnDone = nil
+			broadcastProcessing(seq)
+		}
+	}
+	continue
+}
+
+if userText := strings.TrimSpace(output.GetUserTranscript()); userText != "" {
+	if currentTurn != nil {
+		abortTurn(currentTurn, true)
+		currentTurn = nil
+		currentTurnDone = nil
+	}
+	seq := reservePendingTurn()
+	pendingTurnAssistantReady = true
+	...
+	broadcastProcessing(seq)
+}
+```
+
+结论：
+
+- 两者通常不是冲突，而是“同一轮打断流程的两阶段”：
+  - barge-in：先抢占 turn、终止旧 turn，且先禁止 assistant 抢跑（`pendingTurnAssistantReady=false`）。
+  - user transcript：确认新一轮用户输入成立，再放行 assistant（`pendingTurnAssistantReady=true`）。
+- `reservePendingTurn()` 幂等，所以不会因为两个分支都调用而生成两个 turn。
+- 可能出现同 turn 的重复 `processing` 广播，这属于可接受冗余通知，不会改变 turn 语义。
+
+### 4. `1518-1527` 门控条件不是冗余，而是三道闸门
+
+片段：
+
+```go
+if pendingTurnSeq != 0 && !pendingTurnAssistantReady && currentTurn == nil && voiceOutputHasAssistantContent(output) {
+	continue
+}
+
+if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) {
+	continue
+}
+if currentTurn == nil && !voiceOutputHasAssistantContent(output) {
+	continue
+}
+```
+
+解释：
+
+- 第一条：阻止“assistant 抢跑”。
+  - 只有在“已预留 turn 但未放行、且当前无 active turn、却来了 assistant 内容”时才丢弃。
+  - 这是特定组合条件，必须是 AND，不可改成 OR。
+- 第二条：过滤噪声事件（既非 assistant 内容，也非 final 事件）。
+- 第三条：防止在 `currentTurn == nil` 时仅凭 final/空事件完成一次不存在的 turn。
+
+### 5. 事件时序图（含打断/放行/Avatar）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户输入(inputCh)
+    participant V as VoiceLLM(ConverseStream)
+    participant O as Orchestrator主循环
+    participant A as Avatar协程(GenerateAvatarStream)
+    participant P as MediaPeer
+    participant S as Session状态机/消息
+
+    Note over O: 初始化 pendingTurn/currentTurn/ignoredTurnKeys
+
+    U->>V: 发送语音输入事件
+    V-->>O: output(user_transcript)
+    O->>O: reservePendingTurn()
+    O->>S: AddMessage(user)
+    O->>S: broadcast transcript(user, final)
+    O->>S: 状态 processing
+
+    loop assistant 流式输出
+        V-->>O: output(transcript/audio/isFinal/turnKey)
+
+        alt turnKey 被忽略(被打断旧流)
+            O->>O: 丢弃该事件
+        else 有 assistant transcript
+            O->>O: 若 currentTurn==nil 则 startTurn()
+            O->>S: broadcast transcript(assistant)
+            O->>O: 累积 assistantText
+        end
+
+        alt 有 audio 数据
+            O->>O: appendPCM(syncBuf), 累积录音缓冲
+            alt Avatar 未启动
+                O->>A: startAvatarWorker()
+            end
+            O->>A: avatarAudioCh <- audioClone
+            A->>A: GenerateAvatarStream 消费音频产出 videoChunk
+            A->>A: flushVoiceSeg() 取对齐 PCM + 视频段
+            A->>P: SendAVSegment(RGB+PCM+epoch)
+            alt 首帧视频到达
+                A->>S: 状态 speaking
+            end
+        end
+
+        alt isFinal=true 且 Avatar已启动
+            O->>O: closeTurnInput(补尾静音+关闭avatarAudioCh)
+            A-->>O: doneCh(result)
+            O->>O: saveCompletedTurn()
+            O->>S: 状态 idle/listening
+        else isFinal=true 且 Avatar未启动
+            O->>O: saveCompletedTurn()
+            O->>S: 状态 idle/listening
+        end
+    end
+
+    alt barge-in 发生
+        V-->>O: output(barge_in=true)
+        O->>O: reservePendingTurn()
+        O->>O: abortTurn(currentTurn, ignoreKey=true)
+        O->>S: 状态 processing(新turn)
+    end
+
+    alt 流结束或报错
+        V-->>O: errCh/outputCh 关闭
+        O->>S: defer: MarkPipelineFinished + 状态恢复 listening/idle
+    end
+```

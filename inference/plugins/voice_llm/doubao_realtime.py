@@ -432,6 +432,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         turn_has_audio = False
         turn_final_sent = False
         turn_transcript = ""
+        turn_question_id = ""
+        turn_reply_id = ""
         last_was_idle_timeout = False
         try:
             async for message in ws:
@@ -462,6 +464,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 format=config.output_audio_format,
                                 is_final=False,
                             ),
+                            question_id=turn_question_id,
+                            reply_id=turn_reply_id,
                         )
                     )
                     if len(audio_payload) > 0:
@@ -484,8 +488,23 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                     # - 550 (LLM_TOKEN): 'content' = LLM streaming token
                     assistant_text = ""
                     user_text = ""
+                    question_id = str(data.get("question_id", "") or "")
+                    reply_id = str(data.get("reply_id", "") or "")
 
-                    if decoded.event == DoubaoEvent.TTS_SENTENCE_DONE:
+                    if question_id:
+                        turn_question_id = question_id
+                    if reply_id:
+                        turn_reply_id = reply_id
+
+                    if decoded.event == DoubaoEvent.ASR_START:
+                        await output_queue.put(
+                            VoiceLLMOutputEvent(
+                                barge_in=True,
+                                question_id=turn_question_id,
+                                reply_id=turn_reply_id,
+                            )
+                        )
+                    elif decoded.event == DoubaoEvent.TTS_SENTENCE_DONE:
                         assistant_text = data.get("text", "")
                     elif decoded.event == DoubaoEvent.ASR_RESULT:
                         results = data.get("results", [])
@@ -496,6 +515,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 await output_queue.put(
                                     VoiceLLMOutputEvent(
                                         user_transcript=user_text,
+                                        question_id=turn_question_id,
+                                        reply_id=turn_reply_id,
                                     )
                                 )
                     elif decoded.event == DoubaoEvent.LLM_TOKEN:
@@ -510,6 +531,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         await output_queue.put(
                             VoiceLLMOutputEvent(
                                 transcript=assistant_text,
+                                question_id=turn_question_id,
+                                reply_id=turn_reply_id,
                             )
                         )
                     elif (
@@ -536,6 +559,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                     ),
                                     transcript=turn_transcript,
                                     is_final=True,
+                                    question_id=turn_question_id,
+                                    reply_id=turn_reply_id,
                                 )
                             )
                             turn_final_sent = True
@@ -548,10 +573,14 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 VoiceLLMOutputEvent(
                                     transcript=turn_transcript,
                                     is_final=True,
+                                    question_id=turn_question_id,
+                                    reply_id=turn_reply_id,
                                 )
                             )
                             turn_final_sent = True
                             turn_transcript = ""
+                        turn_question_id = ""
+                        turn_reply_id = ""
                         if config.input_mod == "text":
                             await output_queue.put(None)
                             break
@@ -577,8 +606,12 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 ),
                                 transcript=turn_transcript,
                                 is_final=True,
+                                question_id=turn_question_id,
+                                reply_id=turn_reply_id,
                             )
                         )
+                        turn_question_id = ""
+                        turn_reply_id = ""
                         await output_queue.put(None)
                         break
                 elif decoded.is_error():
@@ -602,6 +635,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 VoiceLLMOutputEvent(
                                     transcript=turn_transcript,
                                     is_final=True,
+                                    question_id=turn_question_id,
+                                    reply_id=turn_reply_id,
                                 )
                             )
                         logger.info(
@@ -611,6 +646,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         turn_has_audio = False
                         turn_final_sent = False
                         turn_transcript = ""
+                        turn_question_id = ""
+                        turn_reply_id = ""
                         last_was_idle_timeout = True
                         continue
 
@@ -637,6 +674,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                     is_final=True,
                                 ),
                                 is_final=True,
+                                question_id=turn_question_id,
+                                reply_id=turn_reply_id,
                             )
                         )
                     await output_queue.put(None)

@@ -25,6 +25,9 @@ message VoiceLLMOutput {
   string user_transcript = 3;
   bool is_final = 4;
   reserved 5; // removed: video comes from AvatarService.GenerateStream only
+  string question_id = 6;
+  string reply_id = 7;
+  bool barge_in = 8;
 }
 
 message VoiceLLMConfig {

@@ -15,6 +15,7 @@ import (
 // RawAVSegment is an unencoded video+audio segment ready for VP8 encoding.
 type RawAVSegment struct {
 	TraceLabel string
+	Epoch      uint64
 	RGB        []byte
 	PCM        []byte
 	SampleRate int
@@ -34,6 +35,7 @@ type RawAVSegment struct {
 // AVSegment is a pre-encoded video+audio segment ready for paced publishing.
 type AVSegment struct {
 	TraceLabel string
+	Epoch      uint64
 	VP8Samples []media.Sample
 	PCM        []byte
 	SampleRate int

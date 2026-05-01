@@ -62,6 +62,8 @@ type Session struct {
 	PipelineDone chan struct{} `json:"-"`
 	// PipelineSeq increments each time a new pipeline starts.
 	PipelineSeq uint64 `json:"-"`
+	// TurnSeq increments each time a new conversational turn preempts playback.
+	TurnSeq uint64 `json:"-"`
 	// VoiceWelcomeSent prevents replaying the greeting when VoiceLLM pipelines restart.
 	VoiceWelcomeSent bool `json:"-"`
 	// RecordingDir is the absolute path where recordings for this session are saved.
@@ -136,6 +138,27 @@ func (s *Session) IsCurrentPipeline(seq uint64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.PipelineSeq == seq
+}
+
+// MarkTurnStarted returns a monotonically increasing conversational turn sequence.
+func (s *Session) MarkTurnStarted() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TurnSeq++
+	s.LastActiveAt = time.Now()
+	return s.TurnSeq
+}
+
+func (s *Session) CurrentTurnSeq() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TurnSeq
+}
+
+func (s *Session) IsCurrentTurn(seq uint64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TurnSeq == seq
 }
 
 func (s *Session) ConsumeVoiceWelcomeMessage(message string) string {

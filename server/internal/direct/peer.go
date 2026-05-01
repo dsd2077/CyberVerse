@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cyberverse/server/internal/mediapeer"
@@ -59,6 +60,7 @@ type DirectPeer struct {
 	// a Duration that advances the RTP timestamp over the idle gap.
 	lastVideoWriteTime time.Time
 	lastAudioWriteTime time.Time
+	playbackEpoch      atomic.Uint64
 }
 
 // NewDirectPeer creates a new P2P WebRTC peer for the given session.
@@ -366,11 +368,29 @@ func (p *DirectPeer) StartAVPipeline(ctx context.Context) {
 // SendAVSegment enqueues a raw segment for encoding and publishing.
 func (p *DirectPeer) SendAVSegment(seg *mediapeer.RawAVSegment) error {
 	seg.QueuedAt = time.Now()
+	if p.isPlaybackStale(seg.Epoch) {
+		return nil
+	}
 	select {
 	case p.encodeCh <- seg:
 		return nil
 	case <-p.avPipelineCtx.Done():
 		return fmt.Errorf("av pipeline cancelled")
+	}
+}
+
+func (p *DirectPeer) AdvancePlaybackEpoch(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	for {
+		current := p.playbackEpoch.Load()
+		if epoch <= current {
+			return
+		}
+		if p.playbackEpoch.CompareAndSwap(current, epoch) {
+			return
+		}
 	}
 }
 
@@ -423,6 +443,9 @@ func (p *DirectPeer) runEncoder() {
 			}
 			continue
 		}
+		if p.isPlaybackStale(raw.Epoch) {
+			continue
+		}
 
 		vp8Samples, err := mediapeer.EncodeRGBChunkToVP8Samples(raw.RGB, raw.Width, raw.Height, raw.NumFrames, raw.FPS)
 		if err != nil {
@@ -435,6 +458,7 @@ func (p *DirectPeer) runEncoder() {
 
 		seg := &mediapeer.AVSegment{
 			TraceLabel: raw.TraceLabel,
+			Epoch:      raw.Epoch,
 			VP8Samples: vp8Samples,
 			PCM:        raw.PCM,
 			SampleRate: raw.SampleRate,
@@ -462,6 +486,9 @@ func (p *DirectPeer) runPublisher() {
 		// Fence marker
 		if seg.Fence != nil && len(seg.VP8Samples) == 0 {
 			close(seg.Fence)
+			continue
+		}
+		if p.isPlaybackStale(seg.Epoch) {
 			continue
 		}
 		p.publishAVSegment(seg)
@@ -535,6 +562,9 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 	}
 
 	for i := range seg.VP8Samples {
+		if p.isPlaybackStale(seg.Epoch) {
+			return
+		}
 		frameStart := time.Now()
 
 		// Distribute pre-encoded Opus frames evenly across video frames.
@@ -565,6 +595,14 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 	// Record the last write time for gap correction on the next segment.
 	p.lastVideoWriteTime = time.Now()
 	p.lastAudioWriteTime = p.lastVideoWriteTime
+}
+
+func (p *DirectPeer) isPlaybackStale(epoch uint64) bool {
+	if epoch == 0 {
+		return false
+	}
+	current := p.playbackEpoch.Load()
+	return current > 0 && epoch < current
 }
 
 // PublishAudioFrame publishes raw PCM audio (for TTS in standard pipeline).
