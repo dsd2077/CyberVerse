@@ -3,8 +3,10 @@ package inference
 import (
 	"context"
 	"io"
+	"strconv"
 
 	pb "github.com/cyberverse/server/internal/pb"
+	"google.golang.org/grpc/metadata"
 )
 
 // SetAvatar sends an image to the inference server to configure the avatar.
@@ -29,6 +31,16 @@ func (c *Client) GenerateAvatarStream(ctx context.Context, audioCh <-chan *pb.Au
 		// before seeing errCh close (avoids racing on a zero error receive).
 		defer close(errCh)
 		defer close(videoCh)
+
+		if trace, ok := TraceContextFromContext(ctx); ok {
+			ctx = metadata.AppendToOutgoingContext(
+				ctx,
+				"x-cyberverse-session-id", trace.SessionID,
+				"x-cyberverse-question-id", trace.QuestionID,
+				"x-cyberverse-reply-id", trace.ReplyID,
+				"x-cyberverse-turn-seq", strconv.FormatUint(trace.TurnSeq, 10),
+			)
+		}
 
 		stream, err := c.avatar.GenerateStream(ctx)
 		if err != nil {

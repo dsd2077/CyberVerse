@@ -1,4 +1,5 @@
 import tempfile
+import logging
 
 import grpc
 
@@ -6,6 +7,38 @@ from inference.core.registry import PluginRegistry
 from inference.core.types import AudioChunk
 from inference.generated import avatar_pb2, avatar_pb2_grpc, common_pb2
 from inference.plugins.avatar.base import AvatarPlugin
+
+logger = logging.getLogger(__name__)
+
+
+def _metadata_value(context, key: str) -> str:
+    for item_key, item_value in context.invocation_metadata():
+        if item_key.lower() == key:
+            return str(item_value)
+    return ""
+
+
+def _voice_trace_log(
+    event: str,
+    *,
+    session_id: str,
+    turn_seq: int,
+    reply_id: str,
+    question_id: str = "",
+    since_user_final_ms: str = "-",
+    **fields,
+) -> None:
+    parts = [
+        f"voice_trace event={event:<30}",
+        f"sid={session_id or '-'}",
+        f"turn={turn_seq}",
+        f"reply={reply_id or '-'}",
+        f"qid={question_id or '-'}",
+        f"since_user_final_ms={since_user_final_ms}",
+    ]
+    for key, value in fields.items():
+        parts.append(f"{key}={value}")
+    logger.info(" ".join(parts))
 
 
 class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
@@ -33,9 +66,34 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
 
     async def GenerateStream(self, request_iterator, context):
         plugin = self._get_plugin()
+        session_id = _metadata_value(context, "x-cyberverse-session-id")
+        question_id = _metadata_value(context, "x-cyberverse-question-id")
+        reply_id = _metadata_value(context, "x-cyberverse-reply-id")
+        try:
+            turn_seq = int(_metadata_value(context, "x-cyberverse-turn-seq") or "0")
+        except ValueError:
+            turn_seq = 0
+
+        _voice_trace_log(
+            "avatar_grpc_stream_opened",
+            session_id=session_id,
+            turn_seq=turn_seq,
+            reply_id=reply_id,
+            question_id=question_id,
+        )
 
         async def audio_stream():
+            first_audio = True
             async for chunk in request_iterator:
+                if first_audio:
+                    first_audio = False
+                    _voice_trace_log(
+                        "avatar_grpc_first_audio_received",
+                        session_id=session_id,
+                        turn_seq=turn_seq,
+                        reply_id=reply_id,
+                        question_id=question_id,
+                    )
                 yield AudioChunk(
                     data=chunk.data,
                     sample_rate=chunk.sample_rate,
@@ -43,9 +101,23 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
                     format=chunk.format,
                     is_final=chunk.is_final,
                     timestamp_ms=chunk.timestamp_ms,
+                    session_id=session_id,
+                    question_id=question_id,
+                    reply_id=reply_id,
+                    turn_seq=turn_seq,
                 )
 
+        first_video = True
         async for video_chunk in plugin.generate_stream(audio_stream()):
+            if first_video:
+                first_video = False
+                _voice_trace_log(
+                    "avatar_grpc_first_video_yielded",
+                    session_id=session_id,
+                    turn_seq=turn_seq,
+                    reply_id=reply_id,
+                    question_id=question_id,
+                )
             yield common_pb2.VideoChunk(
                 data=video_chunk.frames.tobytes(),
                 width=video_chunk.frames.shape[2],

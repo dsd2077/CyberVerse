@@ -24,6 +24,24 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
 
 
+def _voice_trace_log(event: str, audio_chunk: AudioChunk, **fields) -> None:
+    reply_id = getattr(audio_chunk, "reply_id", "") or ""
+    if not reply_id:
+        return
+    parts = [
+        f"voice_trace event={event:<30}",
+        f"sid={getattr(audio_chunk, 'session_id', '') or '-'}",
+        f"turn={getattr(audio_chunk, 'turn_seq', 0) or 0}",
+        f"reply={reply_id}",
+    ]
+    question_id = getattr(audio_chunk, "question_id", "") or ""
+    parts.append(f"qid={question_id or '-'}")
+    parts.append("since_user_final_ms=-")
+    for key, value in fields.items():
+        parts.append(f"{key}={value}")
+    logger.info(" ".join(parts))
+
+
 def _parse_bool(value: object, *, default: bool) -> bool:
     if value is None:
         return default
@@ -155,6 +173,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         self._world_size_env: int = int(os.environ.get("WORLD_SIZE", "1"))
         self._dist_worker_thread: threading.Thread | None = None
         self._dist_worker_stop = threading.Event()
+        self._trace_reply_id: str = ""
+        self._trace_first_chunk_done: bool = False
 
     async def initialize(self, config: PluginConfig) -> None:
         loop = asyncio.get_running_loop()
@@ -675,6 +695,17 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     audio_chunk.data, audio_chunk.format
                 )
                 audio_np = _resample_linear_mono(audio_np, src_sr, tgt_sr)
+                pending_before = int(self._pending_audio.shape[0])
+                reply_id = getattr(audio_chunk, "reply_id", "") or ""
+                if reply_id and reply_id != self._trace_reply_id:
+                    self._trace_reply_id = reply_id
+                    self._trace_first_chunk_done = False
+                trace_enabled = bool(reply_id) and not self._trace_first_chunk_done
+                if trace_enabled and (pending_before == 0 or audio_chunk.is_final):
+                    _voice_trace_log(
+                        "flashhead_audio_received",
+                        audio_chunk,
+                    )
 
                 if audio_np.size > 0:
                     if self._pending_audio.size == 0:
@@ -716,6 +747,11 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     to_generate.append(tail)
 
                 if not to_generate:
+                    if trace_enabled and pending_before == 0 and len(audio_np) > 0:
+                        _voice_trace_log(
+                            "flashhead_waiting_for_slice",
+                            audio_chunk,
+                        )
                     logger.debug(
                         "FlashHead skip inference: rank=%d pending_samples=%d < slice_len_samples=%d is_final=%s",
                         self._rank,
@@ -739,6 +775,11 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     )
 
                     chunk_start_time = time.perf_counter()
+                    if trace_enabled:
+                        _voice_trace_log(
+                            "flashhead_generation_started",
+                            audio_chunk,
+                        )
                     video = self._run_pipeline_distributed(
                         audio_array, audio_start_idx, audio_end_idx
                     )  # 生成视频帧
@@ -762,6 +803,13 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     self._chunk_counter += 1
                     nf, h, w = int(frames.shape[0]), int(frames.shape[1]), int(frames.shape[2])
                     is_last_final = audio_chunk.is_final and idx == len(to_generate) - 1
+                    if trace_enabled:
+                        _voice_trace_log(
+                            "flashhead_generation_done",
+                            audio_chunk,
+                            infer_ms=int(chunk_elapsed_s * 1000),
+                        )
+                        self._trace_first_chunk_done = True
                     logger.info(
                         "FlashHead video chunk generated: chunk_index=%d num_frames=%d %dx%d fps=%d "
                         "consumed_samples=%d is_final=%s elapsed=%.3fs",
@@ -805,6 +853,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         self._init_audio_deque()
         self._pending_audio = np.array([], dtype=np.float32)
         self._chunk_counter = 0
+        self._trace_reply_id = ""
+        self._trace_first_chunk_done = False
 
     def get_fps(self) -> int:
         return self.infer_params.get("tgt_fps", 25)

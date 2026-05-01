@@ -33,6 +33,7 @@ class MockAvatarPlugin(AvatarPlugin):
 
     async def generate_stream(self, audio_stream):
         async for chunk in audio_stream:
+            self.last_audio_chunk = chunk
             frames = np.zeros((28, 512, 512, 3), dtype=np.uint8)
             yield VideoChunk(frames=frames, fps=25, chunk_index=1, is_final=chunk.is_final)
 
@@ -139,6 +140,12 @@ async def test_avatar_set_avatar(registry):
 async def test_avatar_generate_stream(registry):
     svc = AvatarGRPCService(registry)
     context = MagicMock()
+    context.invocation_metadata.return_value = (
+        ("x-cyberverse-session-id", "session-1"),
+        ("x-cyberverse-question-id", "question-1"),
+        ("x-cyberverse-reply-id", "reply-1"),
+        ("x-cyberverse-turn-seq", "7"),
+    )
 
     audio_data = np.zeros(17920, dtype=np.float32).tobytes()
 
@@ -159,6 +166,11 @@ async def test_avatar_generate_stream(registry):
     assert len(results) == 1
     assert results[0].num_frames == 28
     assert results[0].fps == 25
+    plugin = registry.get("avatar.mock")
+    assert plugin.last_audio_chunk.session_id == "session-1"
+    assert plugin.last_audio_chunk.question_id == "question-1"
+    assert plugin.last_audio_chunk.reply_id == "reply-1"
+    assert plugin.last_audio_chunk.turn_seq == 7
 
 
 # --- LLM Service Tests ---
