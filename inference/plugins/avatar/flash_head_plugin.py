@@ -24,22 +24,10 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
 
 
-def _voice_trace_log(event: str, audio_chunk: AudioChunk, **fields) -> None:
-    reply_id = getattr(audio_chunk, "reply_id", "") or ""
-    if not reply_id:
-        return
-    parts = [
-        f"voice_trace event={event:<30}",
-        f"sid={getattr(audio_chunk, 'session_id', '') or '-'}",
-        f"turn={getattr(audio_chunk, 'turn_seq', 0) or 0}",
-        f"reply={reply_id}",
-    ]
-    question_id = getattr(audio_chunk, "question_id", "") or ""
-    parts.append(f"qid={question_id or '-'}")
-    parts.append("since_user_final_ms=-")
-    for key, value in fields.items():
-        parts.append(f"{key}={value}")
-    logger.info(" ".join(parts))
+def _since_user_final_ms(user_final_unix_ms: int) -> int:
+    if user_final_unix_ms <= 0:
+        return -1
+    return max(0, int(time.time() * 1000) - user_final_unix_ms)
 
 
 def _parse_bool(value: object, *, default: bool) -> bool:
@@ -701,11 +689,6 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     self._trace_reply_id = reply_id
                     self._trace_first_chunk_done = False
                 trace_enabled = bool(reply_id) and not self._trace_first_chunk_done
-                if trace_enabled and (pending_before == 0 or audio_chunk.is_final):
-                    _voice_trace_log(
-                        "flashhead_audio_received",
-                        audio_chunk,
-                    )
 
                 if audio_np.size > 0:
                     if self._pending_audio.size == 0:
@@ -747,11 +730,6 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     to_generate.append(tail)
 
                 if not to_generate:
-                    if trace_enabled and pending_before == 0 and len(audio_np) > 0:
-                        _voice_trace_log(
-                            "flashhead_waiting_for_slice",
-                            audio_chunk,
-                        )
                     logger.debug(
                         "FlashHead skip inference: rank=%d pending_samples=%d < slice_len_samples=%d is_final=%s",
                         self._rank,
@@ -775,10 +753,10 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     )
 
                     chunk_start_time = time.perf_counter()
+                    generation_started_since_user_final_ms = -1
                     if trace_enabled:
-                        _voice_trace_log(
-                            "flashhead_generation_started",
-                            audio_chunk,
+                        generation_started_since_user_final_ms = _since_user_final_ms(
+                            getattr(audio_chunk, "user_final_unix_ms", 0) or 0
                         )
                     video = self._run_pipeline_distributed(
                         audio_array, audio_start_idx, audio_end_idx
@@ -804,12 +782,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                     nf, h, w = int(frames.shape[0]), int(frames.shape[1]), int(frames.shape[2])
                     is_last_final = audio_chunk.is_final and idx == len(to_generate) - 1
                     if trace_enabled:
-                        _voice_trace_log(
-                            "flashhead_generation_done",
-                            audio_chunk,
-                            infer_ms=int(chunk_elapsed_s * 1000),
-                        )
                         self._trace_first_chunk_done = True
+                        trace_enabled = False
                     logger.info(
                         "FlashHead video chunk generated: chunk_index=%d num_frames=%d %dx%d fps=%d "
                         "consumed_samples=%d is_final=%s elapsed=%.3fs",
@@ -827,6 +801,7 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                         fps=ip["tgt_fps"],
                         chunk_index=self._chunk_counter,
                         is_final=is_last_final,
+                        trace_generation_started_since_user_final_ms=generation_started_since_user_final_ms,
                     )
             except Exception:
                 logger.exception("FlashHead inference failed")

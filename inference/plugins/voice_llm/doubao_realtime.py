@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import time
 import uuid
 from typing import AsyncIterator
 
@@ -29,35 +28,6 @@ from inference.plugins.voice_llm.doubao_protocol import (
 
 logger = logging.getLogger(__name__)
 _MAX_OUTPUT_QUEUE = 64
-
-
-def _elapsed_ms(start: float | None) -> int:
-    if start is None:
-        return -1
-    return int((time.perf_counter() - start) * 1000)
-
-
-def _voice_trace_log(
-    event: str,
-    *,
-    session_id: str,
-    question_id: str = "",
-    reply_id: str = "",
-    turn_started_at: float | None = None,
-    user_final_at: float | None = None,
-    **fields,
-) -> None:
-    since_user_final = _elapsed_ms(user_final_at)
-    parts = [
-        f"voice_trace event={event:<30}",
-        f"sid={session_id or '-'}",
-        f"reply={reply_id or '-'}",
-        f"qid={question_id or '-'}",
-        f"since_user_final_ms={since_user_final if since_user_final >= 0 else '-'}",
-    ]
-    for key, value in fields.items():
-        parts.append(f"{key}={value}")
-    logger.info(" ".join(parts))
 
 
 class DoubaoRealtimePlugin(VoiceLLMPlugin):
@@ -466,12 +436,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         turn_question_id = ""
         turn_reply_id = ""
         last_was_idle_timeout = False
-        turn_started_at: float | None = None
-        user_final_at: float | None = None
-        first_llm_at: float | None = None
-        first_audio_at: float | None = None
-        audio_frame_count = 0
-        audio_bytes_total = 0
         try:
             async for message in ws:
                 if isinstance(message, str):
@@ -487,19 +451,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                     audio_payload = decompress_payload(
                         decoded.payload, decoded.compression_bits
                     )
-                    if len(audio_payload) > 0:
-                        audio_frame_count += 1
-                        audio_bytes_total += len(audio_payload)
-                        if first_audio_at is None:
-                            first_audio_at = time.perf_counter()
-                            _voice_trace_log(
-                                "doubao_first_audio",
-                                session_id=session_id,
-                                question_id=turn_question_id,
-                                reply_id=turn_reply_id,
-                                turn_started_at=turn_started_at,
-                                user_final_at=user_final_at,
-                            )
                     logger.debug(
                         "Doubao recv: audio frame, event=%s, %d bytes",
                         decoded.event,
@@ -547,19 +498,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         turn_reply_id = reply_id
 
                     if decoded.event == DoubaoEvent.ASR_START:
-                        turn_started_at = time.perf_counter()
-                        user_final_at = None
-                        first_llm_at = None
-                        first_audio_at = None
-                        audio_frame_count = 0
-                        audio_bytes_total = 0
-                        _voice_trace_log(
-                            "doubao_asr_start",
-                            session_id=session_id,
-                            question_id=turn_question_id,
-                            reply_id=turn_reply_id,
-                            turn_started_at=turn_started_at,
-                        )
                         await output_queue.put(
                             VoiceLLMOutputEvent(
                                 barge_in=True,
@@ -575,14 +513,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                             user_text = results[0].get("text", "")
                             is_interim = results[0].get("is_interim", True)
                             if user_text and not is_interim:
-                                user_final_at = time.perf_counter()
-                                _voice_trace_log(
-                                    "doubao_user_asr_final",
-                                    session_id=session_id,
-                                    question_id=turn_question_id,
-                                    reply_id=turn_reply_id,
-                                    turn_started_at=turn_started_at,
-                                )
                                 await output_queue.put(
                                     VoiceLLMOutputEvent(
                                         user_transcript=user_text,
@@ -592,16 +522,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                                 )
                     elif decoded.event == DoubaoEvent.LLM_TOKEN:
                         assistant_text = data.get("content", "")
-                        if assistant_text and first_llm_at is None:
-                            first_llm_at = time.perf_counter()
-                            _voice_trace_log(
-                                "doubao_first_llm_token",
-                                session_id=session_id,
-                                question_id=turn_question_id,
-                                reply_id=turn_reply_id,
-                                turn_started_at=turn_started_at,
-                                user_final_at=user_final_at,
-                            )
 
                     # LLM tokens provide incremental text for the happy path.
                     # When Doubao only returns sentence-done text with no audio
@@ -662,12 +582,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                             turn_transcript = ""
                         turn_question_id = ""
                         turn_reply_id = ""
-                        turn_started_at = None
-                        user_final_at = None
-                        first_llm_at = None
-                        first_audio_at = None
-                        audio_frame_count = 0
-                        audio_bytes_total = 0
                         if config.input_mod == "text":
                             await output_queue.put(None)
                             break
@@ -735,12 +649,6 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         turn_transcript = ""
                         turn_question_id = ""
                         turn_reply_id = ""
-                        turn_started_at = None
-                        user_final_at = None
-                        first_llm_at = None
-                        first_audio_at = None
-                        audio_frame_count = 0
-                        audio_bytes_total = 0
                         last_was_idle_timeout = True
                         continue
 

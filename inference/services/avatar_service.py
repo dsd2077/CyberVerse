@@ -1,5 +1,4 @@
 import tempfile
-import logging
 
 import grpc
 
@@ -8,7 +7,9 @@ from inference.core.types import AudioChunk
 from inference.generated import avatar_pb2, avatar_pb2_grpc, common_pb2
 from inference.plugins.avatar.base import AvatarPlugin
 
-logger = logging.getLogger(__name__)
+FLASHHEAD_GENERATION_STARTED_HEADER = (
+    "x-cyberverse-trace-flashhead-generation-started-since-user-final-ms"
+)
 
 
 def _metadata_value(context, key: str) -> str:
@@ -18,28 +19,14 @@ def _metadata_value(context, key: str) -> str:
     return ""
 
 
-def _voice_trace_log(
-    event: str,
-    *,
-    session_id: str,
-    turn_seq: int,
-    reply_id: str,
-    question_id: str = "",
-    since_user_final_ms: str = "-",
-    **fields,
-) -> None:
-    parts = [
-        f"voice_trace event={event:<30}",
-        f"sid={session_id or '-'}",
-        f"turn={turn_seq}",
-        f"reply={reply_id or '-'}",
-        f"qid={question_id or '-'}",
-        f"since_user_final_ms={since_user_final_ms}",
-    ]
-    for key, value in fields.items():
-        parts.append(f"{key}={value}")
-    logger.info(" ".join(parts))
-
+def _metadata_int(context, key: str) -> int:
+    raw = _metadata_value(context, key)
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
 
 class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
 
@@ -69,31 +56,14 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
         session_id = _metadata_value(context, "x-cyberverse-session-id")
         question_id = _metadata_value(context, "x-cyberverse-question-id")
         reply_id = _metadata_value(context, "x-cyberverse-reply-id")
+        user_final_unix_ms = _metadata_int(context, "x-cyberverse-user-final-unix-ms")
         try:
             turn_seq = int(_metadata_value(context, "x-cyberverse-turn-seq") or "0")
         except ValueError:
             turn_seq = 0
 
-        _voice_trace_log(
-            "avatar_grpc_stream_opened",
-            session_id=session_id,
-            turn_seq=turn_seq,
-            reply_id=reply_id,
-            question_id=question_id,
-        )
-
         async def audio_stream():
-            first_audio = True
             async for chunk in request_iterator:
-                if first_audio:
-                    first_audio = False
-                    _voice_trace_log(
-                        "avatar_grpc_first_audio_received",
-                        session_id=session_id,
-                        turn_seq=turn_seq,
-                        reply_id=reply_id,
-                        question_id=question_id,
-                    )
                 yield AudioChunk(
                     data=chunk.data,
                     sample_rate=chunk.sample_rate,
@@ -105,19 +75,19 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
                     question_id=question_id,
                     reply_id=reply_id,
                     turn_seq=turn_seq,
+                    user_final_unix_ms=user_final_unix_ms,
                 )
 
-        first_video = True
+        trace_header_sent = False
         async for video_chunk in plugin.generate_stream(audio_stream()):
-            if first_video:
-                first_video = False
-                _voice_trace_log(
-                    "avatar_grpc_first_video_yielded",
-                    session_id=session_id,
-                    turn_seq=turn_seq,
-                    reply_id=reply_id,
-                    question_id=question_id,
+            trace_since_user_final_ms = int(
+                getattr(video_chunk, "trace_generation_started_since_user_final_ms", -1) or -1
+            )
+            if not trace_header_sent and trace_since_user_final_ms >= 0:
+                await context.send_initial_metadata(
+                    ((FLASHHEAD_GENERATION_STARTED_HEADER, str(trace_since_user_final_ms)),)
                 )
+                trace_header_sent = True
             yield common_pb2.VideoChunk(
                 data=video_chunk.frames.tobytes(),
                 width=video_chunk.frames.shape[2],

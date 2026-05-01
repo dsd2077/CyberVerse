@@ -1331,10 +1331,11 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			}
 
 			avatarCtx := inference.WithTraceContext(turn.avatarCtx, inference.TraceContext{
-				SessionID:  sessionID,
-				QuestionID: turn.questionID,
-				ReplyID:    turn.replyID,
-				TurnSeq:    turn.seq,
+				SessionID:   sessionID,
+				QuestionID:  turn.questionID,
+				ReplyID:     turn.replyID,
+				TurnSeq:     turn.seq,
+				UserFinalAt: turn.userFinalAt,
 			})
 			videoCh, avatarErrCh := o.inference.GenerateAvatarStream(avatarCtx, turn.avatarAudioCh)
 			logVoiceTrace("go_avatar_grpc_stream_opened", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)

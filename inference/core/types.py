@@ -16,6 +16,7 @@ class AudioChunk:
     question_id: str = ""
     reply_id: str = ""
     turn_seq: int = 0
+    user_final_unix_ms: int = 0
 
 
 @dataclass
@@ -24,6 +25,7 @@ class VideoChunk:
     fps: int = 25
     chunk_index: int = 0
     is_final: bool = False
+    trace_generation_started_since_user_final_ms: int = -1
 
 
 @dataclass

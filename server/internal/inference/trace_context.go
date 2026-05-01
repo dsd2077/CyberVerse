@@ -1,15 +1,19 @@
 package inference
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type traceContextKey struct{}
 
 // TraceContext carries per-turn identifiers across internal gRPC calls.
 type TraceContext struct {
-	SessionID  string
-	QuestionID string
-	ReplyID    string
-	TurnSeq    uint64
+	SessionID   string
+	QuestionID  string
+	ReplyID     string
+	TurnSeq     uint64
+	UserFinalAt time.Time
 }
 
 // WithTraceContext attaches per-turn identifiers to ctx.

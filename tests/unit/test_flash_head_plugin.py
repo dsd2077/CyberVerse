@@ -263,6 +263,28 @@ def test_generate_chunk_sync_audio_indexing(plugin):
     assert audio_end_idx - audio_start_idx == 33  # frame_num
 
 
+def test_generation_started_attaches_trace_to_first_video_chunk(plugin):
+    plugin._run_pipeline_distributed = MagicMock(
+        return_value=torch.zeros((33, 1, 1, 3), dtype=torch.float32)
+    )
+    audio_data = np.zeros(plugin._slice_len_samples, dtype=np.float32).tobytes()
+    chunk = AudioChunk(
+        data=audio_data,
+        sample_rate=16000,
+        format="float32",
+        session_id="session-1",
+        question_id="question-1",
+        reply_id="reply-1",
+        turn_seq=1,
+        user_final_unix_ms=1710000000123,
+    )
+
+    chunks = list(plugin._generate_chunks_sync(chunk))
+
+    assert len(chunks) == 1
+    assert chunks[0].trace_generation_started_since_user_final_ms >= 0
+
+
 def test_config_loading():
     """Test that config can be read from cyberverse_config.yaml."""
     from inference.core.config import load_config

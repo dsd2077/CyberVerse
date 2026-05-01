@@ -11,7 +11,10 @@ from inference.plugins.avatar.base import AvatarPlugin
 from inference.plugins.llm.base import LLMPlugin
 from inference.plugins.tts.base import TTSPlugin
 from inference.plugins.asr.base import ASRPlugin
-from inference.services.avatar_service import AvatarGRPCService
+from inference.services.avatar_service import (
+    AvatarGRPCService,
+    FLASHHEAD_GENERATION_STARTED_HEADER,
+)
 from inference.services.llm_service import LLMGRPCService
 from inference.services.tts_service import TTSGRPCService
 from inference.services.asr_service import ASRGRPCService
@@ -140,11 +143,13 @@ async def test_avatar_set_avatar(registry):
 async def test_avatar_generate_stream(registry):
     svc = AvatarGRPCService(registry)
     context = MagicMock()
+    context.send_initial_metadata = AsyncMock()
     context.invocation_metadata.return_value = (
         ("x-cyberverse-session-id", "session-1"),
         ("x-cyberverse-question-id", "question-1"),
         ("x-cyberverse-reply-id", "reply-1"),
         ("x-cyberverse-turn-seq", "7"),
+        ("x-cyberverse-user-final-unix-ms", "1710000000123"),
     )
 
     audio_data = np.zeros(17920, dtype=np.float32).tobytes()
@@ -171,6 +176,57 @@ async def test_avatar_generate_stream(registry):
     assert plugin.last_audio_chunk.question_id == "question-1"
     assert plugin.last_audio_chunk.reply_id == "reply-1"
     assert plugin.last_audio_chunk.turn_seq == 7
+    assert plugin.last_audio_chunk.user_final_unix_ms == 1710000000123
+    context.send_initial_metadata.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_avatar_generate_stream_sends_flashhead_trace_metadata(registry):
+    svc = AvatarGRPCService(registry)
+    plugin = registry.get("avatar.mock")
+
+    async def generate_stream(audio_stream):
+        async for chunk in audio_stream:
+            plugin.last_audio_chunk = chunk
+            frames = np.zeros((28, 512, 512, 3), dtype=np.uint8)
+            yield VideoChunk(
+                frames=frames,
+                fps=25,
+                chunk_index=1,
+                is_final=chunk.is_final,
+                trace_generation_started_since_user_final_ms=389,
+            )
+
+    plugin.generate_stream = generate_stream
+
+    context = MagicMock()
+    context.send_initial_metadata = AsyncMock()
+    context.invocation_metadata.return_value = (
+        ("x-cyberverse-session-id", "session-1"),
+        ("x-cyberverse-question-id", "question-1"),
+        ("x-cyberverse-reply-id", "reply-1"),
+        ("x-cyberverse-turn-seq", "7"),
+        ("x-cyberverse-user-final-unix-ms", "1710000000123"),
+    )
+
+    async def request_iterator():
+        chunk = MagicMock()
+        chunk.data = np.zeros(17920, dtype=np.float32).tobytes()
+        chunk.sample_rate = 16000
+        chunk.channels = 1
+        chunk.format = "float32"
+        chunk.is_final = True
+        chunk.timestamp_ms = 0
+        yield chunk
+
+    results = []
+    async for vc in svc.GenerateStream(request_iterator(), context):
+        results.append(vc)
+
+    assert len(results) == 1
+    context.send_initial_metadata.assert_awaited_once_with(
+        ((FLASHHEAD_GENERATION_STARTED_HEADER, "389"),)
+    )
 
 
 # --- LLM Service Tests ---

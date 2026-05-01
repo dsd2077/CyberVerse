@@ -2,12 +2,41 @@ package inference
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log"
 	"strconv"
+	"strings"
 
 	pb "github.com/cyberverse/server/internal/pb"
 	"google.golang.org/grpc/metadata"
 )
+
+const flashheadGenerationStartedHeader = "x-cyberverse-trace-flashhead-generation-started-since-user-final-ms"
+
+func safeTraceValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func logVoiceTraceWithSinceValue(event string, trace TraceContext, since string, fields ...string) {
+	if strings.TrimSpace(since) == "" {
+		since = "-"
+	}
+	parts := []string{
+		fmt.Sprintf("voice_trace event=%-30s", event),
+		"sid=" + safeTraceValue(trace.SessionID),
+		"turn=" + strconv.FormatUint(trace.TurnSeq, 10),
+		"reply=" + safeTraceValue(trace.ReplyID),
+		"qid=" + safeTraceValue(trace.QuestionID),
+		"since_user_final_ms=" + since,
+	}
+	parts = append(parts, fields...)
+	log.Print(strings.Join(parts, " "))
+}
 
 // SetAvatar sends an image to the inference server to configure the avatar.
 func (c *Client) SetAvatar(ctx context.Context, sessionID string, imageData []byte, format string) error {
@@ -32,20 +61,48 @@ func (c *Client) GenerateAvatarStream(ctx context.Context, audioCh <-chan *pb.Au
 		defer close(errCh)
 		defer close(videoCh)
 
-		if trace, ok := TraceContextFromContext(ctx); ok {
-			ctx = metadata.AppendToOutgoingContext(
-				ctx,
+		var trace TraceContext
+		var traceEnabled bool
+		if attachedTrace, ok := TraceContextFromContext(ctx); ok {
+			traceEnabled = true
+			trace = attachedTrace
+			mdPairs := []string{
 				"x-cyberverse-session-id", trace.SessionID,
 				"x-cyberverse-question-id", trace.QuestionID,
 				"x-cyberverse-reply-id", trace.ReplyID,
 				"x-cyberverse-turn-seq", strconv.FormatUint(trace.TurnSeq, 10),
-			)
+			}
+			if !trace.UserFinalAt.IsZero() {
+				mdPairs = append(
+					mdPairs,
+					"x-cyberverse-user-final-unix-ms", strconv.FormatInt(trace.UserFinalAt.UnixMilli(), 10),
+				)
+			}
+			ctx = metadata.AppendToOutgoingContext(ctx, mdPairs...)
 		}
 
 		stream, err := c.avatar.GenerateStream(ctx)
 		if err != nil {
 			errCh <- err
 			return
+		}
+
+		if traceEnabled {
+			go func(trace TraceContext) {
+				header, headerErr := stream.Header()
+				if headerErr != nil {
+					return
+				}
+				values := header.Get(flashheadGenerationStartedHeader)
+				if len(values) == 0 {
+					return
+				}
+				logVoiceTraceWithSinceValue(
+					"flashhead_generation_started",
+					trace,
+					strings.TrimSpace(values[0]),
+				)
+			}(trace)
 		}
 
 		sendDone := make(chan error, 1)
