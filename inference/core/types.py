@@ -12,6 +12,10 @@ class AudioChunk:
     is_final: bool = False
     timestamp_ms: int = 0
     duration_ms: int = 0
+    session_id: str = ""
+    question_id: str = ""
+    reply_id: str = ""
+    turn_seq: int = 0
 
 
 @dataclass

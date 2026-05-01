@@ -22,6 +22,33 @@ import (
 // Compile-time check: DirectPeer implements mediapeer.MediaPeer.
 var _ mediapeer.MediaPeer = (*DirectPeer)(nil)
 
+func directVoiceTrace(event string, label string, format string, args ...any) {
+	if label == "" {
+		return
+	}
+	sinceUserFinal := "-"
+	if len(args) > 0 {
+		if ts, ok := args[0].(time.Time); ok {
+			if !ts.IsZero() {
+				sinceUserFinal = fmt.Sprintf("%d", time.Since(ts).Milliseconds())
+			}
+			args = args[1:]
+		}
+	}
+	prefix := fmt.Sprintf(
+		"voice_trace event=%-30s %s since_user_final_ms=%s",
+		event,
+		label,
+		sinceUserFinal,
+	)
+	if format == "" {
+		log.Print(prefix)
+		return
+	}
+	allArgs := append([]any{prefix}, args...)
+	log.Printf("%s "+format, allArgs...)
+}
+
 // SignalingFunc sends a signaling message to the browser via the WebSocket hub.
 type SignalingFunc func(sessionID string, msg map[string]any)
 
@@ -371,6 +398,12 @@ func (p *DirectPeer) SendAVSegment(seg *mediapeer.RawAVSegment) error {
 	if p.isPlaybackStale(seg.Epoch) {
 		return nil
 	}
+	directVoiceTrace(
+		"direct_segment_enqueued",
+		seg.TraceLabel,
+		"",
+		seg.UserFinalAt,
+	)
 	select {
 	case p.encodeCh <- seg:
 		return nil
@@ -447,6 +480,14 @@ func (p *DirectPeer) runEncoder() {
 			continue
 		}
 
+		encodeStart := time.Now()
+		directVoiceTrace(
+			"direct_vp8_encode_started",
+			raw.TraceLabel,
+			"queue_ms=%d",
+			raw.UserFinalAt,
+			time.Since(raw.QueuedAt).Milliseconds(),
+		)
 		vp8Samples, err := mediapeer.EncodeRGBChunkToVP8Samples(raw.RGB, raw.Width, raw.Height, raw.NumFrames, raw.FPS)
 		if err != nil {
 			log.Printf("[DirectPeer] encode failed: %v", err)
@@ -455,18 +496,26 @@ func (p *DirectPeer) runEncoder() {
 		if len(vp8Samples) == 0 {
 			continue
 		}
+		directVoiceTrace(
+			"direct_vp8_encode_done",
+			raw.TraceLabel,
+			"encode_ms=%d",
+			raw.UserFinalAt,
+			time.Since(encodeStart).Milliseconds(),
+		)
 
 		seg := &mediapeer.AVSegment{
-			TraceLabel: raw.TraceLabel,
-			Epoch:      raw.Epoch,
-			VP8Samples: vp8Samples,
-			PCM:        raw.PCM,
-			SampleRate: raw.SampleRate,
-			Width:      raw.Width,
-			Height:     raw.Height,
-			FPS:        raw.FPS,
-			NumFrames:  raw.NumFrames,
-			QueuedAt:   raw.QueuedAt,
+			TraceLabel:  raw.TraceLabel,
+			Epoch:       raw.Epoch,
+			VP8Samples:  vp8Samples,
+			PCM:         raw.PCM,
+			UserFinalAt: raw.UserFinalAt,
+			SampleRate:  raw.SampleRate,
+			Width:       raw.Width,
+			Height:      raw.Height,
+			FPS:         raw.FPS,
+			NumFrames:   raw.NumFrames,
+			QueuedAt:    raw.QueuedAt,
 		}
 		select {
 		case p.publishCh <- seg:
@@ -514,6 +563,14 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		}
 		return
 	}
+	publishStart := time.Now()
+	directVoiceTrace(
+		"direct_publish_started",
+		seg.TraceLabel,
+		"queue_ms=%d",
+		seg.UserFinalAt,
+		time.Since(seg.QueuedAt).Milliseconds(),
+	)
 
 	fps := seg.FPS
 	if fps <= 0 {
@@ -561,6 +618,7 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		}
 	}
 
+	firstVideoWritten := false
 	for i := range seg.VP8Samples {
 		if p.isPlaybackStale(seg.Epoch) {
 			return
@@ -584,6 +642,16 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		if err := p.videoTrack.WriteSample(seg.VP8Samples[i]); err != nil {
 			log.Printf("[DirectPeer] video write error: %v", err)
 			return
+		}
+		if !firstVideoWritten {
+			firstVideoWritten = true
+			directVoiceTrace(
+				"direct_first_video_sample_written",
+				seg.TraceLabel,
+				"publish_ms=%d",
+				seg.UserFinalAt,
+				time.Since(publishStart).Milliseconds(),
+			)
 		}
 
 		// Real-time pacing
@@ -636,9 +704,9 @@ func (p *DirectPeer) writeOpus(pcm []byte, sampleRate int) error {
 	}
 
 	// Process PCM in 20ms frames
-	samplesPerFrame := sampleRate / 50 // 20ms = 1/50 second
+	samplesPerFrame := sampleRate / 50   // 20ms = 1/50 second
 	bytesPerFrame := samplesPerFrame * 2 // 16-bit mono
-	opusBuf := make([]byte, 4000)       // max opus frame size
+	opusBuf := make([]byte, 4000)        // max opus frame size
 
 	for offset := 0; offset+bytesPerFrame <= len(pcm); offset += bytesPerFrame {
 		// Convert bytes to int16 samples

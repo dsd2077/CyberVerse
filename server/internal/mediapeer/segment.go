@@ -14,16 +14,17 @@ import (
 
 // RawAVSegment is an unencoded video+audio segment ready for VP8 encoding.
 type RawAVSegment struct {
-	TraceLabel string
-	Epoch      uint64
-	RGB        []byte
-	PCM        []byte
-	SampleRate int
-	Width      int
-	Height     int
-	FPS        int
-	NumFrames  int
-	QueuedAt   time.Time // set by SendAVSegment for pipeline latency tracking
+	TraceLabel  string
+	Epoch       uint64
+	RGB         []byte
+	PCM         []byte
+	UserFinalAt time.Time
+	SampleRate  int
+	Width       int
+	Height      int
+	FPS         int
+	NumFrames   int
+	QueuedAt    time.Time // set by SendAVSegment for pipeline latency tracking
 
 	// Fence is a pipeline drain marker. When set (non-nil) and RGB is empty,
 	// the encoder passes it through without encoding. The publisher closes
@@ -34,17 +35,18 @@ type RawAVSegment struct {
 
 // AVSegment is a pre-encoded video+audio segment ready for paced publishing.
 type AVSegment struct {
-	TraceLabel string
-	Epoch      uint64
-	VP8Samples []media.Sample
-	PCM        []byte
-	SampleRate int
-	Width      int
-	Height     int
-	FPS        int
-	NumFrames  int
-	QueuedAt   time.Time // carried from RawAVSegment for end-to-end latency
-	Fence      chan struct{}
+	TraceLabel  string
+	Epoch       uint64
+	VP8Samples  []media.Sample
+	PCM         []byte
+	UserFinalAt time.Time
+	SampleRate  int
+	Width       int
+	Height      int
+	FPS         int
+	NumFrames   int
+	QueuedAt    time.Time // carried from RawAVSegment for end-to-end latency
+	Fence       chan struct{}
 }
 
 // EncodeRGBChunkToVP8Samples encodes a contiguous RGB24 buffer to VP8 samples.

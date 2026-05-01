@@ -157,22 +157,31 @@ func (b *voiceAVSyncBuffer) snapshot() (bufferedSamples int, totalIn int64, tota
 }
 
 type voicePipelineTurn struct {
-	seq               uint64
-	key               string
-	assistantText     string
-	recTurnID         string
-	recAudioBuf       []byte
-	recAudioSR        int
-	sessionDir        string
-	turnStart         time.Time
-	syncBuf           *voiceAVSyncBuffer
-	avatarStarted     bool
-	avatarInputClosed bool
-	avatarAudioCh     chan *pb.AudioChunk
-	avatarCtx         context.Context
-	avatarCancel      context.CancelFunc
-	doneCh            chan voicePipelineTurnResult
-	aborted           bool
+	seq                 uint64
+	key                 string
+	questionID          string
+	replyID             string
+	assistantText       string
+	recTurnID           string
+	recAudioBuf         []byte
+	recAudioSR          int
+	sessionDir          string
+	turnStart           time.Time
+	userFinalAt         time.Time
+	firstAudioAt        time.Time
+	audioFinalAt        time.Time
+	avatarWorkerAt      time.Time
+	firstAvatarAudioAt  time.Time
+	avatarInputClosedAt time.Time
+	firstVideoAt        time.Time
+	syncBuf             *voiceAVSyncBuffer
+	avatarStarted       bool
+	avatarInputClosed   bool
+	avatarAudioCh       chan *pb.AudioChunk
+	avatarCtx           context.Context
+	avatarCancel        context.CancelFunc
+	doneCh              chan voicePipelineTurnResult
+	aborted             bool
 }
 
 type voicePipelineTurnResult struct {
@@ -213,6 +222,50 @@ func voiceOutputIsFinal(output *pb.VoiceLLMOutput) bool {
 	}
 	audio := output.GetAudio()
 	return audio != nil && audio.GetIsFinal()
+}
+
+func safeTraceValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	replacer := strings.NewReplacer(" ", "_", "\t", "_", "\n", "_", "\r", "_")
+	return replacer.Replace(value)
+}
+
+func voiceTraceLabel(sessionID string, turnSeq uint64, replyID, questionID string, segSeq int64) string {
+	parts := []string{
+		"sid=" + safeTraceValue(sessionID),
+		"turn=" + strconv.FormatUint(turnSeq, 10),
+		"reply=" + safeTraceValue(replyID),
+	}
+	if questionID != "" {
+		parts = append(parts, "qid="+safeTraceValue(questionID))
+	}
+	if segSeq > 0 {
+		parts = append(parts, "seg="+strconv.FormatInt(segSeq, 10))
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatSinceUserFinal(start time.Time) string {
+	if start.IsZero() {
+		return "-"
+	}
+	return strconv.FormatInt(time.Since(start).Milliseconds(), 10)
+}
+
+func logVoiceTrace(event, sessionID string, turnSeq uint64, replyID, questionID string, since time.Time, fields ...string) {
+	parts := []string{
+		fmt.Sprintf("voice_trace event=%-30s", event),
+		"sid=" + safeTraceValue(sessionID),
+		"turn=" + strconv.FormatUint(turnSeq, 10),
+		"reply=" + safeTraceValue(replyID),
+	}
+	parts = append(parts, "qid="+safeTraceValue(questionID))
+	parts = append(parts, "since_user_final_ms="+formatSinceUserFinal(since))
+	parts = append(parts, fields...)
+	log.Print(strings.Join(parts, " "))
 }
 
 // Orchestrator manages the inference pipeline for each session,
@@ -1147,6 +1200,9 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	var currentTurn *voicePipelineTurn
 	var currentTurnDone <-chan voicePipelineTurnResult
 	var streamErr error
+	var pendingQuestionID string
+	var pendingReplyID string
+	var pendingUserFinalAt time.Time
 
 	lookupPeer := func() mediapeer.MediaPeer {
 		o.mu.RLock()
@@ -1228,16 +1284,23 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		}
 		recTurnNum++
 		turn := &voicePipelineTurn{
-			seq:        seq,
-			key:        key,
-			recTurnID:  fmt.Sprintf("turn%d", recTurnNum),
-			recAudioSR: 16000,
-			sessionDir: sessionDir,
-			turnStart:  time.Now(),
-			syncBuf:    newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples),
+			seq:         seq,
+			key:         key,
+			questionID:  pendingQuestionID,
+			replyID:     pendingReplyID,
+			recTurnID:   fmt.Sprintf("turn%d", recTurnNum),
+			recAudioSR:  16000,
+			sessionDir:  sessionDir,
+			turnStart:   time.Now(),
+			userFinalAt: pendingUserFinalAt,
+			syncBuf:     newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples),
 		}
 		pendingTurnSeq = 0
 		pendingTurnAssistantReady = false
+		pendingQuestionID = ""
+		pendingReplyID = ""
+		pendingUserFinalAt = time.Time{}
+		logVoiceTrace("go_turn_started", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 		broadcastProcessing(seq)
 		return turn
 	}
@@ -1250,6 +1313,8 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		turn.doneCh = make(chan voicePipelineTurnResult, 1)
 		turn.avatarAudioCh = make(chan *pb.AudioChunk, 64)
 		turn.avatarCtx, turn.avatarCancel = context.WithCancel(ctx)
+		turn.avatarWorkerAt = time.Now()
+		logVoiceTrace("go_avatar_worker_started", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 		currentTurnDone = turn.doneCh
 
 		go func(turn *voicePipelineTurn) {
@@ -1265,7 +1330,14 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				return
 			}
 
-			videoCh, avatarErrCh := o.inference.GenerateAvatarStream(turn.avatarCtx, turn.avatarAudioCh)
+			avatarCtx := inference.WithTraceContext(turn.avatarCtx, inference.TraceContext{
+				SessionID:  sessionID,
+				QuestionID: turn.questionID,
+				ReplyID:    turn.replyID,
+				TurnSeq:    turn.seq,
+			})
+			videoCh, avatarErrCh := o.inference.GenerateAvatarStream(avatarCtx, turn.avatarAudioCh)
+			logVoiceTrace("go_avatar_grpc_stream_opened", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 
 			var turnRec *recording.TurnRecording
 			var (
@@ -1288,7 +1360,10 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				segSeq++
 				peer := lookupPeer()
 				if peer != nil {
-					traceLabel := "voice-trace session=" + sessionID + " seg=" + strconv.FormatInt(segSeq, 10)
+					traceLabel := ""
+					if segSeq == 1 {
+						traceLabel = voiceTraceLabel(sessionID, turn.seq, turn.replyID, turn.questionID, segSeq)
+					}
 					segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := turn.syncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
 					bufferedSamples, _, _, sampleRate := turn.syncBuf.snapshot()
 					if sampleRate > 0 {
@@ -1296,26 +1371,27 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					} else {
 						sampleRate = lastKnownSampleRate
 					}
-					if outSamples < wantSamples {
+					if segSeq == 1 && outSamples < wantSamples {
 						if sampleRate <= 0 {
 							sampleRate = 16000
 						}
 						log.Printf("voice av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
 							sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
 					}
-					if isFinalSeg && bufferedSamplesAfterTake > 0 {
+					if segSeq == 1 && isFinalSeg && bufferedSamplesAfterTake > 0 {
 						log.Printf("voice av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
 					}
 					raw := &mediapeer.RawAVSegment{
-						TraceLabel: traceLabel,
-						Epoch:      turn.seq,
-						RGB:        segVideo,
-						PCM:        segPCM,
-						SampleRate: sampleRate,
-						Width:      segWidth,
-						Height:     segHeight,
-						FPS:        segFPS,
-						NumFrames:  segFrames,
+						TraceLabel:  traceLabel,
+						Epoch:       turn.seq,
+						RGB:         segVideo,
+						PCM:         segPCM,
+						UserFinalAt: turn.userFinalAt,
+						SampleRate:  sampleRate,
+						Width:       segWidth,
+						Height:      segHeight,
+						FPS:         segFPS,
+						NumFrames:   segFrames,
 					}
 					if err := peer.SendAVSegment(raw); err != nil {
 						log.Printf("voice av SendAVSegment failed session=%s seg=%d: %v", sessionID, segSeq, err)
@@ -1369,6 +1445,16 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					}
 					if !firstFrameSent {
 						firstFrameSent = true
+						turn.firstVideoAt = time.Now()
+						logVoiceTrace(
+							"go_avatar_first_video_received",
+							sessionID,
+							turn.seq,
+							turn.replyID,
+							turn.questionID,
+							turn.userFinalAt,
+							"avatar_ms="+strconv.FormatInt(time.Since(turn.avatarWorkerAt).Milliseconds(), 10),
+						)
 						log.Printf("TTFF voice pipeline session=%s turn=%d first_video_chunk=%.3fs", sessionID, turn.seq, time.Since(turn.turnStart).Seconds())
 						if !speakingBroadcasted && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(turn.seq) {
 							speakingBroadcasted = true
@@ -1417,6 +1503,10 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		}
 		close(turn.avatarAudioCh)
 		turn.avatarInputClosed = true
+		turn.avatarInputClosedAt = time.Now()
+		if turn.firstVideoAt.IsZero() {
+			logVoiceTrace("go_avatar_input_closed", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
+		}
 	}
 
 	currentStatusTurnSeq := func() uint64 {
@@ -1471,11 +1561,20 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				outputCh = nil
 				continue
 			}
+			outputQuestionID := output.GetQuestionId()
+			outputReplyID := output.GetReplyId()
 
 			if output.GetBargeIn() {
 				if currentTurn != nil || pendingTurnSeq == 0 {
 					seq := reservePendingTurn()
+					if outputQuestionID != "" {
+						pendingQuestionID = outputQuestionID
+					}
+					if outputReplyID != "" {
+						pendingReplyID = outputReplyID
+					}
 					pendingTurnAssistantReady = false
+					logVoiceTrace("go_barge_in_received", sessionID, seq, pendingReplyID, pendingQuestionID, time.Time{})
 					if currentTurn != nil {
 						abortTurn(currentTurn, true)
 						currentTurn = nil
@@ -1486,14 +1585,45 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				continue
 			}
 
+			if currentTurn != nil {
+				if outputQuestionID != "" {
+					currentTurn.questionID = outputQuestionID
+				}
+				if outputReplyID != "" {
+					currentTurn.replyID = outputReplyID
+				}
+			} else {
+				if outputQuestionID != "" {
+					pendingQuestionID = outputQuestionID
+				}
+				if outputReplyID != "" {
+					pendingReplyID = outputReplyID
+				}
+			}
+
 			if userText := strings.TrimSpace(output.GetUserTranscript()); userText != "" {
 				if currentTurn != nil {
 					abortTurn(currentTurn, true)
 					currentTurn = nil
 					currentTurnDone = nil
 				}
+				if outputQuestionID != "" {
+					pendingQuestionID = outputQuestionID
+				}
+				if outputReplyID != "" {
+					pendingReplyID = outputReplyID
+				}
 				seq := reservePendingTurn()
 				pendingTurnAssistantReady = true
+				pendingUserFinalAt = time.Now()
+				logVoiceTrace(
+					"go_user_transcript_received",
+					sessionID,
+					seq,
+					pendingReplyID,
+					pendingQuestionID,
+					pendingUserFinalAt,
+				)
 				session.AddMessage(ChatMessage{Role: "user", Content: userText})
 				o.broadcastJSON(sessionID, map[string]any{
 					"type":     "transcript",
@@ -1564,6 +1694,17 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 
 			audio := output.GetAudio()
 			if audio != nil && len(audio.GetData()) > 0 {
+				if currentTurn.firstAudioAt.IsZero() {
+					currentTurn.firstAudioAt = time.Now()
+					logVoiceTrace(
+						"go_first_voice_audio_received",
+						sessionID,
+						currentTurn.seq,
+						currentTurn.replyID,
+						currentTurn.questionID,
+						currentTurn.userFinalAt,
+					)
+				}
 				if !currentTurn.avatarStarted {
 					startAvatarWorker(currentTurn)
 				}
@@ -1576,6 +1717,17 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					currentTurn.recAudioSR = int(audio.GetSampleRate())
 				}
 				audioClone := proto.Clone(audio).(*pb.AudioChunk)
+				if currentTurn.firstAvatarAudioAt.IsZero() {
+					currentTurn.firstAvatarAudioAt = time.Now()
+					logVoiceTrace(
+						"go_avatar_first_audio_enqueued",
+						sessionID,
+						currentTurn.seq,
+						currentTurn.replyID,
+						currentTurn.questionID,
+						currentTurn.userFinalAt,
+					)
+				}
 				select {
 				case currentTurn.avatarAudioCh <- audioClone:
 				case <-currentTurn.avatarCtx.Done():
@@ -1584,6 +1736,12 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 
 			if !isFinal {
 				continue
+			}
+			if currentTurn.audioFinalAt.IsZero() {
+				currentTurn.audioFinalAt = time.Now()
+				if currentTurn.firstVideoAt.IsZero() {
+					logVoiceTrace("go_voice_audio_final_received", sessionID, currentTurn.seq, currentTurn.replyID, currentTurn.questionID, currentTurn.userFinalAt)
+				}
 			}
 
 			if currentTurn.avatarStarted {
