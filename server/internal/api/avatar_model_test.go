@@ -17,11 +17,18 @@ import (
 	"github.com/cyberverse/server/internal/inference"
 	"github.com/cyberverse/server/internal/orchestrator"
 	pb "github.com/cyberverse/server/internal/pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakeInferenceService struct {
 	avatarInfo              *pb.AvatarInfo
 	infoErr                 error
+	setAvatarErr            error
+	setAvatarErrs           []error
+	setAvatarCalls          int
+	setAvatarSizes          []int
+	setAvatarFormats        []string
 	checkVoiceProviderError string
 	checkVoiceErr           error
 }
@@ -38,7 +45,15 @@ func (f *fakeInferenceService) AvatarInfo(context.Context) (*pb.AvatarInfo, erro
 	return f.avatarInfo, nil
 }
 
-func (f *fakeInferenceService) SetAvatar(context.Context, string, []byte, string) error { return nil }
+func (f *fakeInferenceService) SetAvatar(_ context.Context, _ string, imageData []byte, format string) error {
+	f.setAvatarCalls++
+	f.setAvatarSizes = append(f.setAvatarSizes, len(imageData))
+	f.setAvatarFormats = append(f.setAvatarFormats, format)
+	if len(f.setAvatarErrs) >= f.setAvatarCalls {
+		return f.setAvatarErrs[f.setAvatarCalls-1]
+	}
+	return f.setAvatarErr
+}
 func (f *fakeInferenceService) GenerateAvatarStream(context.Context, <-chan *pb.AudioChunk) (<-chan *pb.VideoChunk, <-chan error) {
 	videoCh := make(chan *pb.VideoChunk)
 	errCh := make(chan error)
@@ -494,6 +509,77 @@ func TestCreateSessionWithCharacterUsesActiveRuntimeModelOnly(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
+	}
+}
+
+func TestCreateSessionReturnsAvatarWarningWhenImageExceedsGRPCLimit(t *testing.T) {
+	charStore, err := character.NewStore(filepath.Join(t.TempDir(), "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:      "Large Avatar",
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	image := character.ImageInfo{
+		Filename: "avatar.png",
+		OrigName: "avatar.png",
+	}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+	idleDir := charStore.IdleVideosForSizeDir(char.ID, image.Filename, 512, 512)
+	if err := os.MkdirAll(idleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idleDir, "cached.mp4"), []byte("cached"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	tooLargeErr := status.Error(codes.ResourceExhausted, "trying to send message larger than max (22347880 vs. 10485760)")
+	inf := &fakeInferenceService{
+		avatarInfo:    &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		setAvatarErrs: []error{tooLargeErr, nil},
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore)
+	r := NewRouter(mgr, orch, nil, nil, nil, charStore, "", "")
+
+	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %v", resp.Warnings)
+	}
+	if !strings.Contains(resp.Warnings[0], "10MB") {
+		t.Fatalf("expected warning to mention 10MB upload limit, got %q", resp.Warnings[0])
+	}
+	if inf.setAvatarCalls != 2 {
+		t.Fatalf("expected failed character SetAvatar plus default reset SetAvatar, got %d calls", inf.setAvatarCalls)
+	}
+	if got := inf.setAvatarFormats[1]; got != "png" {
+		t.Fatalf("expected default reset to use png, got %q", got)
+	}
+	if size := inf.setAvatarSizes[1]; size <= 0 || size >= 10*1024*1024 {
+		t.Fatalf("expected compact default avatar image, got %d bytes", size)
 	}
 }
 

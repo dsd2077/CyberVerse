@@ -37,6 +37,7 @@ export interface CreateSessionResponse {
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
+  warnings?: string[]
 }
 
 export interface SessionInfo {

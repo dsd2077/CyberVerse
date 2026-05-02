@@ -26,6 +26,7 @@ type CreateSessionResponse struct {
 	Token         string   `json:"livekit_token,omitempty"`
 	IdleVideoURL  string   `json:"idle_video_url,omitempty"`
 	IdleVideoURLs []string `json:"idle_video_urls,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -126,7 +127,17 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer cancel()
 				if _, err := r.orch.EnsureIdleVideo(bgCtx, charID); err != nil {
-					log.Printf("Idle video background generation failed for character %s: %v", charID, err)
+					if warning, ok := orchestrator.AvatarImageTooLargeWarning(err); ok {
+						log.Printf("Idle video background generation failed for character %s: %s details=%v", charID, warning, err)
+						if r.wsHub != nil {
+							r.wsHub.BroadcastJSON(sessID, map[string]any{
+								"type":    "avatar_warning",
+								"message": warning,
+							})
+						}
+					} else {
+						log.Printf("Idle video background generation failed for character %s: %v", charID, err)
+					}
 					return
 				}
 				urls := r.idleVideoURLs(charID, img, r.currentIdleVideoTarget(bgCtx))
@@ -170,7 +181,8 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		setupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		peer, err := r.orch.SetupSession(setupCtx, session, r.roomMgr)
+		peer, warnings, err := r.orch.SetupSession(setupCtx, session, r.roomMgr)
+		resp.Warnings = append(resp.Warnings, warnings...)
 		if err != nil {
 			log.Printf("Failed to setup session %s: %v", sessionID, err)
 		} else if mode == orchestrator.ModeVoiceLLM {

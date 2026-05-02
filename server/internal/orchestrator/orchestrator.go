@@ -1,11 +1,16 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"log"
 	"math"
 	"math/rand"
@@ -27,6 +32,8 @@ import (
 	"github.com/cyberverse/server/internal/ws"
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/webrtc/v4"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -42,6 +49,8 @@ const stdChunksPerSegment = 3
 // and all video segments to play with misaligned (or silent) audio.
 // Set to 0 to disable the overflow guard entirely.
 const voiceMaxPCMBufferSamples = 0
+
+const avatarImageMaxUploadHint = "角色头像图片超过当前 10MB 上传限制，已使用默认头像；待机视频也不会生成。请压缩或缩放角色图片到 10MB 以内后重试。"
 
 type voiceAVSyncBuffer struct {
 	mu               sync.Mutex
@@ -425,6 +434,74 @@ func normalizeImageFormat(imageFilename string) string {
 	return ext
 }
 
+func buildDefaultAvatarPNG(width, height int) ([]byte, error) {
+	if width <= 0 {
+		width = 512
+	}
+	if height <= 0 {
+		height = 512
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{128, 128, 128, 255}}, image.Point{}, draw.Src)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// AvatarSetupWarning converts avatar setup failures into a concise message
+// suitable for browser console diagnostics.
+func AvatarSetupWarning(err error) string {
+	if err == nil {
+		return ""
+	}
+	if warning, ok := AvatarImageTooLargeWarning(err); ok {
+		return warning
+	}
+	return fmt.Sprintf("角色头像设置失败，已使用默认头像：%v", err)
+}
+
+// AvatarImageTooLargeWarning reports whether a gRPC message-size failure was
+// caused by an oversized avatar image.
+func AvatarImageTooLargeWarning(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	msg := strings.ToLower(err.Error())
+	if status.Code(err) == codes.ResourceExhausted && strings.Contains(msg, "message larger than max") {
+		return avatarImageMaxUploadHint, true
+	}
+	if strings.Contains(msg, "trying to send message larger than max") {
+		return avatarImageMaxUploadHint, true
+	}
+	return "", false
+}
+
+func (o *Orchestrator) setDefaultAvatarLocked(ctx context.Context, sessionID string) error {
+	if o == nil || o.inference == nil {
+		return errors.New("inference service is not configured")
+	}
+	width, height := 512, 512
+	if info, err := o.inference.AvatarInfo(ctx); err == nil && info != nil {
+		if int(info.GetOutputWidth()) > 0 {
+			width = int(info.GetOutputWidth())
+		}
+		if int(info.GetOutputHeight()) > 0 {
+			height = int(info.GetOutputHeight())
+		}
+	}
+	imageData, err := buildDefaultAvatarPNG(width, height)
+	if err != nil {
+		return fmt.Errorf("build default avatar image: %w", err)
+	}
+	if err := o.inference.SetAvatar(ctx, sessionID, imageData, "png"); err != nil {
+		return fmt.Errorf("set default avatar: %w", err)
+	}
+	return nil
+}
+
 func (o *Orchestrator) loadCharacterImage(characterID, imageFilename string) ([]byte, string, error) {
 	if o == nil || o.charStore == nil {
 		return nil, "", errors.New("character store is not configured")
@@ -550,7 +627,14 @@ func (o *Orchestrator) setAvatarFromCharacterImage(ctx context.Context, sessionI
 	o.avatarMu.Lock()
 	defer o.avatarMu.Unlock()
 
-	return o.inference.SetAvatar(ctx, sessionID, imageData, format)
+	if err := o.inference.SetAvatar(ctx, sessionID, imageData, format); err != nil {
+		if resetErr := o.setDefaultAvatarLocked(ctx, sessionID); resetErr != nil {
+			return fmt.Errorf("set avatar from image %q (%d bytes): %w; default avatar reset failed: %v", imageFilename, len(imageData), err, resetErr)
+		}
+		log.Printf("SetAvatar failed for image %q (%d bytes); reset inference avatar to default placeholder", imageFilename, len(imageData))
+		return fmt.Errorf("set avatar from image %q (%d bytes): %w", imageFilename, len(imageData), err)
+	}
+	return nil
 }
 
 // EnsureIdleVideo generates and caches the idle MP4 for the active image if missing.
@@ -615,7 +699,10 @@ func (o *Orchestrator) EnsureIdleVideo(ctx context.Context, characterID string) 
 
 	jobID := fmt.Sprintf("idle-%s-%d", characterID, time.Now().UnixNano())
 	if err := o.inference.SetAvatar(ctx, jobID, imageData, format); err != nil {
-		return "", fmt.Errorf("set avatar for idle video: %w", err)
+		if resetErr := o.setDefaultAvatarLocked(ctx, jobID); resetErr != nil {
+			log.Printf("EnsureIdleVideo: failed to reset default avatar after SetAvatar failure for character %s image=%s: %v", characterID, imageFilename, resetErr)
+		}
+		return "", fmt.Errorf("set avatar for idle video from image %q (%d bytes): %w", imageFilename, len(imageData), err)
 	}
 	videoCh, errCh := o.inference.GenerateAvatar(ctx, []*pb.AudioChunk{audioChunk})
 
@@ -682,7 +769,9 @@ loop:
 
 // SetupSession creates a media peer (DirectPeer or LiveKit Bot) and prepares for streaming.
 // When roomMgr is nil (direct mode), a DirectPeer is created instead of a LiveKit Bot.
-func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, error) {
+func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, []string, error) {
+	warnings := []string{}
+
 	// Best-effort: apply the character's active avatar image.
 	if session != nil && session.CharacterID != "" {
 		_, imageFilename, err := o.activeCharacterImage(session.CharacterID)
@@ -690,7 +779,9 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 			log.Printf("SetupSession: could not resolve active image for character %s: %v", session.CharacterID, err)
 		} else if imageFilename != "" {
 			if err := o.setAvatarFromCharacterImage(ctx, session.ID, session.CharacterID, imageFilename); err != nil {
-				log.Printf("SetupSession: SetAvatar failed for character %s (proceeding with default avatar): %v", session.CharacterID, err)
+				warning := AvatarSetupWarning(err)
+				warnings = append(warnings, warning)
+				log.Printf("SetupSession: %s character=%s image=%s details=%v", warning, session.CharacterID, imageFilename, err)
 			}
 		}
 	}
@@ -701,7 +792,7 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 		// LiveKit SFU mode
 		roomName := livekit.RoomName(session.ID)
 		if err := roomMgr.CreateRoom(ctx, roomName); err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 
 		bot := livekit.NewBot(
@@ -711,7 +802,7 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 			roomName,
 		)
 		if err := bot.Connect(ctx); err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		peer = bot
 	} else {
@@ -729,7 +820,7 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 		}
 		dp := direct.NewDirectPeer(session.ID, signalingFn, iceServers, o.webrtcAPI, o.estimatorCh)
 		if err := dp.Connect(ctx); err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		peer = dp
 
@@ -747,7 +838,7 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	o.mu.Unlock()
 
 	session.SetState(StateConnected)
-	return peer, nil
+	return peer, warnings, nil
 }
 
 func (o *Orchestrator) stopPipelineAndWait(session *Session, sessionID string, interruptVoice bool) {
@@ -1916,6 +2007,9 @@ func (o *Orchestrator) sessionRecordingDir(session *Session) string {
 
 // broadcastJSON marshals and broadcasts a JSON message.
 func (o *Orchestrator) broadcastJSON(sessionID string, v any) {
+	if o.wsHub == nil {
+		return
+	}
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("Failed to marshal broadcast: %v", err)

@@ -207,6 +207,10 @@ export function useChat(sessionId: () => string) {
           }
           break
 
+        case 'avatar_warning':
+          console.warn('[CyberVerse]', data.message || data)
+          break
+
         case 'avatar_status': {
           const turnSeq = parseTurnSeq(data)
           if (!acceptTurnSeq(turnSeq)) {

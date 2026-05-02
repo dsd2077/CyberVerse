@@ -40,13 +40,19 @@ func logVoiceTraceWithSinceValue(event string, trace TraceContext, since string,
 
 // SetAvatar sends an image to the inference server to configure the avatar.
 func (c *Client) SetAvatar(ctx context.Context, sessionID string, imageData []byte, format string) error {
-	_, err := c.avatar.SetAvatar(ctx, &pb.SetAvatarRequest{
+	resp, err := c.avatar.SetAvatar(ctx, &pb.SetAvatarRequest{
 		SessionId:   sessionID,
 		ImageData:   imageData,
 		ImageFormat: format,
 		UseFaceCrop: false,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if resp != nil && !resp.GetSuccess() {
+		return fmt.Errorf("set avatar rejected by inference server: %s", resp.GetMessage())
+	}
+	return nil
 }
 
 // GenerateAvatarStream opens a bidirectional stream: sends audio chunks,

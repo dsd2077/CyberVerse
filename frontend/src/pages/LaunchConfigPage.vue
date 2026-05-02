@@ -137,6 +137,9 @@ async function launch() {
   connecting.value = true
   try {
     const resp = await createSession(characterId.value, 'voice_llm')
+    resp.warnings?.forEach((warning) => {
+      console.warn('[CyberVerse]', warning)
+    })
     router.push({
       path: `/session/${resp.session_id}`,
       query: {
