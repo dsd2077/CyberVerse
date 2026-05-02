@@ -130,6 +130,9 @@ func main() {
 				"content":   m.Content,
 				"timestamp": ts.UTC().Format(time.RFC3339Nano),
 			}
+			if m.TurnSeq > 0 {
+				messages[i]["turn_seq"] = m.TurnSeq
+			}
 		}
 		if err := charStore.SaveConversation(s.CharacterID, s.ID, s.CreatedAt, s.LastActiveAt, messages); err != nil {
 			log.Printf("Failed to save conversation for session %s: %v", s.ID, err)

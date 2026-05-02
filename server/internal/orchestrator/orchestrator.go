@@ -179,6 +179,9 @@ type voicePipelineTurn struct {
 	recTurnID           string
 	recAudioBuf         []byte
 	recAudioSR          int
+	historySaved        bool
+	transcriptSaved     bool
+	rawAudioSaved       bool
 	sessionDir          string
 	turnStart           time.Time
 	userFinalAt         time.Time
@@ -1150,7 +1153,7 @@ func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Ses
 	session.PipelineCancel = cancel
 	session.mu.Unlock()
 
-	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	session.AddMessage(ChatMessage{Role: "user", Content: text, TurnSeq: turnSeq})
 	session.SetState(StateProcessing)
 	o.broadcastStatusTurn(sessionID, "processing", turnSeq)
 	pipelineSeq := session.MarkPipelineRunning()
@@ -1466,7 +1469,6 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	if o.recorder != nil {
 		sessionDir = o.sessionRecordingDir(session)
 	}
-	var recTurnNum int
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1476,7 +1478,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 
 	pendingTurnSeq := initialTurnSeq
 	pendingTurnAssistantReady := initialTurnSeq > 0
-	ignoredTurnKeys := make(map[string]struct{})
+	ignoredTurns := make(map[string]*voicePipelineTurn)
 
 	var currentTurn *voicePipelineTurn
 	var currentTurnDone <-chan voicePipelineTurnResult
@@ -1484,6 +1486,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	var pendingQuestionID string
 	var pendingReplyID string
 	var pendingUserFinalAt time.Time
+	var pendingAssistantMustMatchKey bool
 
 	lookupPeer := func() mediapeer.MediaPeer {
 		o.mu.RLock()
@@ -1513,37 +1516,92 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		}
 		turn.aborted = true
 		if ignoreKey && turn.key != "" {
-			ignoredTurnKeys[turn.key] = struct{}{}
+			ignoredTurns[turn.key] = turn
 		}
 		if turn.avatarCancel != nil {
 			turn.avatarCancel()
 		}
 	}
 
-	saveCompletedTurn := func(turn *voicePipelineTurn) {
-		if turn == nil || turn.aborted {
+	saveAssistantMessage := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.historySaved || strings.TrimSpace(turn.assistantText) == "" {
 			return
 		}
-		if turn.assistantText != "" {
-			session.AddMessage(ChatMessage{Role: "assistant", Content: turn.assistantText})
+		session.AddMessage(ChatMessage{Role: "assistant", Content: turn.assistantText, TurnSeq: turn.seq})
+		turn.historySaved = true
+	}
+
+	saveTurnTranscript := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.transcriptSaved || strings.TrimSpace(turn.assistantText) == "" {
+			return
 		}
 		if o.recorder == nil || turn.recTurnID == "" {
 			return
 		}
-		if len(turn.recAudioBuf) > 0 {
-			saveTurnID, savePCM, saveSR := turn.recTurnID, turn.recAudioBuf, turn.recAudioSR
-			saveDir := turn.sessionDir
-			go func() {
-				if err := o.recorder.SaveRawAudio(saveDir, saveTurnID, savePCM, saveSR); err != nil {
-					log.Printf("recording: SaveRawAudio error session=%s turn=%s: %v", sessionID, saveTurnID, err)
-				}
-			}()
+		if err := o.recorder.SaveTranscript(turn.sessionDir, turn.recTurnID, turn.assistantText); err != nil {
+			log.Printf("recording: SaveTranscript error session=%s turn=%s: %v", sessionID, turn.recTurnID, err)
+			return
 		}
-		if turn.assistantText != "" {
-			if err := o.recorder.SaveTranscript(turn.sessionDir, turn.recTurnID, turn.assistantText); err != nil {
-				log.Printf("recording: SaveTranscript error session=%s turn=%s: %v", sessionID, turn.recTurnID, err)
+		turn.transcriptSaved = true
+	}
+
+	saveTurnRawAudio := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.rawAudioSaved || len(turn.recAudioBuf) == 0 {
+			return
+		}
+		if o.recorder == nil || turn.recTurnID == "" {
+			return
+		}
+		if err := o.recorder.SaveRawAudio(turn.sessionDir, turn.recTurnID, turn.recAudioBuf, turn.recAudioSR); err != nil {
+			log.Printf("recording: SaveRawAudio error session=%s turn=%s: %v", sessionID, turn.recTurnID, err)
+			return
+		}
+		turn.rawAudioSaved = true
+	}
+
+	saveCompletedTurn := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.aborted {
+			return
+		}
+		saveAssistantMessage(turn)
+		saveTurnRawAudio(turn)
+		saveTurnTranscript(turn)
+	}
+
+	recordIgnoredTurnOutput := func(turn *voicePipelineTurn, output *pb.VoiceLLMOutput) bool {
+		if turn == nil || output == nil {
+			return false
+		}
+		isFinal := voiceOutputIsFinal(output)
+		if transcript := output.GetTranscript(); transcript != "" {
+			if isFinal {
+				turn.assistantText = transcript
+			} else {
+				turn.assistantText += transcript
 			}
 		}
+		if audio := output.GetAudio(); audio != nil && len(audio.GetData()) > 0 {
+			turn.recAudioBuf = append(turn.recAudioBuf, audio.GetData()...)
+			if int(audio.GetSampleRate()) > 0 {
+				turn.recAudioSR = int(audio.GetSampleRate())
+			}
+		}
+		if isFinal {
+			shouldBroadcast := !turn.historySaved && strings.TrimSpace(turn.assistantText) != ""
+			saveAssistantMessage(turn)
+			saveTurnRawAudio(turn)
+			saveTurnTranscript(turn)
+			if shouldBroadcast {
+				o.broadcastJSON(sessionID, map[string]any{
+					"type":     "transcript",
+					"text":     turn.assistantText,
+					"is_final": true,
+					"speaker":  "assistant",
+					"turn_seq": turn.seq,
+				})
+			}
+		}
+		return isFinal
 	}
 
 	setIdleIfCurrent := func(turnSeq uint64) {
@@ -1561,15 +1619,14 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			o.advancePlaybackEpoch(sessionID, seq)
 		}
 		if key != "" {
-			delete(ignoredTurnKeys, key)
+			delete(ignoredTurns, key)
 		}
-		recTurnNum++
 		turn := &voicePipelineTurn{
 			seq:         seq,
 			key:         key,
 			questionID:  pendingQuestionID,
 			replyID:     pendingReplyID,
-			recTurnID:   fmt.Sprintf("turn%d", recTurnNum),
+			recTurnID:   fmt.Sprintf("turn%d", seq),
 			recAudioSR:  16000,
 			sessionDir:  sessionDir,
 			turnStart:   time.Now(),
@@ -1581,9 +1638,20 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		pendingQuestionID = ""
 		pendingReplyID = ""
 		pendingUserFinalAt = time.Time{}
+		pendingAssistantMustMatchKey = false
 		logVoiceTrace("go_turn_started", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 		broadcastProcessing(seq)
 		return turn
+	}
+
+	pendingTurnKey := func() string {
+		if pendingReplyID != "" {
+			return "reply:" + pendingReplyID
+		}
+		if pendingQuestionID != "" {
+			return "question:" + pendingQuestionID
+		}
+		return ""
 	}
 
 	startAvatarWorker := func(turn *voicePipelineTurn) {
@@ -1861,6 +1929,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 						abortTurn(currentTurn, true)
 						currentTurn = nil
 						currentTurnDone = nil
+						pendingAssistantMustMatchKey = true
 						broadcastProcessing(seq)
 					}
 				}
@@ -1888,6 +1957,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					abortTurn(currentTurn, true)
 					currentTurn = nil
 					currentTurnDone = nil
+					pendingAssistantMustMatchKey = true
 				}
 				if outputQuestionID != "" {
 					pendingQuestionID = outputQuestionID
@@ -1906,7 +1976,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					pendingQuestionID,
 					pendingUserFinalAt,
 				)
-				session.AddMessage(ChatMessage{Role: "user", Content: userText})
+				session.AddMessage(ChatMessage{Role: "user", Content: userText, TurnSeq: seq})
 				o.broadcastJSON(sessionID, map[string]any{
 					"type":     "transcript",
 					"text":     userText,
@@ -1919,9 +1989,9 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 
 			turnKey := voiceOutputTurnKey(output)
 			if turnKey != "" {
-				if _, ignored := ignoredTurnKeys[turnKey]; ignored {
-					if voiceOutputIsFinal(output) {
-						delete(ignoredTurnKeys, turnKey)
+				if ignoredTurn, ignored := ignoredTurns[turnKey]; ignored {
+					if recordIgnoredTurnOutput(ignoredTurn, output) {
+						delete(ignoredTurns, turnKey)
 					}
 					continue
 				}
@@ -1929,6 +1999,11 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 
 			if pendingTurnSeq != 0 && !pendingTurnAssistantReady && currentTurn == nil && voiceOutputHasAssistantContent(output) {
 				continue
+			}
+			if pendingTurnSeq != 0 && pendingTurnAssistantReady && pendingAssistantMustMatchKey && currentTurn == nil && voiceOutputHasAssistantContent(output) {
+				if expectedKey := pendingTurnKey(); expectedKey != "" && turnKey != expectedKey {
+					continue
+				}
 			}
 
 			if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) {
@@ -2025,6 +2100,9 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 					logVoiceTrace("go_voice_audio_final_received", sessionID, currentTurn.seq, currentTurn.replyID, currentTurn.questionID, currentTurn.userFinalAt)
 				}
 			}
+			saveAssistantMessage(currentTurn)
+			saveTurnRawAudio(currentTurn)
+			saveTurnTranscript(currentTurn)
 
 			if currentTurn.avatarStarted {
 				closeTurnInput(currentTurn)

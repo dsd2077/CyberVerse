@@ -23,10 +23,8 @@ export function useChat(sessionId: () => string) {
   const activeResponseId = ref<string>('')   // Track active response to prevent duplicates
   const pipelineMode = ref<'text' | 'voice' | null>(null)  // Track active pipeline
 
-  // Accumulation state for voice responses
-  const accumulatedVoiceResponse = ref('')  // Accumulates all transcript texts
-  const voiceResponseFinalized = ref(false) // Prevents duplicate finalization
   const latestTurnSeq = ref(0)
+  const voiceDrafts = new Map<string, string>()
 
   // Computed property to show the appropriate response based on active pipeline
   const currentLLMResponse = computed(() => {
@@ -51,8 +49,6 @@ export function useChat(sessionId: () => string) {
     currentVoiceResponse.value = ''
     currentTextResponse.value = ''
     currentTranscript.value = ''
-    accumulatedVoiceResponse.value = ''
-    voiceResponseFinalized.value = false
   }
 
   function parseTurnSeq(data: any): number {
@@ -60,16 +56,42 @@ export function useChat(sessionId: () => string) {
     return Number.isFinite(turnSeq) && turnSeq > 0 ? turnSeq : 0
   }
 
-  function acceptTurnSeq(turnSeq: number): boolean {
-    if (!turnSeq) return true
-    if (turnSeq < latestTurnSeq.value) {
-      return false
-    }
+  function beginTurnSeq(turnSeq: number) {
+    if (!turnSeq) return
     if (turnSeq > latestTurnSeq.value) {
       latestTurnSeq.value = turnSeq
       resetTransientState()
     }
-    return true
+  }
+
+  function isOlderTurn(turnSeq: number): boolean {
+    return turnSeq > 0 && turnSeq < latestTurnSeq.value
+  }
+
+  function upsertMessage(message: ChatMessage, afterId?: string) {
+    if (message.id) {
+      const existingIndex = messages.value.findIndex(m => m.id === message.id)
+      if (existingIndex >= 0) {
+        messages.value[existingIndex] = { ...messages.value[existingIndex], ...message }
+        return
+      }
+    }
+
+    if (afterId) {
+      const anchorIndex = messages.value.findIndex(m => m.id === afterId)
+      if (anchorIndex >= 0) {
+        messages.value.splice(anchorIndex + 1, 0, message)
+        return
+      }
+    }
+
+    messages.value.push(message)
+  }
+
+  function clearActiveResponse(responseId: string) {
+    if (activeResponseId.value === responseId) {
+      resetTransientState()
+    }
   }
 
   function registerSignalingHandler(fn: (data: any) => void) {
@@ -106,54 +128,49 @@ export function useChat(sessionId: () => string) {
       switch (data.type) {
         case 'transcript': {
           const turnSeq = parseTurnSeq(data)
-          if (!acceptTurnSeq(turnSeq)) {
-            break
-          }
+          const olderTurn = isOlderTurn(turnSeq)
+          if (!olderTurn) beginTurnSeq(turnSeq)
           const role: ChatMessage['role'] = data.speaker === 'assistant' ? 'assistant' : 'user'
 
           if (role === 'assistant') {
             const responseId = turnSeq ? `voice-${turnSeq}` : (activeResponseId.value || `voice-${Date.now()}`)
-            if (!activeResponseId.value || pipelineMode.value !== 'voice') {
-              activeResponseId.value = responseId
-              accumulatedVoiceResponse.value = ''
-              voiceResponseFinalized.value = false
-              pipelineMode.value = 'voice'
-            }
-            activeResponseId.value = responseId
 
             if (data.is_final) {
-              const finalText = data.text || accumulatedVoiceResponse.value || currentVoiceResponse.value
+              const finalText = data.text || voiceDrafts.get(responseId) || (activeResponseId.value === responseId ? currentVoiceResponse.value : '')
               if (finalText) {
-                const alreadyExists = messages.value.some(m => m.id === responseId)
-                if (!alreadyExists) {
-                  messages.value.push({
-                    id: responseId,
-                    role,
-                    content: finalText,
-                    timestamp: Date.now(),
-                  })
-                }
+                upsertMessage({
+                  id: responseId,
+                  role,
+                  content: finalText,
+                  timestamp: Date.now(),
+                }, turnSeq ? `user-${turnSeq}` : undefined)
               }
 
-              resetTransientState()
+              voiceDrafts.delete(responseId)
+              clearActiveResponse(responseId)
             } else {
-              accumulatedVoiceResponse.value += data.text || ''
-              currentVoiceResponse.value = accumulatedVoiceResponse.value
+              if (olderTurn) break
+              const nextText = (voiceDrafts.get(responseId) || '') + (data.text || '')
+              voiceDrafts.set(responseId, nextText)
+              activeResponseId.value = responseId
+              pipelineMode.value = 'voice'
+              currentVoiceResponse.value = nextText
             }
           } else {
-            currentTranscript.value = data.text
+            if (!olderTurn) {
+              currentTranscript.value = data.text
+            }
             if (data.is_final) {
               const messageId = turnSeq ? `user-${turnSeq}` : undefined
-              const alreadyExists = messageId ? messages.value.some(m => m.id === messageId) : false
-              if (!alreadyExists) {
-                messages.value.push({
-                  id: messageId,
-                  role,
-                  content: data.text,
-                  timestamp: Date.now(),
-                })
+              upsertMessage({
+                id: messageId,
+                role,
+                content: data.text,
+                timestamp: Date.now(),
+              })
+              if (!olderTurn) {
+                currentTranscript.value = ''
               }
-              currentTranscript.value = ''
             }
           }
           break
@@ -161,10 +178,21 @@ export function useChat(sessionId: () => string) {
 
         case 'llm_token': {
           const turnSeq = parseTurnSeq(data)
-          if (!acceptTurnSeq(turnSeq)) {
+          const olderTurn = isOlderTurn(turnSeq)
+          if (!olderTurn) beginTurnSeq(turnSeq)
+          const responseId = turnSeq ? `text-${turnSeq}` : (activeResponseId.value || `text-${Date.now()}`)
+
+          if (olderTurn) {
+            if (data.is_final && data.accumulated) {
+              upsertMessage({
+                id: responseId,
+                role: 'assistant',
+                content: data.accumulated,
+                timestamp: Date.now(),
+              }, turnSeq ? `user-${turnSeq}` : undefined)
+            }
             break
           }
-          const responseId = turnSeq ? `text-${turnSeq}` : (activeResponseId.value || `text-${Date.now()}`)
 
           if (!pipelineMode.value) {
             pipelineMode.value = 'text'
@@ -179,22 +207,17 @@ export function useChat(sessionId: () => string) {
           currentTextResponse.value = data.accumulated
 
           if (data.is_final) {
-            const alreadyExists = messages.value.some(m => m.id === responseId)
-
-            if (responseId && !alreadyExists) {
-              messages.value.push({
+            if (responseId) {
+              upsertMessage({
                 id: responseId,
                 role: 'assistant',
                 content: data.accumulated,
                 timestamp: Date.now(),
-              })
+              }, turnSeq ? `user-${turnSeq}` : undefined)
             }
 
             currentTextResponse.value = ''
-            if (!currentVoiceResponse.value) {
-              pipelineMode.value = null
-              activeResponseId.value = ''
-            }
+            clearActiveResponse(responseId)
           }
           break
         }
@@ -213,9 +236,10 @@ export function useChat(sessionId: () => string) {
 
         case 'avatar_status': {
           const turnSeq = parseTurnSeq(data)
-          if (!acceptTurnSeq(turnSeq)) {
+          if (isOlderTurn(turnSeq)) {
             break
           }
+          beginTurnSeq(turnSeq)
           avatarStatus.value = data.status
           if (data.status === 'idle') {
             resetTransientState()
@@ -324,6 +348,7 @@ export function useChat(sessionId: () => string) {
     ws.value = null
     isConnected.value = false
     latestTurnSeq.value = 0
+    voiceDrafts.clear()
     resetTransientState()
   }
 

@@ -47,6 +47,7 @@ type ChatMessage struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
+	TurnSeq   uint64    `json:"turn_seq,omitempty"`
 }
 
 type DialogContextItem struct {
@@ -199,6 +200,18 @@ func (s *Session) AddMessage(msg ChatMessage) {
 	now := time.Now()
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = now.UTC()
+	}
+	if msg.TurnSeq > 0 && msg.Role == "assistant" {
+		for i := len(s.History) - 1; i >= 0; i-- {
+			if s.History[i].TurnSeq == msg.TurnSeq {
+				insertAt := i + 1
+				s.History = append(s.History, ChatMessage{})
+				copy(s.History[insertAt+1:], s.History[insertAt:])
+				s.History[insertAt] = msg
+				s.LastActiveAt = now
+				return
+			}
+		}
 	}
 	s.History = append(s.History, msg)
 	s.LastActiveAt = now

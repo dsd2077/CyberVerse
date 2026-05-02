@@ -40,6 +40,25 @@ func TestSessionAddMessage(t *testing.T) {
 	}
 }
 
+func TestSessionAddMessageInsertsAssistantAfterMatchingTurn(t *testing.T) {
+	s := NewSession("test-1", ModeVoiceLLM, "")
+	s.AddMessage(ChatMessage{Role: "user", Content: "first", TurnSeq: 1})
+	s.AddMessage(ChatMessage{Role: "user", Content: "second", TurnSeq: 2})
+	s.AddMessage(ChatMessage{Role: "assistant", Content: "first answer", TurnSeq: 1})
+	s.AddMessage(ChatMessage{Role: "assistant", Content: "second answer", TurnSeq: 2})
+
+	got := s.HistorySnapshot()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(got))
+	}
+	want := []string{"first", "first answer", "second", "second answer"}
+	for i, text := range want {
+		if got[i].Content != text {
+			t.Fatalf("message %d: expected %q, got %+v", i, text, got)
+		}
+	}
+}
+
 func TestSessionDialogContextSnapshot(t *testing.T) {
 	s := NewSession("test-1", ModeVoiceLLM, "")
 	s.SetDialogContext([]DialogContextItem{

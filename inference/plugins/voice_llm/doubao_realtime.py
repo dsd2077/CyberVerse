@@ -436,6 +436,48 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         turn_question_id = ""
         turn_reply_id = ""
         last_was_idle_timeout = False
+
+        async def emit_turn_final(reason: str) -> bool:
+            nonlocal turn_final_sent
+            if turn_final_sent or (not turn_has_audio and not turn_transcript):
+                return False
+            logger.debug(
+                "Doubao %s, emit turn_final marker question_id=%s reply_id=%s has_audio=%s has_text=%s",
+                reason,
+                turn_question_id,
+                turn_reply_id,
+                turn_has_audio,
+                bool(turn_transcript),
+            )
+            await output_queue.put(
+                VoiceLLMOutputEvent(
+                    audio=AudioChunk(
+                        data=b"",
+                        sample_rate=config.output_sample_rate,
+                        channels=1,
+                        format=config.output_audio_format,
+                        is_final=True,
+                    )
+                    if turn_has_audio
+                    else None,
+                    transcript=turn_transcript,
+                    is_final=True,
+                    question_id=turn_question_id,
+                    reply_id=turn_reply_id,
+                )
+            )
+            turn_final_sent = True
+            return True
+
+        def reset_turn_state(question_id: str = "", reply_id: str = "") -> None:
+            nonlocal turn_has_audio, turn_final_sent, turn_transcript
+            nonlocal turn_question_id, turn_reply_id
+            turn_has_audio = False
+            turn_final_sent = False
+            turn_transcript = ""
+            turn_question_id = question_id
+            turn_reply_id = reply_id
+
         try:
             async for message in ws:
                 if isinstance(message, str):
@@ -492,20 +534,27 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                     question_id = str(data.get("question_id", "") or "")
                     reply_id = str(data.get("reply_id", "") or "")
 
+                    if decoded.event == DoubaoEvent.ASR_START:
+                        # ASR_START is a turn boundary. Doubao can emit it before
+                        # the interrupted assistant reply's REPLY_DONE arrives, so
+                        # close the previous assistant turn here and never carry
+                        # its reply_id into the new user turn.
+                        await emit_turn_final("asr_start")
+                        reset_turn_state(question_id=question_id)
+                        await output_queue.put(
+                            VoiceLLMOutputEvent(
+                                barge_in=True,
+                                question_id=turn_question_id,
+                            )
+                        )
+                        continue
+
                     if question_id:
                         turn_question_id = question_id
                     if reply_id:
                         turn_reply_id = reply_id
 
-                    if decoded.event == DoubaoEvent.ASR_START:
-                        await output_queue.put(
-                            VoiceLLMOutputEvent(
-                                barge_in=True,
-                                question_id=turn_question_id,
-                                reply_id=turn_reply_id,
-                            )
-                        )
-                    elif decoded.event == DoubaoEvent.TTS_SENTENCE_DONE:
+                    if decoded.event == DoubaoEvent.TTS_SENTENCE_DONE:
                         assistant_text = data.get("text", "")
                     elif decoded.event == DoubaoEvent.ASR_RESULT:
                         results = data.get("results", [])
@@ -545,43 +594,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
 
                     # event 359 (REPLY_DONE) = assistant reply audio fully sent
                     if decoded.event == DoubaoEvent.REPLY_DONE:
-                        if turn_has_audio and not turn_final_sent:
-                            logger.debug(
-                                "Doubao reply done (event=359), emit turn_final marker"
-                            )
-                            await output_queue.put(
-                                VoiceLLMOutputEvent(
-                                    audio=AudioChunk(
-                                        data=b"",
-                                        sample_rate=config.output_sample_rate,
-                                        channels=1,
-                                        format=config.output_audio_format,
-                                        is_final=True,
-                                    ),
-                                    transcript=turn_transcript,
-                                    is_final=True,
-                                    question_id=turn_question_id,
-                                    reply_id=turn_reply_id,
-                                )
-                            )
-                            turn_final_sent = True
-                            turn_transcript = ""
-                        elif turn_transcript and not turn_final_sent:
-                            logger.debug(
-                                "Doubao reply done without audio, emit transcript-only final"
-                            )
-                            await output_queue.put(
-                                VoiceLLMOutputEvent(
-                                    transcript=turn_transcript,
-                                    is_final=True,
-                                    question_id=turn_question_id,
-                                    reply_id=turn_reply_id,
-                                )
-                            )
-                            turn_final_sent = True
-                            turn_transcript = ""
-                        turn_question_id = ""
-                        turn_reply_id = ""
+                        await emit_turn_final("reply_done")
+                        reset_turn_state()
                         if config.input_mod == "text":
                             await output_queue.put(None)
                             break
@@ -596,23 +610,23 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         ):
                             self._interrupting = False
                             continue
-                        await output_queue.put(
-                            VoiceLLMOutputEvent(
-                                audio=AudioChunk(
-                                    data=b"",
-                                    sample_rate=config.output_sample_rate,
-                                    channels=1,
-                                    format=config.output_audio_format,
+                        emitted = await emit_turn_final("session_finished")
+                        if not emitted:
+                            await output_queue.put(
+                                VoiceLLMOutputEvent(
+                                    audio=AudioChunk(
+                                        data=b"",
+                                        sample_rate=config.output_sample_rate,
+                                        channels=1,
+                                        format=config.output_audio_format,
+                                        is_final=True,
+                                    ),
                                     is_final=True,
-                                ),
-                                transcript=turn_transcript,
-                                is_final=True,
-                                question_id=turn_question_id,
-                                reply_id=turn_reply_id,
+                                    question_id=turn_question_id,
+                                    reply_id=turn_reply_id,
+                                )
                             )
-                        )
-                        turn_question_id = ""
-                        turn_reply_id = ""
+                        reset_turn_state()
                         await output_queue.put(None)
                         break
                 elif decoded.is_error():
@@ -628,27 +642,16 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                     is_idle_timeout = "DialogAudioIdleTimeoutError" in err_text_str
 
                     if is_idle_timeout:
-                        if turn_transcript and not turn_final_sent:
+                        if turn_transcript or turn_has_audio:
                             logger.info(
-                                "Doubao idle timeout with transcript-only reply, emit final transcript"
+                                "Doubao idle timeout with pending reply, emit final marker"
                             )
-                            await output_queue.put(
-                                VoiceLLMOutputEvent(
-                                    transcript=turn_transcript,
-                                    is_final=True,
-                                    question_id=turn_question_id,
-                                    reply_id=turn_reply_id,
-                                )
-                            )
+                            await emit_turn_final("idle_timeout")
                         logger.info(
                             "Doubao idle timeout: keep session open for next turn, payload=%s",
                             err_text_str,
                         )
-                        turn_has_audio = False
-                        turn_final_sent = False
-                        turn_transcript = ""
-                        turn_question_id = ""
-                        turn_reply_id = ""
+                        reset_turn_state()
                         last_was_idle_timeout = True
                         continue
 
