@@ -18,6 +18,7 @@ const elapsed = ref(0)
 const clockMs = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 const showDiag = ref(false)
+const isChatCollapsed = ref(false)
 
 const streamingMode = (route.query.streaming_mode as string) || 'direct'
 
@@ -152,6 +153,10 @@ function handleLoadMore() {
   }
 }
 
+function toggleChatPanel() {
+  isChatCollapsed.value = !isChatCollapsed.value
+}
+
 function formatTime(s: number): string {
   const m = Math.floor(s / 60)
   const sec = s % 60
@@ -160,9 +165,9 @@ function formatTime(s: number): string {
 </script>
 
 <template>
-  <div class="h-screen flex bg-black overflow-hidden">
+  <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed }">
     <!-- Left: Video area (60%) -->
-    <div class="relative flex-[3] flex flex-col min-h-0 bg-black">
+    <div class="session-video-shell">
       <VideoPlayer
         ref="videoPlayerRef"
         :display-mode="displayMode"
@@ -185,6 +190,19 @@ function formatTime(s: number): string {
         <span v-if="debugState.jitter.stutterCount > 0" class="ml-1 text-yellow-400">
           {{ debugState.jitter.stutterCount }} stutters
         </span>
+      </button>
+
+      <button
+        v-if="isChatCollapsed"
+        type="button"
+        class="chat-expand-button"
+        title="展开对话"
+        aria-label="展开对话"
+        @click="toggleChatPanel"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M10 3 5 8l5 5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
       </button>
 
       <!-- Diagnostics panel -->
@@ -297,30 +315,149 @@ function formatTime(s: number): string {
     </div>
 
     <!-- Right: Chat panel (40%) -->
-    <div class="flex-[2] border-l border-cv-border-subtle flex flex-col bg-cv-surface">
-      <!-- Chat header -->
-      <div class="h-[52px] shrink-0 flex items-center justify-between px-5 border-b border-cv-border-subtle">
-        <span class="text-base font-semibold text-cv-text">对话</span>
-        <button class="text-[13px] text-cv-text-muted hover:text-cv-text transition-colors cursor-pointer">清空</button>
-      </div>
+    <div class="session-chat-sidebar" :aria-hidden="isChatCollapsed" :inert="isChatCollapsed">
+      <div class="session-chat-inner">
+        <!-- Chat header -->
+        <div class="h-[52px] shrink-0 flex items-center justify-between px-5 border-b border-cv-border-subtle">
+          <div class="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              class="chat-toggle-button"
+              title="收起对话"
+              aria-label="收起对话"
+              :aria-expanded="!isChatCollapsed"
+              @click="toggleChatPanel"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M6 3l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <span class="text-base font-semibold text-cv-text truncate">对话</span>
+          </div>
+          <button class="text-[13px] text-cv-text-muted hover:text-cv-text transition-colors cursor-pointer">清空</button>
+        </div>
 
-      <!-- Messages (reuse ChatPanel) -->
-      <ChatPanel
-        :messages="messages"
-        :current-transcript="currentTranscript"
-        :current-l-l-m-response="currentLLMResponse"
-        :avatar-status="avatarStatus"
-        :history-loading="historyLoading"
-        :history-has-more="historyHasMore"
-        @send-text="sendText"
-        @load-more="handleLoadMore"
-        class="flex-1"
-      />
+        <!-- Messages (reuse ChatPanel) -->
+        <ChatPanel
+          :messages="messages"
+          :current-transcript="currentTranscript"
+          :current-l-l-m-response="currentLLMResponse"
+          :avatar-status="avatarStatus"
+          :history-loading="historyLoading"
+          :history-has-more="historyHasMore"
+          @send-text="sendText"
+          @load-more="handleLoadMore"
+          class="flex-1"
+        />
 
-      <!-- Footer hint -->
-      <div class="h-6 flex items-center justify-center shrink-0">
-        <span class="text-[11px] text-cv-text-muted">Shift+Enter 换行 · VoiceLLM 模式下可直接语音对话</span>
+        <!-- Footer hint -->
+        <div class="h-6 flex items-center justify-center shrink-0">
+          <span class="text-[11px] text-cv-text-muted">Shift+Enter 换行 · VoiceLLM 模式下可直接语音对话</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.session-page {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: #000;
+}
+
+.session-video-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+.session-chat-sidebar {
+  flex: 0 0 clamp(360px, 40vw, 560px);
+  width: clamp(360px, 40vw, 560px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-cv-surface);
+  border-left: 1px solid var(--color-cv-border-subtle);
+  opacity: 1;
+  transition:
+    flex-basis 220ms ease,
+    width 220ms ease,
+    opacity 160ms ease,
+    border-color 220ms ease;
+}
+
+.session-chat-inner {
+  width: clamp(360px, 40vw, 560px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-collapsed .session-chat-sidebar {
+  flex-basis: 0;
+  width: 0;
+  border-left-width: 0;
+  border-left-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chat-toggle-button,
+.chat-expand-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  color: var(--color-cv-text-secondary);
+  background: transparent;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+  cursor: pointer;
+}
+
+.chat-toggle-button:hover,
+.chat-expand-button:hover {
+  color: var(--color-cv-text);
+  background: var(--color-cv-hover);
+}
+
+.chat-expand-button {
+  position: absolute;
+  top: 64px;
+  right: 20px;
+  z-index: 10;
+  color: var(--color-cv-text);
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.chat-expand-button:hover {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+@media (max-width: 900px) {
+  .session-chat-sidebar,
+  .session-chat-inner {
+    width: min(82vw, 420px);
+  }
+
+  .session-chat-sidebar {
+    flex-basis: min(82vw, 420px);
+  }
+}
+</style>
