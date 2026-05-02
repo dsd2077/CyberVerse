@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"path/filepath"
 
@@ -112,16 +113,22 @@ func main() {
 
 	// Register session end callback to persist conversation history
 	sessionMgr.OnSessionEnd = func(s *orchestrator.Session) {
-		log.Printf("OnSessionEnd: session=%s character=%s historyLen=%d", s.ID, s.CharacterID, len(s.History))
-		if s.CharacterID == "" || len(s.History) == 0 {
-			log.Printf("OnSessionEnd: skipping save — characterID=%q historyLen=%d", s.CharacterID, len(s.History))
+		history := s.HistorySnapshot()
+		log.Printf("OnSessionEnd: session=%s character=%s historyLen=%d", s.ID, s.CharacterID, len(history))
+		if s.CharacterID == "" || len(history) == 0 {
+			log.Printf("OnSessionEnd: skipping save — characterID=%q historyLen=%d", s.CharacterID, len(history))
 			return
 		}
-		messages := make([]map[string]any, len(s.History))
-		for i, m := range s.History {
+		messages := make([]map[string]any, len(history))
+		for i, m := range history {
+			ts := m.Timestamp
+			if ts.IsZero() {
+				ts = s.CreatedAt
+			}
 			messages[i] = map[string]any{
-				"role":    m.Role,
-				"content": m.Content,
+				"role":      m.Role,
+				"content":   m.Content,
+				"timestamp": ts.UTC().Format(time.RFC3339Nano),
 			}
 		}
 		if err := charStore.SaveConversation(s.CharacterID, s.ID, s.CreatedAt, s.LastActiveAt, messages); err != nil {

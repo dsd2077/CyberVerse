@@ -62,6 +62,13 @@ class VoiceLLMInputEvent:
 
 
 @dataclass
+class VoiceLLMDialogContextItem:
+    role: str
+    text: str
+    timestamp: int = 0
+
+
+@dataclass
 class VoiceLLMSessionConfig:
     """Per-session character config passed from Go through gRPC."""
     session_id: str = ""
@@ -71,6 +78,7 @@ class VoiceLLMSessionConfig:
     speaking_style: str = ""
     welcome_message: str | None = None
     input_mode: str = ""
+    dialog_context: list[VoiceLLMDialogContextItem] = field(default_factory=list)
 
 
 @dataclass

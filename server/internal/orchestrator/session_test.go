@@ -35,6 +35,121 @@ func TestSessionAddMessage(t *testing.T) {
 	if s.History[0].Content != "hello" {
 		t.Errorf("expected 'hello', got '%s'", s.History[0].Content)
 	}
+	if s.History[0].Timestamp.IsZero() {
+		t.Fatal("expected message timestamp to be set")
+	}
+}
+
+func TestSessionDialogContextSnapshot(t *testing.T) {
+	s := NewSession("test-1", ModeVoiceLLM, "")
+	s.SetDialogContext([]DialogContextItem{
+		{Role: "user", Text: "hello", Timestamp: 1000},
+	})
+	got := s.DialogContextSnapshot()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 dialog context item, got %d", len(got))
+	}
+	got[0].Text = "mutated"
+	if s.DialogContextSnapshot()[0].Text != "hello" {
+		t.Fatal("expected dialog context snapshot to be isolated from caller mutation")
+	}
+}
+
+func TestBuildDoubaoDialogContextKeepsRecentCompletePairs(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	messages := []map[string]any{
+		{"session_id": "s1", "role": "assistant", "content": "orphan assistant", "timestamp": now.Add(-10 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s1", "role": "user", "content": "old question", "timestamp": now.Add(-9 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s1", "role": "assistant", "content": "old answer", "timestamp": now.Add(-8 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s1", "role": "system", "content": "ignore me", "timestamp": now.Add(-7 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "user", "content": "new question", "timestamp": now.Add(-6 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "assistant", "content": "new answer", "timestamp": now.Add(-5 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "user", "content": "incomplete", "timestamp": now.Add(-4 * time.Second).Format(time.RFC3339Nano)},
+	}
+
+	got := buildDoubaoDialogContext(messages, 1, now)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 items for the most recent complete pair, got %d", len(got))
+	}
+	if got[0].Role != "user" || got[0].Text != "new question" {
+		t.Fatalf("unexpected first item: %+v", got[0])
+	}
+	if got[1].Role != "assistant" || got[1].Text != "new answer" {
+		t.Fatalf("unexpected second item: %+v", got[1])
+	}
+	if got[0].Timestamp >= got[1].Timestamp {
+		t.Fatalf("expected strictly increasing timestamps: %+v", got)
+	}
+}
+
+func TestBuildDoubaoDialogContextFallsBackForLegacyTimestamps(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	messages := []map[string]any{
+		{"session_id": "legacy-session", "role": "user", "content": "legacy question", "timestamp": "2026-05-01T12:00:00Z"},
+		{"session_id": "legacy-session", "role": "assistant", "content": "legacy answer", "timestamp": "2026-05-01T12:00:00Z"},
+	}
+
+	got := buildDoubaoDialogContext(messages, 20, now)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(got))
+	}
+	if got[0].Timestamp >= got[1].Timestamp {
+		t.Fatalf("expected same legacy timestamp to be made strictly increasing: %+v", got)
+	}
+	if got[1].Timestamp > now.UnixMilli() {
+		t.Fatalf("expected timestamp not to exceed now: %+v", got)
+	}
+}
+
+func TestBuildDoubaoDialogContextDropsMessagesWithoutSessionID(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	messages := []map[string]any{
+		{"role": "user", "content": "unknown session user", "timestamp": now.Add(-2 * time.Second).Format(time.RFC3339Nano)},
+		{"role": "assistant", "content": "unknown session assistant", "timestamp": now.Add(-time.Second).Format(time.RFC3339Nano)},
+	}
+
+	got := buildDoubaoDialogContext(messages, 20, now)
+	if len(got) != 0 {
+		t.Fatalf("expected messages without session_id to be dropped, got %+v", got)
+	}
+}
+
+func TestBuildDoubaoDialogContextMergesConsecutiveUsersInSameSession(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	messages := []map[string]any{
+		{"session_id": "s1", "role": "user", "content": "你好啊，大头包。", "timestamp": now.Add(-5 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s1", "role": "user", "content": "不跟你说了，拜拜。", "timestamp": now.Add(-4 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s1", "role": "assistant", "content": "拜拜，回头见。", "timestamp": now.Add(-3 * time.Second).Format(time.RFC3339Nano)},
+	}
+
+	got := buildDoubaoDialogContext(messages, 20, now)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(got))
+	}
+	if got[0].Role != "user" || got[0].Text != "你好啊，大头包。\n不跟你说了，拜拜。" {
+		t.Fatalf("unexpected merged user item: %+v", got[0])
+	}
+	if got[1].Role != "assistant" || got[1].Text != "拜拜，回头见。" {
+		t.Fatalf("unexpected assistant item: %+v", got[1])
+	}
+}
+
+func TestBuildDoubaoDialogContextDoesNotPairAcrossSessions(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	messages := []map[string]any{
+		{"session_id": "s1", "role": "user", "content": "orphan user", "timestamp": now.Add(-5 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "assistant", "content": "orphan assistant", "timestamp": now.Add(-4 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "user", "content": "paired user", "timestamp": now.Add(-3 * time.Second).Format(time.RFC3339Nano)},
+		{"session_id": "s2", "role": "assistant", "content": "paired assistant", "timestamp": now.Add(-2 * time.Second).Format(time.RFC3339Nano)},
+	}
+
+	got := buildDoubaoDialogContext(messages, 20, now)
+	if len(got) != 2 {
+		t.Fatalf("expected only the s2 pair, got %d items: %+v", len(got), got)
+	}
+	if got[0].Text != "paired user" || got[1].Text != "paired assistant" {
+		t.Fatalf("unexpected cross-session pairing result: %+v", got)
+	}
 }
 
 func TestSessionTouch(t *testing.T) {

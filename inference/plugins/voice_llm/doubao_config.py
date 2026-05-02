@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -58,6 +58,7 @@ class DoubaoSessionConfig:
     max_retries: int = 3
     retry_backoff_base: float = 1.0
     retry_backoff_max: float = 10.0
+    dialog_context: list[dict] = field(default_factory=list)
 
     @classmethod
     def from_plugin_config(cls, config: "PluginConfig") -> "DoubaoSessionConfig":
@@ -129,7 +130,7 @@ class DoubaoSessionConfig:
         Welcome message is special-cased so an explicit empty string disables the
         default greeting for that session.
         """
-        overrides: dict[str, str] = {}
+        overrides: dict[str, object] = {}
         if session_config.voice:
             overrides["voice_type"] = session_config.voice
         if session_config.bot_name:
@@ -144,6 +145,15 @@ class DoubaoSessionConfig:
             overrides["input_mod"] = session_config.input_mode
         if session_config.session_id:
             overrides["conversation_id"] = session_config.session_id
+        if session_config.dialog_context:
+            overrides["dialog_context"] = [
+                {
+                    "role": item.role,
+                    "text": item.text,
+                    "timestamp": item.timestamp,
+                }
+                for item in session_config.dialog_context
+            ]
         if not overrides:
             return self
         result = replace(self, **overrides)
@@ -197,6 +207,8 @@ class DoubaoSessionConfig:
         }
         if dialog_id:
             dialog["dialog_id"] = dialog_id
+        if self.dialog_context:
+            dialog["dialog_context"] = self.dialog_context
         return {
             "asr": {
                 "extra": {

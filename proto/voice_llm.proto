@@ -38,6 +38,13 @@ message VoiceLLMConfig {
   string bot_name = 5;
   string speaking_style = 6;
   string welcome_message = 7;
+  repeated VoiceLLMDialogContextItem dialog_context = 8;
+}
+
+message VoiceLLMDialogContextItem {
+  string role = 1;
+  string text = 2;
+  int64 timestamp = 3;
 }
 
 message CheckVoiceRequest {

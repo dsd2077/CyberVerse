@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cyberverse/server/internal/character"
+	"github.com/cyberverse/server/internal/inference"
 	"github.com/cyberverse/server/internal/orchestrator"
 	pb "github.com/cyberverse/server/internal/pb"
 	"github.com/cyberverse/server/internal/ws"
@@ -88,6 +90,60 @@ func TestCreateSession(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.SessionID == "" {
 		t.Error("expected non-empty session_id")
+	}
+}
+
+func TestCreateSessionLoadsVoiceDialogContext(t *testing.T) {
+	inf := &fakeInferenceService{
+		avatarInfo:   &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		voiceConfigs: make(chan inference.VoiceLLMSessionConfig, 1),
+	}
+	r := newTestRouterWithInference(inf)
+
+	char, err := r.charStore.Create(&character.Character{
+		Name:      "Memory",
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	if err := r.charStore.SaveConversation(char.ID, "previous-session", started, started.Add(time.Minute), []map[string]any{
+		{
+			"role":      "user",
+			"content":   "我叫小明",
+			"timestamp": started.Format(time.RFC3339Nano),
+		},
+		{
+			"role":      "assistant",
+			"content":   "我记住了，你叫小明。",
+			"timestamp": started.Add(time.Second).Format(time.RFC3339Nano),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case config := <-inf.voiceConfigs:
+		if len(config.DialogContext) != 2 {
+			t.Fatalf("expected 2 dialog context items, got %d", len(config.DialogContext))
+		}
+		if config.DialogContext[0].Role != "user" || config.DialogContext[0].Text != "我叫小明" {
+			t.Fatalf("unexpected first dialog context item: %+v", config.DialogContext[0])
+		}
+		if config.DialogContext[1].Role != "assistant" || config.DialogContext[1].Text != "我记住了，你叫小明。" {
+			t.Fatalf("unexpected second dialog context item: %+v", config.DialogContext[1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for voice LLM config")
 	}
 }
 

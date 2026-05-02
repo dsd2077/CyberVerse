@@ -52,6 +52,11 @@ const voiceMaxPCMBufferSamples = 0
 
 const avatarImageMaxUploadHint = "角色头像图片超过当前 10MB 上传限制，已使用默认头像；待机视频也不会生成。请压缩或缩放角色图片到 10MB 以内后重试。"
 
+const (
+	doubaoDialogContextMaxPairs  = 20
+	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
+)
+
 type voiceAVSyncBuffer struct {
 	mu               sync.Mutex
 	pcmBytes         []byte
@@ -231,6 +236,169 @@ func voiceOutputIsFinal(output *pb.VoiceLLMOutput) bool {
 	}
 	audio := output.GetAudio()
 	return audio != nil && audio.GetIsFinal()
+}
+
+type dialogContextMessage struct {
+	sessionID string
+	role      string
+	text      string
+	timestamp time.Time
+}
+
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func unixTimeFromNumber(n int64) time.Time {
+	if n <= 0 {
+		return time.Time{}
+	}
+	if n > 1_000_000_000_000 {
+		return time.UnixMilli(n).UTC()
+	}
+	return time.Unix(n, 0).UTC()
+}
+
+func parseConversationTimestamp(v any) time.Time {
+	switch t := v.(type) {
+	case string:
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return time.Time{}
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return parsed.UTC()
+		}
+		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+			return parsed.UTC()
+		}
+		if n, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return unixTimeFromNumber(n)
+		}
+	case float64:
+		return unixTimeFromNumber(int64(t))
+	case int:
+		return unixTimeFromNumber(int64(t))
+	case int64:
+		return unixTimeFromNumber(t)
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return unixTimeFromNumber(n)
+		}
+	}
+	return time.Time{}
+}
+
+func buildDoubaoDialogContext(messages []map[string]any, maxPairs int, now time.Time) []DialogContextItem {
+	if maxPairs <= 0 {
+		maxPairs = doubaoDialogContextMaxPairs
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+
+	filtered := make([]dialogContextMessage, 0, len(messages))
+	for _, msg := range messages {
+		role := strings.ToLower(stringValue(msg["role"]))
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		text := stringValue(msg["content"])
+		if text == "" {
+			text = stringValue(msg["text"])
+		}
+		if text == "" {
+			continue
+		}
+		sessionID := stringValue(msg["session_id"])
+		if sessionID == "" {
+			continue
+		}
+		filtered = append(filtered, dialogContextMessage{
+			sessionID: sessionID,
+			role:      role,
+			text:      text,
+			timestamp: parseConversationTimestamp(msg["timestamp"]),
+		})
+	}
+
+	paired := make([]dialogContextMessage, 0, len(filtered))
+	var pendingUsers []dialogContextMessage
+	pendingSessionID := ""
+	for _, msg := range filtered {
+		if len(pendingUsers) > 0 && msg.sessionID != pendingSessionID {
+			pendingUsers = nil
+			pendingSessionID = ""
+		}
+		if msg.role == "user" {
+			if len(pendingUsers) == 0 {
+				pendingSessionID = msg.sessionID
+			}
+			pendingUsers = append(pendingUsers, msg)
+			continue
+		}
+		if len(pendingUsers) == 0 || msg.sessionID != pendingSessionID {
+			continue
+		}
+
+		var merged strings.Builder
+		for i, userMsg := range pendingUsers {
+			if i > 0 {
+				merged.WriteString("\n")
+			}
+			merged.WriteString(userMsg.text)
+		}
+		paired = append(paired, dialogContextMessage{
+			sessionID: pendingSessionID,
+			role:      "user",
+			text:      merged.String(),
+			timestamp: pendingUsers[0].timestamp,
+		}, msg)
+		pendingUsers = nil
+		pendingSessionID = ""
+	}
+
+	maxItems := maxPairs * 2
+	if len(paired) > maxItems {
+		paired = paired[len(paired)-maxItems:]
+	}
+	if len(paired) == 0 {
+		return nil
+	}
+
+	items := make([]DialogContextItem, len(paired))
+	fallbackStart := now.Add(-time.Duration(len(paired)) * time.Millisecond)
+	for i, msg := range paired {
+		ts := msg.timestamp
+		if ts.IsZero() || ts.After(now) {
+			ts = fallbackStart.Add(time.Duration(i) * time.Millisecond)
+		}
+		items[i] = DialogContextItem{
+			Role:      msg.role,
+			Text:      msg.text,
+			Timestamp: ts.UnixMilli(),
+		}
+	}
+
+	var last int64
+	for i := range items {
+		if items[i].Timestamp <= last {
+			items[i].Timestamp = last + 1
+		}
+		last = items[i].Timestamp
+	}
+	if nowMS := now.UnixMilli(); last > nowMS {
+		delta := last - nowMS
+		for i := range items {
+			items[i].Timestamp -= delta
+		}
+	}
+	return items
 }
 
 func safeTraceValue(value string) string {
@@ -851,6 +1019,21 @@ func (o *Orchestrator) stopPipelineAndWait(session *Session, sessionID string, i
 	session.WaitPipelineDone(3 * time.Second)
 }
 
+func (o *Orchestrator) HydrateVoiceDialogContext(session *Session) error {
+	if o == nil || o.charStore == nil || session == nil {
+		return nil
+	}
+	if session.Mode != ModeVoiceLLM || session.CharacterID == "" {
+		return nil
+	}
+	messages, _, _, err := o.charStore.LoadRecentMessages(session.CharacterID, "", doubaoDialogContextLoadLimit)
+	if err != nil {
+		return err
+	}
+	session.SetDialogContext(buildDoubaoDialogContext(messages, doubaoDialogContextMaxPairs, time.Now().UTC()))
+	return nil
+}
+
 func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID string) inference.VoiceLLMSessionConfig {
 	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
 	if session.CharacterID != "" && o.charStore != nil {
@@ -863,6 +1046,13 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 		} else {
 			log.Printf("buildVoiceLLMSessionConfig: could not fetch character %s: %v", session.CharacterID, err)
 		}
+	}
+	for _, item := range session.DialogContextSnapshot() {
+		voiceConfig.DialogContext = append(voiceConfig.DialogContext, inference.VoiceLLMDialogContextItem{
+			Role:      item.Role,
+			Text:      item.Text,
+			Timestamp: item.Timestamp,
+		})
 	}
 	return voiceConfig
 }

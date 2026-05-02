@@ -44,19 +44,27 @@ const (
 )
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+}
+
+type DialogContextItem struct {
+	Role      string
+	Text      string
+	Timestamp int64
 }
 
 type Session struct {
 	ID             string `json:"id"`
 	CharacterID    string `json:"character_id"`
 	state          SessionState
-	Mode           PipelineMode       `json:"mode"`
-	History        []ChatMessage      `json:"history"`
-	CreatedAt      time.Time          `json:"created_at"`
-	LastActiveAt   time.Time          `json:"last_active_at"`
-	PipelineCancel context.CancelFunc `json:"-"`
+	Mode           PipelineMode        `json:"mode"`
+	History        []ChatMessage       `json:"history"`
+	DialogContext  []DialogContextItem `json:"-"`
+	CreatedAt      time.Time           `json:"created_at"`
+	LastActiveAt   time.Time           `json:"last_active_at"`
+	PipelineCancel context.CancelFunc  `json:"-"`
 	// PipelineDone is closed when the pipeline goroutine finishes.
 	// TeardownSession waits on this to ensure messages are saved before session deletion.
 	PipelineDone chan struct{} `json:"-"`
@@ -188,8 +196,30 @@ func (s *Session) WaitPipelineDone(timeout time.Duration) {
 func (s *Session) AddMessage(msg ChatMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = now.UTC()
+	}
 	s.History = append(s.History, msg)
-	s.LastActiveAt = time.Now()
+	s.LastActiveAt = now
+}
+
+func (s *Session) HistorySnapshot() []ChatMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]ChatMessage(nil), s.History...)
+}
+
+func (s *Session) SetDialogContext(items []DialogContextItem) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.DialogContext = append([]DialogContextItem(nil), items...)
+}
+
+func (s *Session) DialogContextSnapshot() []DialogContextItem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]DialogContextItem(nil), s.DialogContext...)
 }
 
 // SessionManager manages active sessions.

@@ -212,14 +212,15 @@ func (x *VoiceLLMOutput) GetBargeIn() bool {
 }
 
 type VoiceLLMConfig struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SystemPrompt   string                 `protobuf:"bytes,2,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
-	Voice          string                 `protobuf:"bytes,3,opt,name=voice,proto3" json:"voice,omitempty"`
-	Temperature    float32                `protobuf:"fixed32,4,opt,name=temperature,proto3" json:"temperature,omitempty"`
-	BotName        string                 `protobuf:"bytes,5,opt,name=bot_name,json=botName,proto3" json:"bot_name,omitempty"`
-	SpeakingStyle  string                 `protobuf:"bytes,6,opt,name=speaking_style,json=speakingStyle,proto3" json:"speaking_style,omitempty"`
-	WelcomeMessage string                 `protobuf:"bytes,7,opt,name=welcome_message,json=welcomeMessage,proto3" json:"welcome_message,omitempty"`
+	state          protoimpl.MessageState       `protogen:"open.v1"`
+	SessionId      string                       `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SystemPrompt   string                       `protobuf:"bytes,2,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Voice          string                       `protobuf:"bytes,3,opt,name=voice,proto3" json:"voice,omitempty"`
+	Temperature    float32                      `protobuf:"fixed32,4,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	BotName        string                       `protobuf:"bytes,5,opt,name=bot_name,json=botName,proto3" json:"bot_name,omitempty"`
+	SpeakingStyle  string                       `protobuf:"bytes,6,opt,name=speaking_style,json=speakingStyle,proto3" json:"speaking_style,omitempty"`
+	WelcomeMessage string                       `protobuf:"bytes,7,opt,name=welcome_message,json=welcomeMessage,proto3" json:"welcome_message,omitempty"`
+	DialogContext  []*VoiceLLMDialogContextItem `protobuf:"bytes,8,rep,name=dialog_context,json=dialogContext,proto3" json:"dialog_context,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -303,6 +304,73 @@ func (x *VoiceLLMConfig) GetWelcomeMessage() string {
 	return ""
 }
 
+func (x *VoiceLLMConfig) GetDialogContext() []*VoiceLLMDialogContextItem {
+	if x != nil {
+		return x.DialogContext
+	}
+	return nil
+}
+
+type VoiceLLMDialogContextItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
+	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VoiceLLMDialogContextItem) Reset() {
+	*x = VoiceLLMDialogContextItem{}
+	mi := &file_voice_llm_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VoiceLLMDialogContextItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VoiceLLMDialogContextItem) ProtoMessage() {}
+
+func (x *VoiceLLMDialogContextItem) ProtoReflect() protoreflect.Message {
+	mi := &file_voice_llm_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VoiceLLMDialogContextItem.ProtoReflect.Descriptor instead.
+func (*VoiceLLMDialogContextItem) Descriptor() ([]byte, []int) {
+	return file_voice_llm_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *VoiceLLMDialogContextItem) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *VoiceLLMDialogContextItem) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *VoiceLLMDialogContextItem) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 type CheckVoiceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Config        *VoiceLLMConfig        `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
@@ -312,7 +380,7 @@ type CheckVoiceRequest struct {
 
 func (x *CheckVoiceRequest) Reset() {
 	*x = CheckVoiceRequest{}
-	mi := &file_voice_llm_proto_msgTypes[3]
+	mi := &file_voice_llm_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -324,7 +392,7 @@ func (x *CheckVoiceRequest) String() string {
 func (*CheckVoiceRequest) ProtoMessage() {}
 
 func (x *CheckVoiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_llm_proto_msgTypes[3]
+	mi := &file_voice_llm_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -337,7 +405,7 @@ func (x *CheckVoiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckVoiceRequest.ProtoReflect.Descriptor instead.
 func (*CheckVoiceRequest) Descriptor() ([]byte, []int) {
-	return file_voice_llm_proto_rawDescGZIP(), []int{3}
+	return file_voice_llm_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CheckVoiceRequest) GetConfig() *VoiceLLMConfig {
@@ -357,7 +425,7 @@ type CheckVoiceResponse struct {
 
 func (x *CheckVoiceResponse) Reset() {
 	*x = CheckVoiceResponse{}
-	mi := &file_voice_llm_proto_msgTypes[4]
+	mi := &file_voice_llm_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -369,7 +437,7 @@ func (x *CheckVoiceResponse) String() string {
 func (*CheckVoiceResponse) ProtoMessage() {}
 
 func (x *CheckVoiceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_llm_proto_msgTypes[4]
+	mi := &file_voice_llm_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -382,7 +450,7 @@ func (x *CheckVoiceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckVoiceResponse.ProtoReflect.Descriptor instead.
 func (*CheckVoiceResponse) Descriptor() ([]byte, []int) {
-	return file_voice_llm_proto_rawDescGZIP(), []int{4}
+	return file_voice_llm_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CheckVoiceResponse) GetOk() bool {
@@ -408,7 +476,7 @@ type InterruptRequest struct {
 
 func (x *InterruptRequest) Reset() {
 	*x = InterruptRequest{}
-	mi := &file_voice_llm_proto_msgTypes[5]
+	mi := &file_voice_llm_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -420,7 +488,7 @@ func (x *InterruptRequest) String() string {
 func (*InterruptRequest) ProtoMessage() {}
 
 func (x *InterruptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_llm_proto_msgTypes[5]
+	mi := &file_voice_llm_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -433,7 +501,7 @@ func (x *InterruptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptRequest.ProtoReflect.Descriptor instead.
 func (*InterruptRequest) Descriptor() ([]byte, []int) {
-	return file_voice_llm_proto_rawDescGZIP(), []int{5}
+	return file_voice_llm_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *InterruptRequest) GetSessionId() string {
@@ -452,7 +520,7 @@ type InterruptResponse struct {
 
 func (x *InterruptResponse) Reset() {
 	*x = InterruptResponse{}
-	mi := &file_voice_llm_proto_msgTypes[6]
+	mi := &file_voice_llm_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +532,7 @@ func (x *InterruptResponse) String() string {
 func (*InterruptResponse) ProtoMessage() {}
 
 func (x *InterruptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_llm_proto_msgTypes[6]
+	mi := &file_voice_llm_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +545,7 @@ func (x *InterruptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptResponse.ProtoReflect.Descriptor instead.
 func (*InterruptResponse) Descriptor() ([]byte, []int) {
-	return file_voice_llm_proto_rawDescGZIP(), []int{6}
+	return file_voice_llm_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InterruptResponse) GetSuccess() bool {
@@ -508,7 +576,7 @@ const file_voice_llm_proto_rawDesc = "" +
 	"\vquestion_id\x18\x06 \x01(\tR\n" +
 	"questionId\x12\x19\n" +
 	"\breply_id\x18\a \x01(\tR\areplyId\x12\x19\n" +
-	"\bbarge_in\x18\b \x01(\bR\abargeInJ\x04\b\x05\x10\x06\"\xf7\x01\n" +
+	"\bbarge_in\x18\b \x01(\bR\abargeInJ\x04\b\x05\x10\x06\"\xc5\x02\n" +
 	"\x0eVoiceLLMConfig\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12#\n" +
@@ -517,7 +585,12 @@ const file_voice_llm_proto_rawDesc = "" +
 	"\vtemperature\x18\x04 \x01(\x02R\vtemperature\x12\x19\n" +
 	"\bbot_name\x18\x05 \x01(\tR\abotName\x12%\n" +
 	"\x0espeaking_style\x18\x06 \x01(\tR\rspeakingStyle\x12'\n" +
-	"\x0fwelcome_message\x18\a \x01(\tR\x0ewelcomeMessage\"G\n" +
+	"\x0fwelcome_message\x18\a \x01(\tR\x0ewelcomeMessage\x12L\n" +
+	"\x0edialog_context\x18\b \x03(\v2%.cyberverse.VoiceLLMDialogContextItemR\rdialogContext\"a\n" +
+	"\x19VoiceLLMDialogContextItem\x12\x12\n" +
+	"\x04role\x18\x01 \x01(\tR\x04role\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"G\n" +
 	"\x11CheckVoiceRequest\x122\n" +
 	"\x06config\x18\x01 \x01(\v2\x1a.cyberverse.VoiceLLMConfigR\x06config\"K\n" +
 	"\x12CheckVoiceResponse\x12\x0e\n" +
@@ -546,33 +619,35 @@ func file_voice_llm_proto_rawDescGZIP() []byte {
 	return file_voice_llm_proto_rawDescData
 }
 
-var file_voice_llm_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_voice_llm_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_voice_llm_proto_goTypes = []any{
-	(*VoiceLLMInput)(nil),      // 0: cyberverse.VoiceLLMInput
-	(*VoiceLLMOutput)(nil),     // 1: cyberverse.VoiceLLMOutput
-	(*VoiceLLMConfig)(nil),     // 2: cyberverse.VoiceLLMConfig
-	(*CheckVoiceRequest)(nil),  // 3: cyberverse.CheckVoiceRequest
-	(*CheckVoiceResponse)(nil), // 4: cyberverse.CheckVoiceResponse
-	(*InterruptRequest)(nil),   // 5: cyberverse.InterruptRequest
-	(*InterruptResponse)(nil),  // 6: cyberverse.InterruptResponse
-	(*AudioChunk)(nil),         // 7: cyberverse.AudioChunk
+	(*VoiceLLMInput)(nil),             // 0: cyberverse.VoiceLLMInput
+	(*VoiceLLMOutput)(nil),            // 1: cyberverse.VoiceLLMOutput
+	(*VoiceLLMConfig)(nil),            // 2: cyberverse.VoiceLLMConfig
+	(*VoiceLLMDialogContextItem)(nil), // 3: cyberverse.VoiceLLMDialogContextItem
+	(*CheckVoiceRequest)(nil),         // 4: cyberverse.CheckVoiceRequest
+	(*CheckVoiceResponse)(nil),        // 5: cyberverse.CheckVoiceResponse
+	(*InterruptRequest)(nil),          // 6: cyberverse.InterruptRequest
+	(*InterruptResponse)(nil),         // 7: cyberverse.InterruptResponse
+	(*AudioChunk)(nil),                // 8: cyberverse.AudioChunk
 }
 var file_voice_llm_proto_depIdxs = []int32{
-	7, // 0: cyberverse.VoiceLLMInput.audio:type_name -> cyberverse.AudioChunk
+	8, // 0: cyberverse.VoiceLLMInput.audio:type_name -> cyberverse.AudioChunk
 	2, // 1: cyberverse.VoiceLLMInput.config:type_name -> cyberverse.VoiceLLMConfig
-	7, // 2: cyberverse.VoiceLLMOutput.audio:type_name -> cyberverse.AudioChunk
-	2, // 3: cyberverse.CheckVoiceRequest.config:type_name -> cyberverse.VoiceLLMConfig
-	0, // 4: cyberverse.VoiceLLMService.Converse:input_type -> cyberverse.VoiceLLMInput
-	3, // 5: cyberverse.VoiceLLMService.CheckVoice:input_type -> cyberverse.CheckVoiceRequest
-	5, // 6: cyberverse.VoiceLLMService.Interrupt:input_type -> cyberverse.InterruptRequest
-	1, // 7: cyberverse.VoiceLLMService.Converse:output_type -> cyberverse.VoiceLLMOutput
-	4, // 8: cyberverse.VoiceLLMService.CheckVoice:output_type -> cyberverse.CheckVoiceResponse
-	6, // 9: cyberverse.VoiceLLMService.Interrupt:output_type -> cyberverse.InterruptResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	8, // 2: cyberverse.VoiceLLMOutput.audio:type_name -> cyberverse.AudioChunk
+	3, // 3: cyberverse.VoiceLLMConfig.dialog_context:type_name -> cyberverse.VoiceLLMDialogContextItem
+	2, // 4: cyberverse.CheckVoiceRequest.config:type_name -> cyberverse.VoiceLLMConfig
+	0, // 5: cyberverse.VoiceLLMService.Converse:input_type -> cyberverse.VoiceLLMInput
+	4, // 6: cyberverse.VoiceLLMService.CheckVoice:input_type -> cyberverse.CheckVoiceRequest
+	6, // 7: cyberverse.VoiceLLMService.Interrupt:input_type -> cyberverse.InterruptRequest
+	1, // 8: cyberverse.VoiceLLMService.Converse:output_type -> cyberverse.VoiceLLMOutput
+	5, // 9: cyberverse.VoiceLLMService.CheckVoice:output_type -> cyberverse.CheckVoiceResponse
+	7, // 10: cyberverse.VoiceLLMService.Interrupt:output_type -> cyberverse.InterruptResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_voice_llm_proto_init() }
@@ -592,7 +667,7 @@ func file_voice_llm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_voice_llm_proto_rawDesc), len(file_voice_llm_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

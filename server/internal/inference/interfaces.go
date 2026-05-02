@@ -20,6 +20,12 @@ type LLMConfig struct {
 }
 
 // VoiceLLMSessionConfig holds per-session character config for VoiceLLM.
+type VoiceLLMDialogContextItem struct {
+	Role      string
+	Text      string
+	Timestamp int64
+}
+
 type VoiceLLMSessionConfig struct {
 	SessionID      string
 	SystemPrompt   string
@@ -27,6 +33,7 @@ type VoiceLLMSessionConfig struct {
 	BotName        string
 	SpeakingStyle  string
 	WelcomeMessage string
+	DialogContext  []VoiceLLMDialogContextItem
 }
 
 // VoiceLLMInputEvent is one input item for a VoiceLLM conversation stream.

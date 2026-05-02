@@ -4,7 +4,12 @@ import logging
 import grpc
 
 from inference.core.registry import PluginRegistry
-from inference.core.types import AudioChunk, VoiceLLMInputEvent, VoiceLLMSessionConfig
+from inference.core.types import (
+    AudioChunk,
+    VoiceLLMDialogContextItem,
+    VoiceLLMInputEvent,
+    VoiceLLMSessionConfig,
+)
 from inference.generated import common_pb2, voice_llm_pb2, voice_llm_pb2_grpc
 from inference.plugins.voice_llm.base import VoiceCheckError, VoiceLLMPlugin
 
@@ -23,6 +28,8 @@ def _audio_chunk_to_pb(ac: AudioChunk) -> common_pb2.AudioChunk:
 
 
 def _session_config_from_pb(cfg: voice_llm_pb2.VoiceLLMConfig) -> VoiceLLMSessionConfig:
+    # Generated *_pb2.py is gitignored; tolerate stale stubs missing dialog_context (field 8).
+    raw_ctx = getattr(cfg, "dialog_context", None) or []
     return VoiceLLMSessionConfig(
         session_id=cfg.session_id,
         system_prompt=cfg.system_prompt,
@@ -30,6 +37,14 @@ def _session_config_from_pb(cfg: voice_llm_pb2.VoiceLLMConfig) -> VoiceLLMSessio
         bot_name=cfg.bot_name,
         speaking_style=cfg.speaking_style,
         welcome_message=cfg.welcome_message,
+        dialog_context=[
+            VoiceLLMDialogContextItem(
+                role=item.role,
+                text=item.text,
+                timestamp=item.timestamp,
+            )
+            for item in raw_ctx
+        ],
     )
 
 

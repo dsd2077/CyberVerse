@@ -10,6 +10,14 @@ import (
 )
 
 func voiceLLMConfigPB(config VoiceLLMSessionConfig) *pb.VoiceLLMConfig {
+	dialogContext := make([]*pb.VoiceLLMDialogContextItem, 0, len(config.DialogContext))
+	for _, item := range config.DialogContext {
+		dialogContext = append(dialogContext, &pb.VoiceLLMDialogContextItem{
+			Role:      item.Role,
+			Text:      item.Text,
+			Timestamp: item.Timestamp,
+		})
+	}
 	return &pb.VoiceLLMConfig{
 		SessionId:      config.SessionID,
 		SystemPrompt:   config.SystemPrompt,
@@ -17,6 +25,7 @@ func voiceLLMConfigPB(config VoiceLLMSessionConfig) *pb.VoiceLLMConfig {
 		BotName:        config.BotName,
 		SpeakingStyle:  config.SpeakingStyle,
 		WelcomeMessage: config.WelcomeMessage,
+		DialogContext:  dialogContext,
 	}
 }
 

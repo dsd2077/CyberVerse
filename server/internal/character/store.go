@@ -432,6 +432,9 @@ func (s *Store) LoadRecentMessages(characterID string, before string, limit int)
 		if err := json.Unmarshal(data, &record); err != nil {
 			continue
 		}
+		if strings.TrimSpace(record.SessionID) == "" {
+			record.SessionID = entry.Name()
+		}
 		if len(record.Messages) == 0 {
 			continue
 		}
@@ -440,6 +443,8 @@ func (s *Store) LoadRecentMessages(characterID string, before string, limit int)
 		for _, msg := range record.Messages {
 			msg["session_id"] = record.SessionID
 			if msg["timestamp"] == nil {
+				msg["timestamp"] = record.StartedAt
+			} else if ts, ok := msg["timestamp"].(string); ok && strings.TrimSpace(ts) == "" {
 				msg["timestamp"] = record.StartedAt
 			}
 		}

@@ -89,6 +89,11 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if r.orch != nil {
+		if err := r.orch.HydrateVoiceDialogContext(session); err != nil {
+			log.Printf("Failed to load dialog context for session %s character %s: %v", sessionID, body.CharacterID, err)
+		}
+	}
 
 	// If character uses random image mode, pick a random image
 	if body.CharacterID != "" {

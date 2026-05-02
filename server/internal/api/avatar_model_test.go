@@ -31,6 +31,7 @@ type fakeInferenceService struct {
 	setAvatarFormats        []string
 	checkVoiceProviderError string
 	checkVoiceErr           error
+	voiceConfigs            chan inference.VoiceLLMSessionConfig
 }
 
 func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
@@ -95,7 +96,13 @@ func (f *fakeInferenceService) CheckVoice(context.Context, inference.VoiceLLMSes
 	}
 	return f.checkVoiceProviderError, nil
 }
-func (f *fakeInferenceService) ConverseStream(context.Context, <-chan inference.VoiceLLMInputEvent, inference.VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error) {
+func (f *fakeInferenceService) ConverseStream(_ context.Context, _ <-chan inference.VoiceLLMInputEvent, config inference.VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error) {
+	if f.voiceConfigs != nil {
+		select {
+		case f.voiceConfigs <- config:
+		default:
+		}
+	}
 	ch := make(chan *pb.VoiceLLMOutput)
 	errCh := make(chan error)
 	close(ch)
