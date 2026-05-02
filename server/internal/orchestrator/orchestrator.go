@@ -180,6 +180,7 @@ type voicePipelineTurn struct {
 	recAudioBuf         []byte
 	recAudioSR          int
 	historySaved        bool
+	conversationSaved   bool
 	transcriptSaved     bool
 	rawAudioSaved       bool
 	sessionDir          string
@@ -1198,6 +1199,9 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		if fullResponseCh != nil {
 			if resp, ok := <-fullResponseCh; ok && resp != "" {
 				session.AddMessage(ChatMessage{Role: "assistant", Content: resp})
+				if _, err := o.persistSessionConversation(session); err != nil {
+					log.Printf("conversation: SaveConversation error session=%s: %v", sessionID, err)
+				}
 			}
 		}
 		session.MarkPipelineFinished(pipelineSeq)
@@ -1559,6 +1563,20 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		turn.rawAudioSaved = true
 	}
 
+	saveTurnConversation := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.conversationSaved || strings.TrimSpace(turn.assistantText) == "" {
+			return
+		}
+		saved, err := o.persistSessionConversation(session)
+		if err != nil {
+			log.Printf("conversation: SaveConversation error session=%s turn=%d: %v", sessionID, turn.seq, err)
+			return
+		}
+		if saved {
+			turn.conversationSaved = true
+		}
+	}
+
 	saveCompletedTurn := func(turn *voicePipelineTurn) {
 		if turn == nil || turn.aborted {
 			return
@@ -1566,6 +1584,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 		saveAssistantMessage(turn)
 		saveTurnRawAudio(turn)
 		saveTurnTranscript(turn)
+		saveTurnConversation(turn)
 	}
 
 	recordIgnoredTurnOutput := func(turn *voicePipelineTurn, output *pb.VoiceLLMOutput) bool {
@@ -1591,6 +1610,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			saveAssistantMessage(turn)
 			saveTurnRawAudio(turn)
 			saveTurnTranscript(turn)
+			saveTurnConversation(turn)
 			if shouldBroadcast {
 				o.broadcastJSON(sessionID, map[string]any{
 					"type":     "transcript",
@@ -2103,6 +2123,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			saveAssistantMessage(currentTurn)
 			saveTurnRawAudio(currentTurn)
 			saveTurnTranscript(currentTurn)
+			saveTurnConversation(currentTurn)
 
 			if currentTurn.avatarStarted {
 				closeTurnInput(currentTurn)
@@ -2254,6 +2275,43 @@ func (o *Orchestrator) broadcastError(sessionID, message string) {
 		"type":    "error",
 		"message": message,
 	})
+}
+
+// PersistSessionConversation writes the current session history to session.json.
+func (o *Orchestrator) PersistSessionConversation(session *Session) (bool, error) {
+	return o.persistSessionConversation(session)
+}
+
+func (o *Orchestrator) persistSessionConversation(session *Session) (bool, error) {
+	if o == nil || o.charStore == nil || session == nil {
+		return false, nil
+	}
+
+	sessionID, characterID, startedAt, endedAt, history := session.ConversationSnapshot()
+	if characterID == "" || len(history) == 0 {
+		return false, nil
+	}
+
+	messages := make([]map[string]any, len(history))
+	for i, m := range history {
+		ts := m.Timestamp
+		if ts.IsZero() {
+			ts = startedAt
+		}
+		messages[i] = map[string]any{
+			"role":      m.Role,
+			"content":   m.Content,
+			"timestamp": ts.UTC().Format(time.RFC3339Nano),
+		}
+		if m.TurnSeq > 0 {
+			messages[i]["turn_seq"] = m.TurnSeq
+		}
+	}
+
+	if err := o.charStore.SaveConversation(characterID, sessionID, startedAt, endedAt, messages); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // sessionRecordingDir returns the directory for recording output.

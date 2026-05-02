@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -184,6 +185,22 @@ func TestVoiceTurnSavesTranscriptAndRawAudioOnFinalBeforeAvatarDone(t *testing.T
 	sessionDir := charStore.SessionRecordingDir(session.CharacterID, session.ID, session.CreatedAt)
 	if got := string(waitForFile(t, filepath.Join(sessionDir, "turn1.txt"))); got != "完整回答" {
 		t.Fatalf("unexpected transcript: %q", got)
+	}
+	sessionJSON := waitForFile(t, filepath.Join(sessionDir, "session.json"))
+	var saved struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(sessionJSON, &saved); err != nil {
+		t.Fatalf("unmarshal session.json: %v", err)
+	}
+	if len(saved.Messages) != 2 {
+		t.Fatalf("expected user and assistant in session.json, got %+v", saved.Messages)
+	}
+	if saved.Messages[0]["role"] != "user" || saved.Messages[0]["content"] != "用户问题" {
+		t.Fatalf("unexpected user message in session.json: %+v", saved.Messages)
+	}
+	if saved.Messages[1]["role"] != "assistant" || saved.Messages[1]["content"] != "完整回答" {
+		t.Fatalf("unexpected assistant message in session.json: %+v", saved.Messages)
 	}
 	if got := waitForFile(t, filepath.Join(sessionDir, "turn1-raw.wav")); len(got) <= 44 {
 		t.Fatalf("expected raw wav data, got %d bytes", len(got))

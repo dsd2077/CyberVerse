@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"path/filepath"
 
@@ -113,32 +112,18 @@ func main() {
 
 	// Register session end callback to persist conversation history
 	sessionMgr.OnSessionEnd = func(s *orchestrator.Session) {
-		history := s.HistorySnapshot()
-		log.Printf("OnSessionEnd: session=%s character=%s historyLen=%d", s.ID, s.CharacterID, len(history))
-		if s.CharacterID == "" || len(history) == 0 {
-			log.Printf("OnSessionEnd: skipping save — characterID=%q historyLen=%d", s.CharacterID, len(history))
+		sessionID, characterID, _, _, history := s.ConversationSnapshot()
+		log.Printf("OnSessionEnd: session=%s character=%s historyLen=%d", sessionID, characterID, len(history))
+		saved, err := orch.PersistSessionConversation(s)
+		if err != nil {
+			log.Printf("Failed to save conversation for session %s: %v", sessionID, err)
 			return
 		}
-		messages := make([]map[string]any, len(history))
-		for i, m := range history {
-			ts := m.Timestamp
-			if ts.IsZero() {
-				ts = s.CreatedAt
-			}
-			messages[i] = map[string]any{
-				"role":      m.Role,
-				"content":   m.Content,
-				"timestamp": ts.UTC().Format(time.RFC3339Nano),
-			}
-			if m.TurnSeq > 0 {
-				messages[i]["turn_seq"] = m.TurnSeq
-			}
+		if !saved {
+			log.Printf("OnSessionEnd: skipping save — characterID=%q historyLen=%d", characterID, len(history))
+			return
 		}
-		if err := charStore.SaveConversation(s.CharacterID, s.ID, s.CreatedAt, s.LastActiveAt, messages); err != nil {
-			log.Printf("Failed to save conversation for session %s: %v", s.ID, err)
-		} else {
-			log.Printf("Conversation saved for session %s (character %s)", s.ID, s.CharacterID)
-		}
+		log.Printf("Conversation saved for session %s (character %s)", sessionID, characterID)
 	}
 
 	// Create router with all dependencies

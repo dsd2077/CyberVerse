@@ -223,6 +223,13 @@ func (s *Session) HistorySnapshot() []ChatMessage {
 	return append([]ChatMessage(nil), s.History...)
 }
 
+// ConversationSnapshot returns session metadata and a copy of history for persistence.
+func (s *Session) ConversationSnapshot() (sessionID, characterID string, createdAt, lastActiveAt time.Time, history []ChatMessage) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ID, s.CharacterID, s.CreatedAt, s.LastActiveAt, append([]ChatMessage(nil), s.History...)
+}
+
 func (s *Session) SetDialogContext(items []DialogContextItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
