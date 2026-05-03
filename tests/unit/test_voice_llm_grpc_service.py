@@ -148,3 +148,33 @@ async def test_check_voice_returns_provider_error():
     assert resp.ok is False
     assert resp.provider_error == "raw provider error"
     ctx.set_code.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_voice_uses_provider_specific_plugin():
+    reg = MagicMock()
+    voice = MagicMock()
+    voice.check_voice = AsyncMock(return_value=None)
+    reg.get = MagicMock(return_value=voice)
+    reg.get_by_category = MagicMock()
+
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import voice_llm_pb2
+
+    req = voice_llm_pb2.CheckVoiceRequest(
+        config=voice_llm_pb2.VoiceLLMConfig(
+            provider="qwen_omni",
+            voice="Tina",
+        )
+    )
+    ctx = MagicMock()
+
+    resp = await svc.CheckVoice(req, ctx)
+
+    assert resp.ok is True
+    reg.get.assert_called_once_with("voice_llm.qwen_omni")
+    reg.get_by_category.assert_not_called()
+    passed_config = voice.check_voice.await_args.kwargs["session_config"]
+    assert passed_config.provider == "qwen_omni"
+    assert passed_config.voice == "Tina"

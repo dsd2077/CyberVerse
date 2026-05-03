@@ -39,6 +39,7 @@ message VoiceLLMConfig {
   string speaking_style = 6;
   string welcome_message = 7;
   repeated VoiceLLMDialogContextItem dialog_context = 8;
+  string provider = 9;
 }
 
 message VoiceLLMDialogContextItem {

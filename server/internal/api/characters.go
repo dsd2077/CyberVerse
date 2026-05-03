@@ -191,7 +191,7 @@ func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Reque
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "voice_type is required"})
 		return
 	}
-	if provider != "doubao" {
+	if provider != "doubao" && provider != "qwen_omni" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "unsupported voice_provider: " + provider})
 		return
 	}
@@ -203,7 +203,7 @@ func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Reque
 	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 	defer cancel()
 
-	providerError, err := r.orch.CheckVoice(ctx, voiceType)
+	providerError, err := r.orch.CheckVoice(ctx, provider, voiceType)
 	if providerError != "" {
 		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: providerError})
 		return

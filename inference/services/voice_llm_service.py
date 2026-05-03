@@ -32,6 +32,7 @@ def _session_config_from_pb(cfg: voice_llm_pb2.VoiceLLMConfig) -> VoiceLLMSessio
     raw_ctx = getattr(cfg, "dialog_context", None) or []
     return VoiceLLMSessionConfig(
         session_id=cfg.session_id,
+        provider=getattr(cfg, "provider", ""),
         system_prompt=cfg.system_prompt,
         voice=cfg.voice,
         bot_name=cfg.bot_name,
@@ -53,10 +54,18 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
     def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
 
-    def _get_plugin(self) -> VoiceLLMPlugin:
-        plugin = self.registry.get_by_category("voice_llm")
+    def _get_plugin(self, provider: str = "") -> VoiceLLMPlugin:
+        provider = provider.strip()
+        if provider:
+            try:
+                plugin = self.registry.get(f"voice_llm.{provider}")
+            except KeyError:
+                plugin = None
+        else:
+            plugin = self.registry.get_by_category("voice_llm")
         if plugin is None:
-            raise RuntimeError("No VoiceLLM plugin initialized")
+            suffix = f" for provider {provider!r}" if provider else ""
+            raise RuntimeError(f"No VoiceLLM plugin initialized{suffix}")
         return plugin
 
     @staticmethod
@@ -74,8 +83,6 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
         Avatar video is produced by AvatarService.GenerateStream; the Go orchestrator
         composes VoiceLLM output with that stream.
         """
-        plugin = self._get_plugin()
-
         # Phase 1: read the config message and first input event.
         session_config: VoiceLLMSessionConfig | None = None
         first_input: VoiceLLMInputEvent | None = None
@@ -100,6 +107,7 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             session_config = VoiceLLMSessionConfig()
         if first_input is not None:
             session_config.input_mode = "text" if first_input.text else "keep_alive"
+        plugin = self._get_plugin(session_config.provider)
 
         # Phase 2: stream remaining messages as unified input events.
         async def input_stream():
@@ -128,7 +136,8 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
 
     async def CheckVoice(self, request, context):
         try:
-            plugin = self._get_plugin()
+            session_config = _session_config_from_pb(request.config)
+            plugin = self._get_plugin(session_config.provider)
         except Exception as exc:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(exc))
@@ -136,7 +145,7 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
 
         try:
             await asyncio.wait_for(
-                plugin.check_voice(session_config=_session_config_from_pb(request.config)),
+                plugin.check_voice(session_config=session_config),
                 timeout=4.5,
             )
             return voice_llm_pb2.CheckVoiceResponse(ok=True)
@@ -155,6 +164,9 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             return voice_llm_pb2.CheckVoiceResponse(ok=False)
 
     async def Interrupt(self, request, context):
-        plugin = self._get_plugin()
-        await plugin.interrupt()
+        plugins = self.registry.get_all_by_category("voice_llm")
+        if not plugins:
+            plugin = self._get_plugin()
+            plugins = [plugin]
+        await asyncio.gather(*(plugin.interrupt() for plugin in plugins))
         return voice_llm_pb2.InterruptResponse(success=True)

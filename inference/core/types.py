@@ -88,6 +88,7 @@ class VoiceLLMDialogContextItem:
 class VoiceLLMSessionConfig:
     """Per-session character config passed from Go through gRPC."""
     session_id: str = ""
+    provider: str = ""
     system_prompt: str = ""
     voice: str = ""
     bot_name: str = ""

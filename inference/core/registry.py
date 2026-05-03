@@ -64,6 +64,14 @@ class PluginRegistry:
                 return instance
         return None
 
+    def get_all_by_category(self, category: str) -> list[CyberVersePlugin]:
+        """Get all initialized plugins by category prefix."""
+        return [
+            instance
+            for name, instance in self._instances.items()
+            if name.startswith(category + ".") or name == category
+        ]
+
     async def shutdown_all(self) -> None:
         for instance in self._instances.values():
             await instance.shutdown()

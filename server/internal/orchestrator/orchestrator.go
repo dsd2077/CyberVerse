@@ -570,12 +570,13 @@ func (o *Orchestrator) HealthCheck(ctx context.Context) error {
 	return o.inference.HealthCheck(ctx)
 }
 
-func (o *Orchestrator) CheckVoice(ctx context.Context, voiceType string) (string, error) {
+func (o *Orchestrator) CheckVoice(ctx context.Context, provider string, voiceType string) (string, error) {
 	if o == nil || o.inference == nil {
 		return "", errors.New("inference service is not configured")
 	}
 	return o.inference.CheckVoice(ctx, inference.VoiceLLMSessionConfig{
-		Voice: voiceType,
+		Provider: voiceLLMProviderOrDefault(provider),
+		Voice:    voiceType,
 	})
 }
 
@@ -1112,6 +1113,7 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
 	if session.CharacterID != "" && o.charStore != nil {
 		if char, err := o.charStore.Get(session.CharacterID); err == nil {
+			voiceConfig.Provider = voiceLLMProviderOrDefault(char.VoiceProvider)
 			voiceConfig.SystemPrompt = char.SystemPrompt
 			voiceConfig.Voice = char.VoiceType
 			voiceConfig.BotName = char.Name
@@ -1129,6 +1131,16 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 		})
 	}
 	return voiceConfig
+}
+
+func voiceLLMProviderOrDefault(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "qwen_omni":
+		return "qwen_omni"
+	default:
+		return "doubao"
+	}
 }
 
 func (o *Orchestrator) standardComponentDefaults() character.Components {

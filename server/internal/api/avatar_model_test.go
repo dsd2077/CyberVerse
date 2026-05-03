@@ -31,6 +31,7 @@ type fakeInferenceService struct {
 	setAvatarFormats        []string
 	checkVoiceProviderError string
 	checkVoiceErr           error
+	checkVoiceConfigs       chan inference.VoiceLLMSessionConfig
 	voiceConfigs            chan inference.VoiceLLMSessionConfig
 }
 
@@ -90,7 +91,13 @@ func (f *fakeInferenceService) TranscribeStream(context.Context, <-chan []byte, 
 	close(errCh)
 	return ch, errCh
 }
-func (f *fakeInferenceService) CheckVoice(context.Context, inference.VoiceLLMSessionConfig) (string, error) {
+func (f *fakeInferenceService) CheckVoice(_ context.Context, config inference.VoiceLLMSessionConfig) (string, error) {
+	if f.checkVoiceConfigs != nil {
+		select {
+		case f.checkVoiceConfigs <- config:
+		default:
+		}
+	}
 	if f.checkVoiceErr != nil {
 		return "", f.checkVoiceErr
 	}

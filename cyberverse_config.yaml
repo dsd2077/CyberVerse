@@ -71,6 +71,17 @@ inference:
             system_prompt: "你是一个友善的数字人助手。"
             # Avoid DialogAudioIdleTimeoutError before FlashHead's first chunk arrives.
             end_smooth_window_ms: 6000
+        qwen_omni:
+            plugin_class: "inference.plugins.voice_llm.qwen_omni_realtime.QwenOmniRealtimePlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3.5-omni-flash-realtime"
+            voice: "Tina"
+            system_prompt: "你是一个友善的数字人助手。"
+            input_sample_rate: 16000
+            output_sample_rate: 24000
+            vad_type: "semantic_vad"
+            vad_threshold: 0.5
+            vad_silence_duration_ms: 800
     llm:
         default: "qwen"
         qwen:

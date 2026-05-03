@@ -221,6 +221,7 @@ type VoiceLLMConfig struct {
 	SpeakingStyle  string                       `protobuf:"bytes,6,opt,name=speaking_style,json=speakingStyle,proto3" json:"speaking_style,omitempty"`
 	WelcomeMessage string                       `protobuf:"bytes,7,opt,name=welcome_message,json=welcomeMessage,proto3" json:"welcome_message,omitempty"`
 	DialogContext  []*VoiceLLMDialogContextItem `protobuf:"bytes,8,rep,name=dialog_context,json=dialogContext,proto3" json:"dialog_context,omitempty"`
+	Provider       string                       `protobuf:"bytes,9,opt,name=provider,proto3" json:"provider,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -309,6 +310,13 @@ func (x *VoiceLLMConfig) GetDialogContext() []*VoiceLLMDialogContextItem {
 		return x.DialogContext
 	}
 	return nil
+}
+
+func (x *VoiceLLMConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
 }
 
 type VoiceLLMDialogContextItem struct {
@@ -576,7 +584,7 @@ const file_voice_llm_proto_rawDesc = "" +
 	"\vquestion_id\x18\x06 \x01(\tR\n" +
 	"questionId\x12\x19\n" +
 	"\breply_id\x18\a \x01(\tR\areplyId\x12\x19\n" +
-	"\bbarge_in\x18\b \x01(\bR\abargeInJ\x04\b\x05\x10\x06\"\xc5\x02\n" +
+	"\bbarge_in\x18\b \x01(\bR\abargeInJ\x04\b\x05\x10\x06\"\xe1\x02\n" +
 	"\x0eVoiceLLMConfig\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12#\n" +
@@ -586,7 +594,8 @@ const file_voice_llm_proto_rawDesc = "" +
 	"\bbot_name\x18\x05 \x01(\tR\abotName\x12%\n" +
 	"\x0espeaking_style\x18\x06 \x01(\tR\rspeakingStyle\x12'\n" +
 	"\x0fwelcome_message\x18\a \x01(\tR\x0ewelcomeMessage\x12L\n" +
-	"\x0edialog_context\x18\b \x03(\v2%.cyberverse.VoiceLLMDialogContextItemR\rdialogContext\"a\n" +
+	"\x0edialog_context\x18\b \x03(\v2%.cyberverse.VoiceLLMDialogContextItemR\rdialogContext\x12\x1a\n" +
+	"\bprovider\x18\t \x01(\tR\bprovider\"a\n" +
 	"\x19VoiceLLMDialogContextItem\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1c\n" +

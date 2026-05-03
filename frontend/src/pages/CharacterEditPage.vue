@@ -6,9 +6,9 @@ import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
-import { OPENAI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
+import { OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents } from '../services/api'
-import { DEFAULT_OFFICIAL_VOICE, DEFAULT_QWEN_TTS_VOICE, isOfficialVoiceType, isOpenAIVoiceType, isQwenTTSVoiceType } from '../utils/voice'
+import { DEFAULT_OFFICIAL_VOICE, DEFAULT_QWEN_OMNI_VOICE, DEFAULT_QWEN_TTS_VOICE, isOfficialVoiceType, isOpenAIVoiceType, isQwenOmniVoiceType, isQwenTTSVoiceType } from '../utils/voice'
 
 const router = useRouter()
 const route = useRoute()
@@ -49,6 +49,8 @@ const voiceTestMessage = ref('')
 const showModeHelp = ref(false)
 const OFFICIAL_VOICE_PREVIEW_URL = 'https://console.volcengine.com/speech/new/experience/call'
 const CUSTOM_VOICE_CLONE_URL = 'https://console.volcengine.com/speech/new/experience/clone'
+const QWEN_TTS_VOICE_PREVIEW_URL = 'https://help.aliyun.com/zh/model-studio/qwen-tts-realtime'
+const QWEN_OMNI_VOICE_LIST_URL = 'https://help.aliyun.com/zh/model-studio/omni-voice-list'
 const componentCatalog = ref<ComponentsResponse>({
   llm: [{ id: 'qwen', name: 'Qwen', model: 'qwen3.6-plus', default: true, available: true }],
   asr: [{ id: 'qwen', name: 'Qwen', model: 'qwen3-asr-flash-realtime', default: true, available: true }],
@@ -61,8 +63,20 @@ const visibleImages = computed(() =>
 
 const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
 const selectedTTS = computed(() => form.value.components?.tts || DEFAULT_COMPONENTS.tts)
-const usesDoubaoVoice = computed(() => form.value.mode === 'voice_llm' || selectedTTS.value === 'doubao')
+const selectedVoiceLLMProvider = computed(() => form.value.voice_provider || 'doubao')
+const usesDoubaoVoice = computed(() =>
+  form.value.mode === 'voice_llm'
+    ? selectedVoiceLLMProvider.value === 'doubao'
+    : selectedTTS.value === 'doubao'
+)
+const usesQwenOmniVoice = computed(() =>
+  form.value.mode === 'voice_llm' && selectedVoiceLLMProvider.value === 'qwen_omni'
+)
 const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
+const voiceLLMProviderOptions = [
+  { label: '豆包语音', value: 'doubao' },
+  { label: 'Qwen Omni', value: 'qwen_omni' },
+]
 const providerSelectOptions = (items: ComponentOption[]) =>
   items.map(item => ({
     label: item.name,
@@ -102,7 +116,8 @@ const canSave = computed(() =>
   )
 )
 const canCheckVoice = computed(() =>
-  usesDoubaoVoice.value && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value)
+  (usesDoubaoVoice.value && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value))
+  || (usesQwenOmniVoice.value && !!form.value.voice_type.trim())
 )
 const voiceCheckSucceeded = computed(() => voiceTestStatus.value === 'success')
 
@@ -118,6 +133,14 @@ function defaultVoiceForTTS(tts: string) {
   if (tts === 'openai') return 'nova'
   if (tts === 'doubao') return DEFAULT_OFFICIAL_VOICE
   return DEFAULT_QWEN_TTS_VOICE
+}
+
+function defaultVoiceForVoiceLLM(provider: string) {
+  return provider === 'qwen_omni' ? DEFAULT_QWEN_OMNI_VOICE : DEFAULT_OFFICIAL_VOICE
+}
+
+function normalizeVoiceLLMProvider(provider: string) {
+  return provider === 'qwen_omni' ? 'qwen_omni' : 'doubao'
 }
 
 function applyTTSVoiceDefault(tts: string, force = false) {
@@ -147,11 +170,21 @@ function applyModeVoiceDefault(force = false) {
     return
   }
 
-  form.value.voice_provider = 'doubao'
+  form.value.voice_provider = normalizeVoiceLLMProvider(form.value.voice_provider)
   const current = form.value.voice_type.trim()
-  const looksLikeStandardVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current)
+  const provider = form.value.voice_provider
+  if (provider === 'qwen_omni') {
+    if (force || !current || !isQwenOmniVoiceType(current)) {
+      form.value.voice_type = DEFAULT_QWEN_OMNI_VOICE
+    }
+    voiceMode.value = 'official'
+    customVoiceType.value = ''
+    return
+  }
+
+  const looksLikeStandardVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current) || isQwenOmniVoiceType(current)
   if (force || !current || looksLikeStandardVoice) {
-    form.value.voice_type = DEFAULT_OFFICIAL_VOICE
+    form.value.voice_type = defaultVoiceForVoiceLLM(provider)
   }
   syncVoiceInputs(form.value.voice_type)
 }
@@ -197,6 +230,12 @@ function setVoiceMode(mode: 'official' | 'custom') {
 }
 
 function resolveVoiceType() {
+  if (usesQwenOmniVoice.value) {
+    const voice = form.value.voice_type.trim() || DEFAULT_QWEN_OMNI_VOICE
+    form.value.voice_type = voice
+    return voice
+  }
+
   if (!usesDoubaoVoice.value) {
     const voice = form.value.voice_type.trim() || defaultVoiceForTTS(selectedTTS.value)
     form.value.voice_type = voice
@@ -241,6 +280,16 @@ watch(
   () => {
     voiceError.value = ''
     applyModeVoiceDefault()
+  }
+)
+
+watch(
+  () => form.value.voice_provider,
+  () => {
+    if (form.value.mode === 'voice_llm') {
+      voiceError.value = ''
+      applyModeVoiceDefault()
+    }
   }
 )
 
@@ -369,7 +418,9 @@ async function save() {
     }
     payload.voice_type = voiceType
     payload.components = normalizeComponents(payload.components)
-    payload.voice_provider = payload.mode === 'voice_llm' ? 'doubao' : payload.components.tts
+    payload.voice_provider = payload.mode === 'voice_llm'
+      ? normalizeVoiceLLMProvider(payload.voice_provider)
+      : payload.components.tts
 
     let id: string
     if (isEdit.value) {
@@ -591,14 +642,28 @@ const breadcrumb = computed(() =>
                   class="mt-1.5"
                 />
               </label>
-              <label v-if="!usesDoubaoVoice && selectedTTS === 'qwen'" class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
-                <CvSelect
-                  v-model="form.voice_type"
-                  :options="QWEN_TTS_VOICE_OPTIONS"
-                  class="mt-1.5"
-                />
-              </label>
+              <template v-if="!usesDoubaoVoice && selectedTTS === 'qwen'">
+                <label class="block">
+                  <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                  <CvSelect
+                    v-model="form.voice_type"
+                    :options="QWEN_TTS_VOICE_OPTIONS"
+                    class="mt-1.5"
+                  />
+                </label>
+                <p class="text-[11px] leading-5 text-cv-text-muted md:col-span-3 md:col-start-2 md:-mt-1">
+                  可到
+                  <a
+                    :href="QWEN_TTS_VOICE_PREVIEW_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 transition-colors hover:text-cv-text"
+                  >
+                    Qwen TTS 官方音色列表
+                  </a>
+                  试听音色
+                </p>
+              </template>
               <label v-else-if="isOpenAIVoice" class="block">
                 <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
                 <CvSelect
@@ -686,11 +751,11 @@ const breadcrumb = computed(() =>
                 <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
                 <CvSelect
                   v-model="form.voice_provider"
-                  :options="[{ label: '豆包语音', value: 'doubao' }]"
+                  :options="voiceLLMProviderOptions"
                   class="mt-1.5"
                 />
               </label>
-              <div class="block">
+              <div v-if="usesDoubaoVoice" class="block">
                 <span class="text-[12px] font-medium text-cv-text-muted">声线类型</span>
                 <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
                   <button
@@ -715,6 +780,15 @@ const breadcrumb = computed(() =>
                   </button>
                 </div>
               </div>
+              <label v-else class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <input
+                  type="text"
+                  value="qwen3.5-omni-flash-realtime"
+                  readonly
+                  class="mt-1.5 h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text-secondary focus:outline-none"
+                />
+              </label>
             </div>
 
             <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)] md:items-start">
@@ -722,7 +796,14 @@ const breadcrumb = computed(() =>
               <label class="block">
                 <div class="flex items-start gap-3">
                   <CvSelect
-                    v-if="voiceMode === 'official'"
+                    v-if="usesQwenOmniVoice"
+                    v-model="form.voice_type"
+                    :options="QWEN_OMNI_VOICE_OPTIONS"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0 flex-1"
+                  />
+                  <CvSelect
+                    v-else-if="voiceMode === 'official'"
                     v-model="form.voice_type"
                     :options="VOICE_OPTIONS"
                     :success="voiceCheckSucceeded"
@@ -757,7 +838,7 @@ const breadcrumb = computed(() =>
                     check
                   </button>
                 </div>
-                <p v-if="voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                <p v-if="usesDoubaoVoice && voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
                   可到
                   <a
                     :href="OFFICIAL_VOICE_PREVIEW_URL"
@@ -769,7 +850,19 @@ const breadcrumb = computed(() =>
                   </a>
                   试听音色
                 </p>
-                <p v-if="voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                <p v-if="usesQwenOmniVoice" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                  可到
+                  <a
+                    :href="QWEN_OMNI_VOICE_LIST_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 transition-colors hover:text-cv-text"
+                  >
+                    Qwen Omni 官方音色列表
+                  </a>
+                  试听音色
+                </p>
+                <p v-if="usesDoubaoVoice && voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
                   请先前往
                   <a
                     :href="CUSTOM_VOICE_CLONE_URL"

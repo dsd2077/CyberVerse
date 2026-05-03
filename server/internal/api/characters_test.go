@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cyberverse/server/internal/character"
+	"github.com/cyberverse/server/internal/inference"
 	pb "github.com/cyberverse/server/internal/pb"
 )
 
@@ -161,7 +162,11 @@ func TestCharacterVoiceTypeAllowsCustomSpeakerID(t *testing.T) {
 }
 
 func TestTestCharacterVoiceSuccess(t *testing.T) {
-	r := newTestRouter()
+	inf := &fakeInferenceService{
+		avatarInfo:        &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		checkVoiceConfigs: make(chan inference.VoiceLLMSessionConfig, 1),
+	}
+	r := newTestRouterWithInference(inf)
 
 	req := httptest.NewRequest(
 		"POST",
@@ -182,6 +187,45 @@ func TestTestCharacterVoiceSuccess(t *testing.T) {
 	}
 	if resp["status"] != "ok" {
 		t.Fatalf("expected status ok, got %q", resp["status"])
+	}
+
+	select {
+	case config := <-inf.checkVoiceConfigs:
+		if config.Provider != "doubao" || config.Voice != "温柔文雅" {
+			t.Fatalf("unexpected check voice config: %+v", config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for check voice config")
+	}
+}
+
+func TestTestCharacterVoiceSupportsQwenOmniProvider(t *testing.T) {
+	inf := &fakeInferenceService{
+		avatarInfo:        &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		checkVoiceConfigs: make(chan inference.VoiceLLMSessionConfig, 1),
+	}
+	r := newTestRouterWithInference(inf)
+
+	req := httptest.NewRequest(
+		"POST",
+		"/api/v1/characters/test-voice",
+		strings.NewReader(`{"voice_provider":"qwen_omni","voice_type":"Tina"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	select {
+	case config := <-inf.checkVoiceConfigs:
+		if config.Provider != "qwen_omni" || config.Voice != "Tina" {
+			t.Fatalf("unexpected check voice config: %+v", config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for check voice config")
 	}
 }
 
