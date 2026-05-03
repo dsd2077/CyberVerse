@@ -20,7 +20,7 @@ defineProps<{ show: boolean }>()
         <span class="text-cv-accent text-sm font-medium">系统尚未配置</span>
       </div>
       <p class="text-[13px] text-cv-text-secondary">
-        请先配置 Doubao 语音服务凭证，以便正常启动数字人会话。
+        请先配置 DashScope 或所选组件的服务凭证，以便正常启动数字人会话。
       </p>
     </div>
     <div class="flex items-center gap-3 shrink-0">

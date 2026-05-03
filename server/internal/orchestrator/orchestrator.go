@@ -38,11 +38,10 @@ import (
 )
 
 // stdChunksPerSegment is how many avatar video chunks to batch before publishing
-// in the standard (text→LLM→TTS→Avatar) pipeline. Each chunk is ~1.12s of
-// content but takes ~1.64s to generate (RTF≈1.46). Batching 3 chunks into one
-// 3.36s segment converts constant 0.52s micro-stutters into one clear ~1.9s
-// pause every ~5s, matching the Gradio streaming reference approach.
-const stdChunksPerSegment = 3
+// in the standard (ASR/text→LLM→TTS→Avatar) pipeline. Qwen TTS produces audio
+// before avatar video, so each avatar chunk is sent as its own paced AV segment
+// with matching PCM instead of publishing audio ahead of video.
+const stdChunksPerSegment = 1
 
 // No hard cap on the assistant PCM buffer: long responses (>20s) were
 // previously truncated, causing the first N seconds of audio to be dropped
@@ -429,6 +428,30 @@ func voiceTraceLabel(sessionID string, turnSeq uint64, replyID, questionID strin
 	return strings.Join(parts, " ")
 }
 
+func characterSystemPrompt(char *character.Character, includeName bool, includeSpeakingStyle bool) string {
+	if char == nil {
+		return ""
+	}
+	var parts []string
+	appendField := func(label, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			parts = append(parts, label+"："+value)
+		}
+	}
+
+	appendField("系统提示", char.SystemPrompt)
+	if includeName {
+		appendField("角色名称", char.Name)
+	}
+	appendField("角色描述", char.Description)
+	appendField("角色性格", char.Personality)
+	if includeSpeakingStyle {
+		appendField("说话风格", char.SpeakingStyle)
+	}
+	return strings.Join(parts, "\n")
+}
+
 func formatSinceUserFinal(start time.Time) string {
 	if start.IsZero() {
 		return "-"
@@ -787,6 +810,53 @@ func fitPCMToVideoDuration(pcm []byte, sampleRate, frames, fps int) []byte {
 	return out
 }
 
+func audioChunkToPCM16(chunk *pb.AudioChunk) ([]byte, int) {
+	if chunk == nil || len(chunk.GetData()) == 0 {
+		return nil, 0
+	}
+	sampleRate := int(chunk.GetSampleRate())
+	format := strings.ToLower(strings.TrimSpace(chunk.GetFormat()))
+	data := chunk.GetData()
+
+	switch format {
+	case "float32", "f32", "pcm_f32le":
+		n := len(data) / 4
+		if n <= 0 {
+			return nil, sampleRate
+		}
+		out := make([]byte, n*2)
+		for i := 0; i < n; i++ {
+			v := math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				v = 0
+			}
+			if v > 1 {
+				v = 1
+			} else if v < -1 {
+				v = -1
+			}
+			var sample int16
+			if v >= 0 {
+				sample = int16(v * 32767)
+			} else {
+				sample = int16(v * 32768)
+			}
+			binary.LittleEndian.PutUint16(out[i*2:], uint16(sample))
+		}
+		return out, sampleRate
+	default:
+		if len(data)%2 != 0 {
+			data = data[:len(data)-1]
+		}
+		if len(data) == 0 {
+			return nil, sampleRate
+		}
+		out := make([]byte, len(data))
+		copy(out, data)
+		return out, sampleRate
+	}
+}
+
 func (o *Orchestrator) setAvatarFromCharacterImage(ctx context.Context, sessionID, characterID, imageFilename string) error {
 	if o == nil || o.inference == nil {
 		return errors.New("inference service is not configured")
@@ -1061,6 +1131,54 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 	return voiceConfig
 }
 
+func (o *Orchestrator) standardComponentDefaults() character.Components {
+	defaults := character.Components{LLM: "qwen", ASR: "qwen", TTS: "qwen"}
+	if o.pipelineCfg.DefaultLLM != "" {
+		defaults.LLM = o.pipelineCfg.DefaultLLM
+	}
+	if o.pipelineCfg.DefaultASR != "" {
+		defaults.ASR = o.pipelineCfg.DefaultASR
+	}
+	if o.pipelineCfg.DefaultTTS != "" {
+		defaults.TTS = o.pipelineCfg.DefaultTTS
+	}
+	return defaults
+}
+
+func (o *Orchestrator) standardCharacterConfig(session *Session) (character.Components, string, string, string) {
+	components := character.NormalizeComponents(character.Components{}, o.standardComponentDefaults())
+	voice := ""
+	speakingStyle := ""
+	language := ""
+
+	if session.CharacterID != "" && o.charStore != nil {
+		if char, err := o.charStore.Get(session.CharacterID); err == nil {
+			components = character.NormalizeComponents(char.Components, components)
+			voice = strings.TrimSpace(char.VoiceType)
+			speakingStyle = strings.TrimSpace(char.SpeakingStyle)
+		} else {
+			log.Printf("standardCharacterConfig: could not fetch character %s: %v", session.CharacterID, err)
+		}
+	}
+
+	if voice == "" && components.TTS == "qwen" {
+		voice = "Momo"
+	}
+	return components, voice, speakingStyle, language
+}
+
+func (o *Orchestrator) standardSystemPrompt(session *Session) string {
+	if session.CharacterID == "" || o.charStore == nil {
+		return ""
+	}
+	char, err := o.charStore.Get(session.CharacterID)
+	if err != nil {
+		log.Printf("standardSystemPrompt: could not fetch character %s: %v", session.CharacterID, err)
+		return ""
+	}
+	return characterSystemPrompt(char, true, true)
+}
+
 func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan inference.VoiceLLMInputEvent {
 	inputCh := make(chan inference.VoiceLLMInputEvent, 64)
 	go func() {
@@ -1133,9 +1251,11 @@ func (o *Orchestrator) handleStandardTextInput(ctx context.Context, session *Ses
 	session.PipelineCancel = cancel
 	session.mu.Unlock()
 
-	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	turnSeq := session.MarkTurnStarted()
+	o.advancePlaybackEpoch(sessionID, turnSeq)
+	session.AddMessage(ChatMessage{Role: "user", Content: text, TurnSeq: turnSeq})
 	pipelineSeq := session.MarkPipelineRunning()
-	go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq)
+	go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq, turnSeq)
 	return nil
 }
 
@@ -1192,15 +1312,110 @@ func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, te
 }
 
 // runStandardPipeline executes: LLM → sentence detection → TTS → Avatar.
-func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string, pipelineSeq uint64) {
+func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string, pipelineSeq uint64, turnSeq uint64) {
 	var fullResponseCh chan string // set below; read in defer to store assistant message
+	recSessionDir := ""
+	recTurnID := "turn" + strconv.FormatUint(turnSeq, 10)
+	var recMu sync.Mutex
+	var recAudioBuf []byte
+	var recAudioSR int
+	var turnRec *recording.TurnRecording
+	var recFinished bool
+	if o.recorder != nil {
+		recSessionDir = o.sessionRecordingDir(session)
+	}
+
+	appendRecAudio := func(pcm []byte, sampleRate int) {
+		if o.recorder == nil || len(pcm) == 0 || sampleRate <= 0 {
+			return
+		}
+		pcmCopy := append([]byte(nil), pcm...)
+		recMu.Lock()
+		if recAudioSR == 0 {
+			recAudioSR = sampleRate
+		}
+		recAudioBuf = append(recAudioBuf, pcmCopy...)
+		activeRec := turnRec
+		if activeRec != nil && !recFinished {
+			activeRec.WriteAudioChunk(pcmCopy, sampleRate)
+		}
+		recMu.Unlock()
+	}
+
+	beginRec := func(width, height, fps int) {
+		if o.recorder == nil || width <= 0 || height <= 0 || fps <= 0 {
+			return
+		}
+		recMu.Lock()
+		if turnRec != nil || recFinished {
+			recMu.Unlock()
+			return
+		}
+		activeRec := o.recorder.BeginTurn(recSessionDir, recTurnID, width, height, fps)
+		turnRec = activeRec
+		audioCopy := append([]byte(nil), recAudioBuf...)
+		audioSR := recAudioSR
+		if activeRec != nil && len(audioCopy) > 0 && audioSR > 0 {
+			activeRec.WriteAudioChunk(audioCopy, audioSR)
+		}
+		recMu.Unlock()
+	}
+
+	writeRecVideo := func(rgb []byte) {
+		if o.recorder == nil || len(rgb) == 0 {
+			return
+		}
+		recMu.Lock()
+		activeRec := turnRec
+		if activeRec != nil && !recFinished {
+			activeRec.WriteVideoChunk(rgb)
+		}
+		recMu.Unlock()
+	}
+
+	finishRec := func() {
+		if o.recorder == nil {
+			return
+		}
+		recMu.Lock()
+		if recFinished {
+			recMu.Unlock()
+			return
+		}
+		activeRec := turnRec
+		turnRec = nil
+		recFinished = true
+		recMu.Unlock()
+		if activeRec != nil {
+			_ = activeRec.Finish()
+		}
+	}
+
 	defer func() {
 		// Store assistant message in session history
+		assistantResp := ""
 		if fullResponseCh != nil {
 			if resp, ok := <-fullResponseCh; ok && resp != "" {
-				session.AddMessage(ChatMessage{Role: "assistant", Content: resp})
+				assistantResp = resp
+				session.AddMessage(ChatMessage{Role: "assistant", Content: resp, TurnSeq: turnSeq})
 				if _, err := o.persistSessionConversation(session); err != nil {
 					log.Printf("conversation: SaveConversation error session=%s: %v", sessionID, err)
+				}
+			}
+		}
+		if o.recorder != nil {
+			recMu.Lock()
+			audioCopy := append([]byte(nil), recAudioBuf...)
+			audioSR := recAudioSR
+			recMu.Unlock()
+			if len(audioCopy) > 0 && audioSR > 0 {
+				if err := o.recorder.SaveRawAudio(recSessionDir, recTurnID, audioCopy, audioSR); err != nil {
+					log.Printf("recording: SaveRawAudio error session=%s turn=%s: %v", sessionID, recTurnID, err)
+				}
+			}
+			if strings.TrimSpace(assistantResp) != "" {
+				if err := o.recorder.SaveTranscript(recSessionDir, recTurnID, assistantResp); err != nil {
+					log.Printf("recording: SaveTranscript error session=%s turn=%s: %v", sessionID, recTurnID, err)
 				}
 			}
 		}
@@ -1209,58 +1424,66 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		o.broadcastStatus(sessionID, "idle")
 	}()
 
-	var turnRec *recording.TurnRecording
-	if o.recorder != nil {
-		sessionDir := o.sessionRecordingDir(session)
-		turnRec = o.recorder.BeginTurn(sessionDir, "turn1", 512, 512, 25)
-	}
-
 	session.SetState(StateProcessing)
 	o.broadcastStatus(sessionID, "processing")
 
 	pipelineStart := time.Now()
 
+	components, voice, speakingStyle, language := o.standardCharacterConfig(session)
+
 	// Prepare LLM messages
-	messages := make([]inference.ChatMessage, len(session.History))
-	for i, m := range session.History {
-		messages[i] = inference.ChatMessage{Role: m.Role, Content: m.Content}
+	history := session.HistorySnapshot()
+	messages := make([]inference.ChatMessage, 0, len(history)+1)
+	if systemPrompt := o.standardSystemPrompt(session); systemPrompt != "" {
+		messages = append(messages, inference.ChatMessage{Role: "system", Content: systemPrompt})
+	}
+	for _, m := range history {
+		messages = append(messages, inference.ChatMessage{Role: m.Role, Content: m.Content})
 	}
 
 	// 1. Start LLM stream
 	llmCh, llmErrCh := o.inference.GenerateLLMStream(ctx, sessionID, messages, inference.LLMConfig{
 		Temperature: 0.7,
+		Provider:    components.LLM,
 	})
 
-	// 2. Collect LLM tokens, detect sentence boundaries, feed to TTS
-	textCh := make(chan string, 8)
+	// 2. Collect the full LLM response, then feed it to TTS once.
+	textCh := make(chan string, 1)
 	fullResponseCh = make(chan string, 1) // captures full LLM response for history
 	go func() {
 		defer close(textCh)
-		var sentence strings.Builder
+		var tokenBuffer strings.Builder
 		var fullResponse string
-		sentenceEnders := ".!?。！？；;\n"
+
+		finalText := func() string {
+			if text := strings.TrimSpace(fullResponse); text != "" {
+				return text
+			}
+			return strings.TrimSpace(tokenBuffer.String())
+		}
+
+		finish := func(sendTTS bool) {
+			text := finalText()
+			if sendTTS && text != "" {
+				select {
+				case textCh <- text:
+				case <-ctx.Done():
+				}
+			}
+			if text != "" {
+				fullResponseCh <- text
+			}
+			close(fullResponseCh)
+		}
 
 		for {
 			select {
 			case <-ctx.Done():
-				if fullResponse != "" {
-					fullResponseCh <- fullResponse
-				}
-				close(fullResponseCh)
+				finish(false)
 				return
 			case chunk, ok := <-llmCh:
 				if !ok {
-					// Flush remaining sentence
-					if sentence.Len() > 0 {
-						select {
-						case textCh <- sentence.String():
-						case <-ctx.Done():
-						}
-					}
-					if fullResponse != "" {
-						fullResponseCh <- fullResponse
-					}
-					close(fullResponseCh)
+					finish(true)
 					return
 				}
 
@@ -1270,45 +1493,44 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 					"token":       chunk.Token,
 					"accumulated": chunk.AccumulatedText,
 					"is_final":    chunk.IsFinal,
+					"turn_seq":    turnSeq,
 				})
 
-				sentence.WriteString(chunk.Token)
-				// Track full accumulated text
-				if chunk.IsFinal {
+				tokenBuffer.WriteString(chunk.Token)
+				// Track the latest accumulated text. A normally closed errCh
+				// can race with the final chunk, so keep this current even
+				// before the explicit final marker arrives.
+				if chunk.AccumulatedText != "" {
 					fullResponse = chunk.AccumulatedText
 				}
-
-				// Check for sentence boundary
-				if chunk.IsSentenceEnd || (len(chunk.Token) > 0 && strings.ContainsAny(chunk.Token[len(chunk.Token)-1:], sentenceEnders)) {
-					text := strings.TrimSpace(sentence.String())
-					if text != "" {
-						select {
-						case textCh <- text:
-						case <-ctx.Done():
-							return
-						}
-					}
-					sentence.Reset()
+			case err, ok := <-llmErrCh:
+				if !ok {
+					llmErrCh = nil
+					continue
 				}
-			case err := <-llmErrCh:
 				if err != nil {
 					log.Printf("LLM stream error for session %s: %v", sessionID, err)
 					o.broadcastError(sessionID, "LLM generation failed")
 				}
-				if fullResponse != "" {
-					fullResponseCh <- fullResponse
+				if err != nil {
+					finish(true)
+					return
 				}
-				close(fullResponseCh)
-				return
 			}
 		}
 	}()
 
 	// 3. Start TTS stream
-	ttsAudioCh, ttsErrCh := o.inference.SynthesizeSpeechStream(ctx, textCh)
+	ttsAudioCh, ttsErrCh := o.inference.SynthesizeSpeechStream(ctx, textCh, inference.TTSConfig{
+		Provider:      components.TTS,
+		Voice:         voice,
+		SpeakingStyle: speakingStyle,
+		Language:      language,
+		SessionID:     sessionID,
+	})
 
 	// 4. Start Avatar stream
-	lastTTSSampleRate := 16000
+	stdSyncBuf := newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples)
 	avatarAudioCh := make(chan *pb.AudioChunk, 8)
 	go func() {
 		defer close(avatarAudioCh)
@@ -1318,35 +1540,35 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 				return
 			case chunk, ok := <-ttsAudioCh:
 				if !ok {
-					// TTS done — append trailing silence so the avatar has
-					// time to close its mouth before switching to idle video.
-					silence := buildTrailingSilence(lastTTSSampleRate)
-					select {
-					case avatarAudioCh <- silence:
-					case <-ctx.Done():
-					}
 					return
 				}
-				lastTTSSampleRate = int(chunk.GetSampleRate())
-				// Forward audio to avatar and publish to bot
+				// Avatar decodes AudioChunk.Format itself; browser audio and
+				// recordings need signed 16-bit PCM.
+				pcm, pcmSampleRate := audioChunkToPCM16(chunk)
+				if len(pcm) > 0 {
+					appendRecAudio(pcm, pcmSampleRate)
+					if dropped := stdSyncBuf.appendPCM(pcm, pcmSampleRate); dropped > 0 {
+						bufferedSamples, _, _, _ := stdSyncBuf.snapshot()
+						log.Printf("std sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+					}
+				}
+				// Forward original audio to avatar. Browser audio is published
+				// later as part of the same paced AV segment as the video.
 				select {
 				case avatarAudioCh <- chunk:
 				case <-ctx.Done():
 					return
 				}
-
-				// Also publish audio to media peer
-				o.mu.RLock()
-				peer := o.peers[sessionID]
-				o.mu.RUnlock()
-				if peer != nil {
-					_ = peer.PublishAudioFrame(chunk.Data, int(chunk.SampleRate))
+			case err, ok := <-ttsErrCh:
+				if !ok {
+					ttsErrCh = nil
+					continue
 				}
-			case err := <-ttsErrCh:
-				if err != nil {
-					log.Printf("TTS stream error for session %s: %v", sessionID, err)
-					o.broadcastError(sessionID, "Speech synthesis failed")
+				if err == nil {
+					continue
 				}
+				log.Printf("TTS stream error for session %s: %v", sessionID, err)
+				o.broadcastError(sessionID, "Speech synthesis failed")
 				return
 			}
 		}
@@ -1359,9 +1581,8 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 	o.avatarMu.Lock()
 	videoCh, videoErrCh := o.inference.GenerateAvatarStream(ctx, avatarAudioCh)
 
-	// 5. Publish video frames to LiveKit.
-	// Accumulate stdChunksPerSegment chunks before publishing to avoid constant
-	// micro-stutters caused by RTF>1 (model generates slower than real-time).
+	// 5. Publish paced AV segments. The standard/Qwen chain receives audio
+	// before video, so PCM is buffered and sliced to match each video segment.
 	var (
 		segVideo       []byte
 		segFrames      int
@@ -1369,22 +1590,43 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		segHeight      int
 		segFPS         int
 		segCount       int
+		segSeq         int64
 		firstFrameSent bool
 	)
-	flushStdSeg := func() {
+	lookupStdPeer := func() mediapeer.MediaPeer {
+		o.mu.RLock()
+		defer o.mu.RUnlock()
+		return o.peers[sessionID]
+	}
+	flushStdSeg := func(isFinalSeg bool) {
 		if segCount == 0 {
 			return
 		}
-		o.mu.RLock()
-		peer := o.peers[sessionID]
-		o.mu.RUnlock()
-		if peer != nil {
+		segSeq++
+		if peer := lookupStdPeer(); peer != nil {
+			segPCM, outSamples, wantSamples, bufferedSamplesAfterTake := stdSyncBuf.takeSegmentPCM(segFrames, segFPS, isFinalSeg)
+			_, _, _, sampleRate := stdSyncBuf.snapshot()
+			if sampleRate <= 0 {
+				sampleRate = 16000
+			}
+			if segSeq == 1 && outSamples < wantSamples {
+				bufferedSamples, _, _, _ := stdSyncBuf.snapshot()
+				log.Printf("std av drift for session %s: out_samples=%d want_samples=%d frames=%d fps=%d buffered_samples=%d",
+					sessionID, outSamples, wantSamples, segFrames, segFPS, bufferedSamples)
+			}
+			if isFinalSeg && bufferedSamplesAfterTake > 0 {
+				log.Printf("std av strict trim tail session=%s: trimmed_samples=%d", sessionID, bufferedSamplesAfterTake)
+			}
 			raw := &mediapeer.RawAVSegment{
-				RGB:       segVideo,
-				Width:     segWidth,
-				Height:    segHeight,
-				FPS:       segFPS,
-				NumFrames: segFrames,
+				TraceLabel: voiceTraceLabel(sessionID, turnSeq, "standard", "", segSeq),
+				Epoch:      turnSeq,
+				RGB:        segVideo,
+				PCM:        segPCM,
+				SampleRate: sampleRate,
+				Width:      segWidth,
+				Height:     segHeight,
+				FPS:        segFPS,
+				NumFrames:  segFrames,
 			}
 			if err := peer.SendAVSegment(raw); err != nil {
 				log.Printf("std av SendAVSegment failed session=%s: %v", sessionID, err)
@@ -1398,21 +1640,22 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 	for {
 		select {
 		case <-ctx.Done():
-			flushStdSeg()
-			if turnRec != nil {
-				_ = turnRec.Finish()
-			}
+			flushStdSeg(false)
+			finishRec()
 			o.avatarMu.Unlock()
 			return
 		case chunk, ok := <-videoCh:
 			if !ok {
-				flushStdSeg()
-				if turnRec != nil {
-					_ = turnRec.Finish()
-				}
+				flushStdSeg(true)
+				finishRec()
 				if err := <-videoErrCh; err != nil {
 					log.Printf("Avatar stream error for session %s: %v", sessionID, err)
 					o.broadcastError(sessionID, "Avatar generation failed")
+				}
+				if ctx.Err() == nil {
+					if peer := lookupStdPeer(); peer != nil {
+						peer.WaitAVDrain(10 * time.Second)
+					}
 				}
 				o.avatarMu.Unlock()
 				return
@@ -1434,27 +1677,31 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 					o.broadcastStatus(sessionID, "speaking")
 				}
 			}
-			if turnRec != nil {
-				turnRec.WriteVideoChunk(chunk.GetData())
-			}
+			beginRec(int(chunk.GetWidth()), int(chunk.GetHeight()), fps)
+			writeRecVideo(chunk.GetData())
 			segVideo = append(segVideo, chunk.GetData()...)
 			segFrames += nf
 			segWidth = int(chunk.GetWidth())
 			segHeight = int(chunk.GetHeight())
 			segFPS = fps
 			segCount++
-			if segCount >= stdChunksPerSegment {
-				flushStdSeg()
+			if segCount >= stdChunksPerSegment || chunk.GetIsFinal() {
+				flushStdSeg(chunk.GetIsFinal())
 			}
 		}
 	}
 }
 
-// HandleAudioStream processes incoming user audio through the VoiceLLM pipeline.
+// HandleAudioStream processes incoming user audio through the session's pipeline.
 func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, audioCh <-chan []byte) error {
 	session, err := o.sessionMgr.Get(sessionID)
 	if err != nil {
 		return err
+	}
+
+	if session.Mode == ModeStandard {
+		go o.runStandardASRLoop(ctx, session, sessionID, audioCh)
+		return nil
 	}
 
 	pipeCtx, cancel := context.WithCancel(ctx)
@@ -1465,6 +1712,83 @@ func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, 
 	pipelineSeq := session.MarkPipelineRunning()
 	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq, 0)
 	return nil
+}
+
+func (o *Orchestrator) runStandardASRLoop(ctx context.Context, session *Session, sessionID string, audioCh <-chan []byte) {
+	components, _, _, language := o.standardCharacterConfig(session)
+	transcriptCh, errCh := o.inference.TranscribeStream(ctx, audioCh, inference.ASRConfig{
+		Provider:  components.ASR,
+		Language:  language,
+		SessionID: sessionID,
+	})
+
+	session.SetState(StateListening)
+	o.broadcastStatus(sessionID, "idle")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-transcriptCh:
+			if !ok {
+				select {
+				case err, ok := <-errCh:
+					if ok && err != nil && ctx.Err() == nil {
+						log.Printf("ASR stream error for session %s: %v", sessionID, err)
+						o.broadcastError(sessionID, "Speech recognition failed")
+					}
+				default:
+				}
+				return
+			}
+			text := strings.TrimSpace(event.GetText())
+			if text == "" {
+				continue
+			}
+
+			if !event.GetIsFinal() {
+				o.broadcastJSON(sessionID, map[string]any{
+					"type":     "transcript",
+					"text":     text,
+					"is_final": false,
+					"speaker":  "user",
+				})
+				continue
+			}
+
+			o.stopPipelineAndWait(session, sessionID, false)
+			turnSeq := session.MarkTurnStarted()
+			o.advancePlaybackEpoch(sessionID, turnSeq)
+			session.AddMessage(ChatMessage{Role: "user", Content: text, TurnSeq: turnSeq})
+			o.broadcastJSON(sessionID, map[string]any{
+				"type":     "transcript",
+				"text":     text,
+				"is_final": true,
+				"speaker":  "user",
+				"turn_seq": turnSeq,
+			})
+
+			pipeCtx, cancel := context.WithCancel(context.Background())
+			session.mu.Lock()
+			session.PipelineCancel = cancel
+			session.mu.Unlock()
+			pipelineSeq := session.MarkPipelineRunning()
+			go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq, turnSeq)
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err == nil {
+				continue
+			}
+			if ctx.Err() == nil {
+				log.Printf("ASR stream error for session %s: %v", sessionID, err)
+				o.broadcastError(sessionID, "Speech recognition failed")
+			}
+			return
+		}
+	}
 }
 
 // runVoiceLLMPipeline executes a VoiceLLM turn source -> VoiceLLM -> Avatar (video).

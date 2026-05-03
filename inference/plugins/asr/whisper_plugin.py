@@ -4,7 +4,7 @@ from typing import AsyncIterator
 
 import numpy as np
 
-from inference.core.types import AudioChunk, PluginConfig, TranscriptEvent
+from inference.core.types import ASRRequestConfig, AudioChunk, PluginConfig, TranscriptEvent
 from inference.plugins.asr.base import ASRPlugin
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,9 @@ class WhisperASRPlugin(ASRPlugin):
         logger.info("Whisper model loaded: size=%s device=%s", self.model_size, self.device)
 
     async def transcribe_stream(
-        self, audio_stream: AsyncIterator[bytes]
+        self,
+        audio_stream: AsyncIterator[bytes],
+        request_config: ASRRequestConfig | None = None,
     ) -> AsyncIterator[TranscriptEvent]:
         buffer = np.array([], dtype=np.float32)
         silence_samples = 0

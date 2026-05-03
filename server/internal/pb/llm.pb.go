@@ -138,6 +138,7 @@ type LLMConfig struct {
 	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
 	Temperature   float32                `protobuf:"fixed32,2,opt,name=temperature,proto3" json:"temperature,omitempty"`
 	MaxTokens     int32                  `protobuf:"varint,3,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	Provider      string                 `protobuf:"bytes,4,opt,name=provider,proto3" json:"provider,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -191,6 +192,13 @@ func (x *LLMConfig) GetMaxTokens() int32 {
 		return x.MaxTokens
 	}
 	return 0
+}
+
+func (x *LLMConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
 }
 
 type LLMChunk struct {
@@ -275,12 +283,13 @@ const file_llm_proto_rawDesc = "" +
 	"\x06config\x18\x03 \x01(\v2\x15.cyberverse.LLMConfigR\x06config\";\n" +
 	"\vChatMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"b\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"~\n" +
 	"\tLLMConfig\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12 \n" +
 	"\vtemperature\x18\x02 \x01(\x02R\vtemperature\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\x03 \x01(\x05R\tmaxTokens\"\x8e\x01\n" +
+	"max_tokens\x18\x03 \x01(\x05R\tmaxTokens\x12\x1a\n" +
+	"\bprovider\x18\x04 \x01(\tR\bprovider\"\x8e\x01\n" +
 	"\bLLMChunk\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12)\n" +
 	"\x10accumulated_text\x18\x02 \x01(\tR\x0faccumulatedText\x12&\n" +

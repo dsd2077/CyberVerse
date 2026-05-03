@@ -136,7 +136,7 @@ async function launch() {
   if (!activeAvatarModel.value) return
   connecting.value = true
   try {
-    const resp = await createSession(characterId.value, 'voice_llm')
+    const resp = await createSession(characterId.value, store.current?.mode || 'standard')
     resp.warnings?.forEach((warning) => {
       console.warn('[CyberVerse]', warning)
     })

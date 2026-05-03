@@ -67,14 +67,20 @@ inference:
             plugin_class: "inference.plugins.voice_llm.doubao_realtime.DoubaoRealtimePlugin"
             access_token: "${DOUBAO_ACCESS_TOKEN}"
             app_id: "${DOUBAO_APP_ID}"
-            # 参考 skill 文档与 code-example：示例所用域名，否则在当前环境会出现 DNS 解析失败
-            ws_url: "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
             voice_type: "zh_female_default"
             system_prompt: "你是一个友善的数字人助手。"
             # Avoid DialogAudioIdleTimeoutError before FlashHead's first chunk arrives.
             end_smooth_window_ms: 6000
     llm:
-        default: "openai"
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3.6-plus"
+            temperature: 0.7
+            system_prompt: "你是一个友善的数字人助手。"
+            extra_body:
+                enable_thinking: false
         openai:
             plugin_class: "inference.plugins.llm.openai_plugin.OpenAILLMPlugin"
             api_key: "${OPENAI_API_KEY}"
@@ -82,14 +88,29 @@ inference:
             temperature: 0.7
             system_prompt: "你是一个友善的数字人助手。"
     tts:
-        default: "openai"
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3-tts-flash-realtime"
+            voice: "Momo"
+            sample_rate: 24000
+            target_sample_rate: 16000
         openai:
             plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
             api_key: "${OPENAI_API_KEY}"
             model: "tts-1"
             voice: "nova"
     asr:
-        default: "whisper"
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.asr.qwen_asr_plugin.QwenASRPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3-asr-flash-realtime"
+            language: "auto"
+            sample_rate: 16000
+            vad_threshold: 0.5
+            vad_silence_duration_ms: 600
         whisper:
             plugin_class: "inference.plugins.asr.whisper_plugin.WhisperASRPlugin"
             model_size: "base"

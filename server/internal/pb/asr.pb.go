@@ -21,6 +21,148 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ASRConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Language      string                 `protobuf:"bytes,2,opt,name=language,proto3" json:"language,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ASRConfig) Reset() {
+	*x = ASRConfig{}
+	mi := &file_asr_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ASRConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ASRConfig) ProtoMessage() {}
+
+func (x *ASRConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_asr_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ASRConfig.ProtoReflect.Descriptor instead.
+func (*ASRConfig) Descriptor() ([]byte, []int) {
+	return file_asr_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ASRConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *ASRConfig) GetLanguage() string {
+	if x != nil {
+		return x.Language
+	}
+	return ""
+}
+
+func (x *ASRConfig) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type ASRInput struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Input:
+	//
+	//	*ASRInput_Config
+	//	*ASRInput_Audio
+	Input         isASRInput_Input `protobuf_oneof:"input"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ASRInput) Reset() {
+	*x = ASRInput{}
+	mi := &file_asr_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ASRInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ASRInput) ProtoMessage() {}
+
+func (x *ASRInput) ProtoReflect() protoreflect.Message {
+	mi := &file_asr_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ASRInput.ProtoReflect.Descriptor instead.
+func (*ASRInput) Descriptor() ([]byte, []int) {
+	return file_asr_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ASRInput) GetInput() isASRInput_Input {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *ASRInput) GetConfig() *ASRConfig {
+	if x != nil {
+		if x, ok := x.Input.(*ASRInput_Config); ok {
+			return x.Config
+		}
+	}
+	return nil
+}
+
+func (x *ASRInput) GetAudio() *AudioChunk {
+	if x != nil {
+		if x, ok := x.Input.(*ASRInput_Audio); ok {
+			return x.Audio
+		}
+	}
+	return nil
+}
+
+type isASRInput_Input interface {
+	isASRInput_Input()
+}
+
+type ASRInput_Config struct {
+	Config *ASRConfig `protobuf:"bytes,1,opt,name=config,proto3,oneof"`
+}
+
+type ASRInput_Audio struct {
+	Audio *AudioChunk `protobuf:"bytes,2,opt,name=audio,proto3,oneof"`
+}
+
+func (*ASRInput_Config) isASRInput_Input() {}
+
+func (*ASRInput_Audio) isASRInput_Input() {}
+
 type TranscriptEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
@@ -33,7 +175,7 @@ type TranscriptEvent struct {
 
 func (x *TranscriptEvent) Reset() {
 	*x = TranscriptEvent{}
-	mi := &file_asr_proto_msgTypes[0]
+	mi := &file_asr_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +187,7 @@ func (x *TranscriptEvent) String() string {
 func (*TranscriptEvent) ProtoMessage() {}
 
 func (x *TranscriptEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_asr_proto_msgTypes[0]
+	mi := &file_asr_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -58,7 +200,7 @@ func (x *TranscriptEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscriptEvent.ProtoReflect.Descriptor instead.
 func (*TranscriptEvent) Descriptor() ([]byte, []int) {
-	return file_asr_proto_rawDescGZIP(), []int{0}
+	return file_asr_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *TranscriptEvent) GetText() string {
@@ -94,17 +236,26 @@ var File_asr_proto protoreflect.FileDescriptor
 const file_asr_proto_rawDesc = "" +
 	"\n" +
 	"\tasr.proto\x12\n" +
-	"cyberverse\x1a\fcommon.proto\"|\n" +
+	"cyberverse\x1a\fcommon.proto\"b\n" +
+	"\tASRConfig\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x1a\n" +
+	"\blanguage\x18\x02 \x01(\tR\blanguage\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"t\n" +
+	"\bASRInput\x12/\n" +
+	"\x06config\x18\x01 \x01(\v2\x15.cyberverse.ASRConfigH\x00R\x06config\x12.\n" +
+	"\x05audio\x18\x02 \x01(\v2\x16.cyberverse.AudioChunkH\x00R\x05audioB\a\n" +
+	"\x05input\"|\n" +
 	"\x0fTranscriptEvent\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x19\n" +
 	"\bis_final\x18\x02 \x01(\bR\aisFinal\x12\x1a\n" +
 	"\blanguage\x18\x03 \x01(\tR\blanguage\x12\x1e\n" +
 	"\n" +
 	"confidence\x18\x04 \x01(\x02R\n" +
-	"confidence2Y\n" +
+	"confidence2W\n" +
 	"\n" +
-	"ASRService\x12K\n" +
-	"\x10TranscribeStream\x12\x16.cyberverse.AudioChunk\x1a\x1b.cyberverse.TranscriptEvent(\x010\x01B*Z(github.com/cyberverse/server/internal/pbb\x06proto3"
+	"ASRService\x12I\n" +
+	"\x10TranscribeStream\x12\x14.cyberverse.ASRInput\x1a\x1b.cyberverse.TranscriptEvent(\x010\x01B*Z(github.com/cyberverse/server/internal/pbb\x06proto3"
 
 var (
 	file_asr_proto_rawDescOnce sync.Once
@@ -118,19 +269,23 @@ func file_asr_proto_rawDescGZIP() []byte {
 	return file_asr_proto_rawDescData
 }
 
-var file_asr_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_asr_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_asr_proto_goTypes = []any{
-	(*TranscriptEvent)(nil), // 0: cyberverse.TranscriptEvent
-	(*AudioChunk)(nil),      // 1: cyberverse.AudioChunk
+	(*ASRConfig)(nil),       // 0: cyberverse.ASRConfig
+	(*ASRInput)(nil),        // 1: cyberverse.ASRInput
+	(*TranscriptEvent)(nil), // 2: cyberverse.TranscriptEvent
+	(*AudioChunk)(nil),      // 3: cyberverse.AudioChunk
 }
 var file_asr_proto_depIdxs = []int32{
-	1, // 0: cyberverse.ASRService.TranscribeStream:input_type -> cyberverse.AudioChunk
-	0, // 1: cyberverse.ASRService.TranscribeStream:output_type -> cyberverse.TranscriptEvent
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0, // 0: cyberverse.ASRInput.config:type_name -> cyberverse.ASRConfig
+	3, // 1: cyberverse.ASRInput.audio:type_name -> cyberverse.AudioChunk
+	1, // 2: cyberverse.ASRService.TranscribeStream:input_type -> cyberverse.ASRInput
+	2, // 3: cyberverse.ASRService.TranscribeStream:output_type -> cyberverse.TranscriptEvent
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_asr_proto_init() }
@@ -139,13 +294,17 @@ func file_asr_proto_init() {
 		return
 	}
 	file_common_proto_init()
+	file_asr_proto_msgTypes[1].OneofWrappers = []any{
+		(*ASRInput_Config)(nil),
+		(*ASRInput_Audio)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_asr_proto_rawDesc), len(file_asr_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

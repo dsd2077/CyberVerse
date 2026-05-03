@@ -1,9 +1,10 @@
 import logging
+import os
 from typing import AsyncIterator
 
 import numpy as np
 
-from inference.core.types import AudioChunk, PluginConfig
+from inference.core.types import AudioChunk, PluginConfig, TTSRequestConfig
 from inference.plugins.tts.base import AudioRechunker, TTSPlugin
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,11 @@ class OpenAITTSPlugin(TTSPlugin):
     async def initialize(self, config: PluginConfig) -> None:
         from openai import AsyncOpenAI
 
-        self.client = AsyncOpenAI(api_key=config.params.get("api_key"))
+        client_kwargs = {"api_key": config.params.get("api_key")}
+        base_url = os.environ.get("OPENAI_BASE_URL") or config.params.get("base_url")
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**client_kwargs)
         self.voice = config.params.get("voice", "nova")
         self.model = config.params.get("model", "tts-1")
         self.rechunker = AudioRechunker(
@@ -31,8 +36,15 @@ class OpenAITTSPlugin(TTSPlugin):
         )
 
     async def synthesize_stream(
-        self, text_stream: AsyncIterator[str]
+        self,
+        text_stream: AsyncIterator[str],
+        request_config: TTSRequestConfig | None = None,
     ) -> AsyncIterator[AudioChunk]:
+        voice = (request_config.voice if request_config else "") or self.voice
+        rechunker = AudioRechunker(
+            chunk_samples=self.rechunker.chunk_samples,
+            sample_rate=self.rechunker.sample_rate,
+        )
         async for sentence in text_stream:
             if not sentence.strip():
                 continue
@@ -40,7 +52,7 @@ class OpenAITTSPlugin(TTSPlugin):
             try:
                 response = await self.client.audio.speech.create(
                     model=self.model,
-                    voice=self.voice,
+                    voice=voice,
                     input=sentence,
                     response_format="pcm",
                 )
@@ -56,11 +68,11 @@ class OpenAITTSPlugin(TTSPlugin):
             if self._openai_sample_rate != 16000:
                 audio_np = self._resample(audio_np, self._openai_sample_rate, 16000)
 
-            chunks = self.rechunker.feed(audio_np)
+            chunks = rechunker.feed(audio_np)
             for chunk in chunks:
                 yield chunk
 
-        final_chunk = self.rechunker.flush()
+        final_chunk = rechunker.flush()
         if final_chunk:
             yield final_chunk
 

@@ -9,7 +9,7 @@ import (
 
 // TranscribeStream opens a bidirectional stream: sends audio chunks,
 // receives transcript events.
-func (c *Client) TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error) {
+func (c *Client) TranscribeStream(ctx context.Context, audioCh <-chan []byte, config ASRConfig) (<-chan *pb.TranscriptEvent, <-chan error) {
 	transcriptCh := make(chan *pb.TranscriptEvent, 8)
 	errCh := make(chan error, 1)
 
@@ -27,6 +27,18 @@ func (c *Client) TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<
 		sendDone := make(chan error, 1)
 		go func() {
 			defer func() { _ = stream.CloseSend() }()
+			if err := stream.Send(&pb.ASRInput{
+				Input: &pb.ASRInput_Config{
+					Config: &pb.ASRConfig{
+						Provider:  config.Provider,
+						Language:  config.Language,
+						SessionId: config.SessionID,
+					},
+				},
+			}); err != nil {
+				sendDone <- err
+				return
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -37,11 +49,15 @@ func (c *Client) TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<
 						sendDone <- nil
 						return
 					}
-					err := stream.Send(&pb.AudioChunk{
-						Data:       data,
-						SampleRate: 16000,
-						Channels:   1,
-						Format:     "float32",
+					err := stream.Send(&pb.ASRInput{
+						Input: &pb.ASRInput_Audio{
+							Audio: &pb.AudioChunk{
+								Data:       data,
+								SampleRate: 16000,
+								Channels:   1,
+								Format:     "pcm_s16le",
+							},
+						},
 					})
 					if err != nil {
 						sendDone <- err

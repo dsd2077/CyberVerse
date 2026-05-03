@@ -36,6 +36,7 @@ warnings.filterwarnings(
 )
 
 _PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "voice_llm")
+_INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr"}
 
 
 def _configure_process_logging() -> None:
@@ -107,26 +108,39 @@ class InferenceServer:
                     if self.is_primary:
                         logger.warning("Plugin %s not available: %s", full_name, e)
 
-    async def _initialize_default_plugins(self) -> None:
-        """Initialize the default plugin for each category."""
+    async def _initialize_configured_plugins(self) -> None:
+        """Initialize configured plugins.
+
+        LLM/ASR/TTS are lightweight component plugins and can be selected per
+        request, so initialize every configured entry. Avatar and VoiceLLM stay
+        default-only to avoid extra model/GPU/realtime connection cost.
+        """
         for category in _PLUGIN_CATEGORIES:
             section = self.config.get("inference", {}).get(category, {})
-            default_name = section.get("default")
-            if not default_name:
-                continue
-            full_name = f"{category}.{default_name}"
-            if full_name not in self.registry.registered_names:
-                continue
-            conf = section.get(default_name, {})
-            plugin_config = self._build_plugin_config(category, full_name, conf)
-            try:
-                await self.registry.initialize(full_name, plugin_config)
-                if self.is_primary:
-                    logger.info("Initialized default plugin: %s", full_name)
-                if category == "avatar" and self.is_primary:
-                    logger.info("Active avatar model initialized: %s", default_name)
-            except Exception:
-                logger.exception("Failed to initialize plugin: %s", full_name)
+            if category in _INITIALIZE_ALL_CATEGORIES:
+                names = [
+                    name
+                    for name, conf in section.items()
+                    if name != "default" and isinstance(conf, dict)
+                ]
+            else:
+                default_name = section.get("default")
+                names = [default_name] if default_name else []
+
+            for name in names:
+                full_name = f"{category}.{name}"
+                if full_name not in self.registry.registered_names:
+                    continue
+                conf = section.get(name, {})
+                plugin_config = self._build_plugin_config(category, full_name, conf)
+                try:
+                    await self.registry.initialize(full_name, plugin_config)
+                    if self.is_primary:
+                        logger.info("Initialized plugin: %s", full_name)
+                    if category == "avatar" and self.is_primary:
+                        logger.info("Active avatar model initialized: %s", name)
+                except Exception:
+                    logger.exception("Failed to initialize plugin: %s", full_name)
 
     def _register_grpc_services(self) -> None:
         avatar_pb2_grpc.add_AvatarServiceServicer_to_server(
@@ -152,7 +166,7 @@ class InferenceServer:
     async def start(self) -> None:
         self._register_plugins()
         self._register_grpc_services()
-        await self._initialize_default_plugins()
+        await self._initialize_configured_plugins()
 
         # torchrun multi-process mode: only rank0 binds gRPC; other ranks stay
         # alive as distributed workers for FlashHead model parallel inference.

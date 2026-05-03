@@ -17,6 +17,21 @@ type LLMConfig struct {
 	Model       string
 	Temperature float32
 	MaxTokens   int32
+	Provider    string
+}
+
+type TTSConfig struct {
+	Provider      string
+	Voice         string
+	SpeakingStyle string
+	Language      string
+	SessionID     string
+}
+
+type ASRConfig struct {
+	Provider  string
+	Language  string
+	SessionID string
 }
 
 // VoiceLLMSessionConfig holds per-session character config for VoiceLLM.
@@ -58,10 +73,10 @@ type InferenceService interface {
 	GenerateLLMStream(ctx context.Context, sessionID string, messages []ChatMessage, config LLMConfig) (<-chan *pb.LLMChunk, <-chan error)
 
 	// TTS
-	SynthesizeSpeechStream(ctx context.Context, textCh <-chan string) (<-chan *pb.AudioChunk, <-chan error)
+	SynthesizeSpeechStream(ctx context.Context, textCh <-chan string, config TTSConfig) (<-chan *pb.AudioChunk, <-chan error)
 
 	// ASR
-	TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error)
+	TranscribeStream(ctx context.Context, audioCh <-chan []byte, config ASRConfig) (<-chan *pb.TranscriptEvent, <-chan error)
 
 	// VoiceLLM
 	CheckVoice(ctx context.Context, config VoiceLLMSessionConfig) (string, error)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,8 @@ if TYPE_CHECKING:
     from inference.core.types import PluginConfig, VoiceLLMSessionConfig
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DOUBAO_WS_URL = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
 
 # SC2.0 official voices: Chinese display name -> speaker_id
 SC20_VOICES: dict[str, str] = {
@@ -41,7 +44,7 @@ class DoubaoSessionConfig:
 
     access_token: str
     app_id: str
-    ws_url: str = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
+    ws_url: str = DEFAULT_DOUBAO_WS_URL
     voice_type: str = "温柔文雅"
     bot_name: str = "豆包"
     system_prompt: str = ""
@@ -72,18 +75,22 @@ class DoubaoSessionConfig:
             DoubaoSessionConfig instance
 
         Raises:
-            ValueError: If required fields (access_token, ws_url) are missing or empty
+            ValueError: If required fields are missing or explicitly empty
         """
         # Extract token - prefer access_token, fallback to api_key
         token = config.params.get("access_token", "") or config.params.get("api_key", "")
         app_id = config.params.get("app_id", "")
-        ws_url = config.params.get("ws_url", "wss://openspeech.bytedance.com/api/v3/realtime/dialogue")
+        if "ws_url" in config.params and not config.params.get("ws_url"):
+            raise ValueError("ws_url is required but not provided")
+        ws_url = (
+            config.params.get("ws_url")
+            or os.environ.get("DOUBAO_WS_URL")
+            or DEFAULT_DOUBAO_WS_URL
+        )
 
         # Validate required fields
         if not token:
             raise ValueError("access_token (or api_key) is required but not provided")
-        if not ws_url:
-            raise ValueError("ws_url is required but not provided")
 
         # Extract other config values with defaults
         voice_type = config.params.get("voice_type", "温柔文雅")

@@ -41,6 +41,10 @@ def test_load_config_basic():
         "fps",
         "audio_cfg",
     }
+    assert "ws_url" not in config["inference"]["voice_llm"]["doubao"]
+    assert "base_url" not in config["inference"]["llm"]["qwen"]
+    assert "ws_url" not in config["inference"]["tts"]["qwen"]
+    assert "ws_url" not in config["inference"]["asr"]["qwen"]
 
 
 def test_env_var_substitution():

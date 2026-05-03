@@ -45,6 +45,22 @@ class LLMResponseChunk:
 
 
 @dataclass
+class ASRRequestConfig:
+    provider: str = ""
+    language: str = ""
+    session_id: str = ""
+
+
+@dataclass
+class TTSRequestConfig:
+    provider: str = ""
+    voice: str = ""
+    speaking_style: str = ""
+    language: str = ""
+    session_id: str = ""
+
+
+@dataclass
 class VoiceLLMOutputEvent:
     audio: AudioChunk | None = None
     transcript: str = ""

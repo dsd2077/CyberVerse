@@ -67,8 +67,14 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	mode := orchestrator.ModeVoiceLLM
-	if body.Mode == "standard" {
+	modeName := body.Mode
+	if modeName == "" && r.cfg != nil {
+		modeName = r.cfg.Pipeline.DefaultMode
+	}
+	mode := orchestrator.ModeStandard
+	if modeName == "voice_llm" {
+		mode = orchestrator.ModeVoiceLLM
+	} else if modeName == "standard" {
 		mode = orchestrator.ModeStandard
 	}
 
@@ -190,8 +196,9 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		resp.Warnings = append(resp.Warnings, warnings...)
 		if err != nil {
 			log.Printf("Failed to setup session %s: %v", sessionID, err)
-		} else if mode == orchestrator.ModeVoiceLLM {
-			// Start listening for user audio in VoiceLLM mode
+		} else {
+			// Both VoiceLLM and standard sessions consume mic audio. The
+			// orchestrator dispatches to the correct pipeline by session mode.
 			go func() {
 				if err := r.orch.HandleAudioStream(context.Background(), sessionID, peer.SubscribeUserAudio()); err != nil {
 					log.Printf("Failed to start audio stream for session %s: %v", sessionID, err)

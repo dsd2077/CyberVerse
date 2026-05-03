@@ -7,6 +7,7 @@ import pytest
 
 from inference.core.registry import PluginRegistry
 from inference.core.types import AudioChunk, PluginConfig, VideoChunk, LLMResponseChunk, TranscriptEvent
+from inference.generated import asr_pb2, common_pb2, llm_pb2, tts_pb2
 from inference.plugins.avatar.base import AvatarPlugin
 from inference.plugins.llm.base import LLMPlugin
 from inference.plugins.tts.base import TTSPlugin
@@ -73,8 +74,10 @@ class MockTTSPlugin(TTSPlugin):
     async def shutdown(self):
         pass
 
-    async def synthesize_stream(self, text_stream):
+    async def synthesize_stream(self, text_stream, request_config=None):
+        self.last_request_config = request_config
         async for text in text_stream:
+            self.last_text = text
             audio = np.zeros(16000, dtype=np.float32)
             yield AudioChunk(data=audio.tobytes(), sample_rate=16000, is_final=False)
 
@@ -88,8 +91,10 @@ class MockASRPlugin(ASRPlugin):
     async def shutdown(self):
         pass
 
-    async def transcribe_stream(self, audio_stream):
-        async for _ in audio_stream:
+    async def transcribe_stream(self, audio_stream, request_config=None):
+        self.last_request_config = request_config
+        async for chunk in audio_stream:
+            self.last_audio_chunk = chunk
             yield TranscriptEvent(text="hello", is_final=True, confidence=0.95)
 
 
@@ -234,11 +239,11 @@ async def test_avatar_generate_stream_sends_flashhead_trace_metadata(registry):
 @pytest.mark.asyncio
 async def test_llm_generate_stream(registry):
     svc = LLMGRPCService(registry)
-    request = MagicMock()
-    msg = MagicMock()
-    msg.role = "user"
-    msg.content = "Hi"
-    request.messages = [msg]
+    request = llm_pb2.LLMRequest(
+        session_id="session-1",
+        messages=[llm_pb2.ChatMessage(role="user", content="Hi")],
+        config=llm_pb2.LLMConfig(provider="mock"),
+    )
     context = MagicMock()
 
     results = []
@@ -258,9 +263,14 @@ async def test_tts_synthesize_stream(registry):
     context = MagicMock()
 
     async def text_stream():
-        chunk = MagicMock()
-        chunk.text = "Hello world"
-        yield chunk
+        yield tts_pb2.TextChunk(
+            config=tts_pb2.TTSConfig(
+                provider="mock",
+                voice="nova",
+                session_id="session-1",
+            )
+        )
+        yield tts_pb2.TextChunk(text="Hello world")
 
     results = []
     async for ac in svc.SynthesizeStream(text_stream(), context):
@@ -268,6 +278,11 @@ async def test_tts_synthesize_stream(registry):
 
     assert len(results) == 1
     assert results[0].sample_rate == 16000
+    plugin = registry.get("tts.mock")
+    assert plugin.last_text == "Hello world"
+    assert plugin.last_request_config.provider == "mock"
+    assert plugin.last_request_config.voice == "nova"
+    assert plugin.last_request_config.session_id == "session-1"
 
 
 # --- ASR Service Tests ---
@@ -278,9 +293,21 @@ async def test_asr_transcribe_stream(registry):
     context = MagicMock()
 
     async def audio_stream():
-        chunk = MagicMock()
-        chunk.data = b"\x00" * 3200
-        yield chunk
+        yield asr_pb2.ASRInput(
+            config=asr_pb2.ASRConfig(
+                provider="mock",
+                language="zh",
+                session_id="session-1",
+            )
+        )
+        yield asr_pb2.ASRInput(
+            audio=common_pb2.AudioChunk(
+                data=b"\x00" * 3200,
+                sample_rate=16000,
+                channels=1,
+                format="pcm_s16le",
+            )
+        )
 
     results = []
     async for event in svc.TranscribeStream(audio_stream(), context):
@@ -289,3 +316,8 @@ async def test_asr_transcribe_stream(registry):
     assert len(results) == 1
     assert results[0].text == "hello"
     assert results[0].is_final is True
+    plugin = registry.get("asr.mock")
+    assert plugin.last_audio_chunk == b"\x00" * 3200
+    assert plugin.last_request_config.provider == "mock"
+    assert plugin.last_request_config.language == "zh"
+    assert plugin.last_request_config.session_id == "session-1"

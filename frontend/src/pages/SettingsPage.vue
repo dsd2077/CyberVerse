@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
-import CvSelect from '../components/CvSelect.vue'
 import { useSettingsStore } from '../stores/settings'
 import type { Settings } from '../types'
 
@@ -12,14 +11,36 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<string | null>(null)
 
-const form = ref<Settings>({
-  doubao: { access_token: '', app_id: '', ws_url: 'wss://openspeech.bytedance.com/api/v3/realtime/dialogue' },
-  livekit: { url: '', api_key: '', api_secret: '' },
-  llm: { api_key: '', model: 'gpt-4o', temperature: 0.7 },
-  tts: { model: 'tts-1', voice: 'nova' },
-  asr: { model_size: 'base', language: 'auto', device: 'cpu' },
-  inference: { grpc_addr: 'localhost:50051' },
-})
+type LegacySettings = Partial<Settings> & {
+  llm?: { api_key?: string }
+}
+
+function defaultSettings(): Settings {
+  return {
+    doubao: { access_token: '', app_id: '' },
+    livekit: { url: '', api_key: '', api_secret: '' },
+    model_providers: {
+      dashscope_api_key: '',
+      openai_api_key: '',
+    },
+    inference: { grpc_addr: 'localhost:50051' },
+  }
+}
+
+function normalizeSettings(data?: LegacySettings): Settings {
+  const defaults = defaultSettings()
+  return {
+    doubao: { ...defaults.doubao, ...data?.doubao },
+    livekit: { ...defaults.livekit, ...data?.livekit },
+    model_providers: {
+      dashscope_api_key: data?.model_providers?.dashscope_api_key || '',
+      openai_api_key: data?.model_providers?.openai_api_key || data?.llm?.api_key || '',
+    },
+    inference: { ...defaults.inference, ...data?.inference },
+  }
+}
+
+const form = ref<Settings>(defaultSettings())
 
 // Password visibility toggles
 const showTokens = ref<Record<string, boolean>>({})
@@ -31,7 +52,7 @@ function toggleShow(key: string) {
 onMounted(async () => {
   await store.fetch().catch(() => {})
   if (store.settings) {
-    form.value = JSON.parse(JSON.stringify(store.settings))
+    form.value = normalizeSettings(JSON.parse(JSON.stringify(store.settings)))
   }
 })
 
@@ -67,14 +88,14 @@ async function test() {
 
     <main class="max-w-[800px] mx-auto px-8 py-10">
       <h1 class="text-xl font-semibold text-cv-text mb-1">系统设置</h1>
-      <p class="text-[13px] text-cv-text-muted mb-8">配置服务凭证和默认模型参数，所有角色共享</p>
+      <p class="text-[13px] text-cv-text-muted mb-8">配置服务凭证，角色可在组件配置中选择已启用的模型组件</p>
 
       <div class="flex flex-col gap-6">
         <!-- Doubao -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">语音对话服务 (Doubao)</h3>
+          <h3 class="text-sm font-semibold text-cv-text mb-4">豆包语音</h3>
           <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">Access Token <span class="text-cv-danger">*</span></span>
+            <span class="text-[13px] text-cv-text-secondary">Access Token</span>
             <div class="relative mt-1.5">
               <input v-model="form.doubao.access_token" :type="showTokens['doubao_token'] ? 'text' : 'password'"
                      class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
@@ -84,12 +105,8 @@ async function test() {
             </div>
           </label>
           <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">App ID <span class="text-cv-danger">*</span></span>
+            <span class="text-[13px] text-cv-text-secondary">App ID</span>
             <input v-model="form.doubao.app_id" class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
-          </label>
-          <label class="block">
-            <span class="text-[13px] text-cv-text-secondary">WebSocket URL</span>
-            <input v-model="form.doubao.ws_url" class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
           </label>
         </section>
 
@@ -97,17 +114,17 @@ async function test() {
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
           <h3 class="text-sm font-semibold text-cv-text mb-4">LiveKit (WebRTC)</h3>
           <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">URL <span class="text-cv-danger">*</span></span>
+            <span class="text-[13px] text-cv-text-secondary">URL</span>
             <input v-model="form.livekit.url" placeholder="wss://your-livekit-server.com"
                    class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all" />
           </label>
           <div class="grid grid-cols-2 gap-4">
             <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">API Key <span class="text-cv-danger">*</span></span>
+              <span class="text-[13px] text-cv-text-secondary">API Key</span>
               <input v-model="form.livekit.api_key" class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
             </label>
             <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">API Secret <span class="text-cv-danger">*</span></span>
+              <span class="text-[13px] text-cv-text-secondary">API Secret</span>
               <div class="relative mt-1.5">
                 <input v-model="form.livekit.api_secret" :type="showTokens['lk_secret'] ? 'text' : 'password'"
                        class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
@@ -119,89 +136,42 @@ async function test() {
           </div>
         </section>
 
-        <!-- LLM -->
+        <!-- Qwen / DashScope -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">LLM 服务 (OpenAI)</h3>
-          <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">API Key <span class="text-cv-danger">*</span></span>
+          <h3 class="text-sm font-semibold text-cv-text mb-4">Qwen / DashScope</h3>
+          <label class="block">
+            <span class="text-[13px] text-cv-text-secondary">API Key</span>
             <div class="relative mt-1.5">
-              <input v-model="form.llm.api_key" :type="showTokens['llm_key'] ? 'text' : 'password'"
-                     class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
-              <button @click="toggleShow('llm_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
-                {{ showTokens['llm_key'] ? '隐藏' : '显示' }}
+              <input
+                v-model="form.model_providers.dashscope_api_key"
+                :type="showTokens['dashscope_key'] ? 'text' : 'password'"
+                placeholder="sk-..."
+                class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all"
+              />
+              <button @click="toggleShow('dashscope_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
+                {{ showTokens['dashscope_key'] ? '隐藏' : '显示' }}
               </button>
             </div>
           </label>
-          <div class="grid grid-cols-2 gap-4">
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">默认模型</span>
-              <CvSelect
-                v-model="form.llm.model"
-                :options="['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo']"
-                class="mt-1.5"
-              />
-            </label>
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">Temperature</span>
-              <input v-model.number="form.llm.temperature" type="number" step="0.1" min="0" max="2"
-                     class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
-            </label>
-          </div>
         </section>
 
-        <!-- TTS -->
+        <!-- OpenAI -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-1">TTS 服务 (OpenAI)</h3>
-          <p class="text-[13px] text-cv-text-muted mb-4">共用 LLM 的 OpenAI API Key</p>
-          <div class="grid grid-cols-2 gap-4">
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">模型</span>
-              <CvSelect
-                v-model="form.tts.model"
-                :options="['tts-1', 'tts-1-hd']"
-                class="mt-1.5"
+          <h3 class="text-sm font-semibold text-cv-text mb-4">OpenAI</h3>
+          <label class="block">
+            <span class="text-[13px] text-cv-text-secondary">API Key</span>
+            <div class="relative mt-1.5">
+              <input
+                v-model="form.model_providers.openai_api_key"
+                :type="showTokens['openai_key'] ? 'text' : 'password'"
+                placeholder="sk-..."
+                class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all"
               />
-            </label>
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">默认音色</span>
-              <CvSelect
-                v-model="form.tts.voice"
-                :options="['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']"
-                class="mt-1.5"
-              />
-            </label>
-          </div>
-        </section>
-
-        <!-- ASR -->
-        <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">ASR 服务 (Whisper)</h3>
-          <div class="grid grid-cols-3 gap-4">
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">模型大小</span>
-              <CvSelect
-                v-model="form.asr.model_size"
-                :options="['tiny', 'base', 'small', 'medium', 'large-v3']"
-                class="mt-1.5"
-              />
-            </label>
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">语言</span>
-              <CvSelect
-                v-model="form.asr.language"
-                :options="['auto', 'zh', 'en', 'ja']"
-                class="mt-1.5"
-              />
-            </label>
-            <label class="block">
-              <span class="text-[13px] text-cv-text-secondary">设备</span>
-              <CvSelect
-                v-model="form.asr.device"
-                :options="['cpu', 'cuda']"
-                class="mt-1.5"
-              />
-            </label>
-          </div>
+              <button @click="toggleShow('openai_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
+                {{ showTokens['openai_key'] ? '隐藏' : '显示' }}
+              </button>
+            </div>
+          </label>
         </section>
 
         <!-- Inference -->

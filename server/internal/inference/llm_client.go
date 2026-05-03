@@ -31,6 +31,7 @@ func (c *Client) GenerateLLMStream(ctx context.Context, sessionID string, messag
 				Model:       config.Model,
 				Temperature: config.Temperature,
 				MaxTokens:   config.MaxTokens,
+				Provider:    config.Provider,
 			},
 		})
 		if err != nil {

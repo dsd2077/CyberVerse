@@ -54,7 +54,7 @@ func (f *idleVideoInferenceStub) GenerateLLMStream(context.Context, string, []in
 	return ch, errCh
 }
 
-func (f *idleVideoInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string) (<-chan *pb.AudioChunk, <-chan error) {
+func (f *idleVideoInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	ch := make(chan *pb.AudioChunk)
 	errCh := make(chan error)
 	close(ch)
@@ -62,7 +62,7 @@ func (f *idleVideoInferenceStub) SynthesizeSpeechStream(context.Context, <-chan 
 	return ch, errCh
 }
 
-func (f *idleVideoInferenceStub) TranscribeStream(context.Context, <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error) {
+func (f *idleVideoInferenceStub) TranscribeStream(context.Context, <-chan []byte, inference.ASRConfig) (<-chan *pb.TranscriptEvent, <-chan error) {
 	ch := make(chan *pb.TranscriptEvent)
 	errCh := make(chan error)
 	close(ch)

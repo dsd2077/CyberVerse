@@ -15,8 +15,10 @@ export interface Character {
   idle_video_url?: string
   idle_video_urls?: string[]
   use_face_crop: boolean
+  mode: 'standard' | 'voice_llm'
   voice_provider: string
   voice_type: string
+  components: CharacterComponents
   speaking_style: string
   personality: string
   welcome_message: string
@@ -31,11 +33,30 @@ export interface Character {
 
 export type CharacterForm = Omit<Character, 'id' | 'created_at' | 'updated_at' | 'images' | 'active_image'>
 
+export interface CharacterComponents {
+  llm: string
+  asr: string
+  tts: string
+}
+
+export interface ComponentOption {
+  id: string
+  name: string
+  model: string
+  default: boolean
+  available: boolean
+}
+
+export interface ComponentsResponse {
+  llm: ComponentOption[]
+  asr: ComponentOption[]
+  tts: ComponentOption[]
+}
+
 // Settings
 export interface DoubaoSettings {
   access_token: string
   app_id: string
-  ws_url: string
 }
 
 export interface LiveKitSettings {
@@ -44,21 +65,9 @@ export interface LiveKitSettings {
   api_secret: string
 }
 
-export interface LLMSettings {
-  api_key: string
-  model: string
-  temperature: number
-}
-
-export interface TTSSettings {
-  model: string
-  voice: string
-}
-
-export interface ASRSettings {
-  model_size: string
-  language: string
-  device: string
+export interface ModelProviderSettings {
+  dashscope_api_key: string
+  openai_api_key: string
 }
 
 export interface InferenceSettings {
@@ -68,9 +77,7 @@ export interface InferenceSettings {
 export interface Settings {
   doubao: DoubaoSettings
   livekit: LiveKitSettings
-  llm: LLMSettings
-  tts: TTSSettings
-  asr: ASRSettings
+  model_providers: ModelProviderSettings
   inference: InferenceSettings
 }
 
@@ -129,6 +136,58 @@ export interface VoiceOption {
   value: string
 }
 
+// Aliyun Qwen TTS system voices — values match the voice request parameter.
+export const QWEN_TTS_VOICE_OPTIONS: VoiceOption[] = [
+  { label: '芊悦 (Cherry)', value: 'Cherry' },
+  { label: '苏瑶 (Serena)', value: 'Serena' },
+  { label: '晨煦 (Ethan)', value: 'Ethan' },
+  { label: '千雪 (Chelsie)', value: 'Chelsie' },
+  { label: '茉兔 (Momo)', value: 'Momo' },
+  { label: '十三 (Vivian)', value: 'Vivian' },
+  { label: '月白 (Moon)', value: 'Moon' },
+  { label: '四月 (Maia)', value: 'Maia' },
+  { label: '凯 (Kai)', value: 'Kai' },
+  { label: '不吃鱼 (Nofish)', value: 'Nofish' },
+  { label: '萌宝 (Bella)', value: 'Bella' },
+  { label: '詹妮弗 (Jennifer)', value: 'Jennifer' },
+  { label: '甜茶 (Ryan)', value: 'Ryan' },
+  { label: '卡捷琳娜 (Katerina)', value: 'Katerina' },
+  { label: '艾登 (Aiden)', value: 'Aiden' },
+  { label: '沧明子 (Eldric Sage)', value: 'Eldric Sage' },
+  { label: '乖小妹 (Mia)', value: 'Mia' },
+  { label: '沙小弥 (Mochi)', value: 'Mochi' },
+  { label: '燕铮莺 (Bellona)', value: 'Bellona' },
+  { label: '田叔 (Vincent)', value: 'Vincent' },
+  { label: '萌小姬 (Bunny)', value: 'Bunny' },
+  { label: '阿闻 (Neil)', value: 'Neil' },
+  { label: '墨讲师 (Elias)', value: 'Elias' },
+  { label: '徐大爷 (Arthur)', value: 'Arthur' },
+  { label: '邻家妹妹 (Nini)', value: 'Nini' },
+  { label: '小婉 (Seren)', value: 'Seren' },
+  { label: '顽屁小孩 (Pip)', value: 'Pip' },
+  { label: '少女阿月 (Stella)', value: 'Stella' },
+  { label: '博德加 (Bodega)', value: 'Bodega' },
+  { label: '索尼莎 (Sonrisa)', value: 'Sonrisa' },
+  { label: '阿列克 (Alek)', value: 'Alek' },
+  { label: '多尔切 (Dolce)', value: 'Dolce' },
+  { label: '素熙 (Sohee)', value: 'Sohee' },
+  { label: '小野杏 (Ono Anna)', value: 'Ono Anna' },
+  { label: '莱恩 (Lenn)', value: 'Lenn' },
+  { label: '埃米尔安 (Emilien)', value: 'Emilien' },
+  { label: '安德雷 (Andre)', value: 'Andre' },
+  { label: '拉迪奥·戈尔 (Radio Gol)', value: 'Radio Gol' },
+  { label: '上海-阿珍 (Jada)', value: 'Jada' },
+  { label: '北京-晓东 (Dylan)', value: 'Dylan' },
+  { label: '南京-老李 (Li)', value: 'Li' },
+  { label: '陕西-秦川 (Marcus)', value: 'Marcus' },
+  { label: '闽南-阿杰 (Roy)', value: 'Roy' },
+  { label: '天津-李彼得 (Peter)', value: 'Peter' },
+  { label: '四川-晴儿 (Sunny)', value: 'Sunny' },
+  { label: '四川-程川 (Eric)', value: 'Eric' },
+  { label: '粤语-阿强 (Rocky)', value: 'Rocky' },
+  { label: '粤语-阿清 (Kiki)', value: 'Kiki' },
+]
+
 // SC2.0 official voices — values match SC20_VOICES keys in doubao_config.py
 export const VOICE_OPTIONS: VoiceOption[] = [
   // Female
@@ -154,4 +213,17 @@ export const VOICE_OPTIONS: VoiceOption[] = [
   { label: '醋精男友', value: '醋精男友' },
   { label: '风发少年', value: '风发少年' },
   { label: '腹黑公子', value: '腹黑公子' },
+]
+
+export const OPENAI_VOICE_OPTIONS: VoiceOption[] = [
+  { label: 'alloy', value: 'alloy' },
+  { label: 'ash', value: 'ash' },
+  { label: 'ballad', value: 'ballad' },
+  { label: 'coral', value: 'coral' },
+  { label: 'echo', value: 'echo' },
+  { label: 'fable', value: 'fable' },
+  { label: 'nova', value: 'nova' },
+  { label: 'onyx', value: 'onyx' },
+  { label: 'sage', value: 'sage' },
+  { label: 'shimmer', value: 'shimmer' },
 ]

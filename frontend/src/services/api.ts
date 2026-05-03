@@ -1,4 +1,4 @@
-import type { AvatarModelInfo, Character, CharacterForm, ImageInfo, Settings, LaunchConfig, LaunchConfigUpdate } from '../types'
+import type { AvatarModelInfo, Character, CharacterForm, ComponentsResponse, ImageInfo, Settings, LaunchConfig, LaunchConfigUpdate } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
 
@@ -52,11 +52,15 @@ export interface HealthResponse {
   error?: string
 }
 
-export async function createSession(characterId: string, mode: string = 'voice_llm'): Promise<CreateSessionResponse> {
+export async function createSession(characterId: string, mode: string = 'standard'): Promise<CreateSessionResponse> {
   return request('/sessions', {
     method: 'POST',
     body: JSON.stringify({ character_id: characterId, mode }),
   })
+}
+
+export async function getComponents(): Promise<ComponentsResponse> {
+  return request('/components')
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

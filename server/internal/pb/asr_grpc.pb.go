@@ -26,7 +26,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ASRServiceClient interface {
-	TranscribeStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AudioChunk, TranscriptEvent], error)
+	TranscribeStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ASRInput, TranscriptEvent], error)
 }
 
 type aSRServiceClient struct {
@@ -37,24 +37,24 @@ func NewASRServiceClient(cc grpc.ClientConnInterface) ASRServiceClient {
 	return &aSRServiceClient{cc}
 }
 
-func (c *aSRServiceClient) TranscribeStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AudioChunk, TranscriptEvent], error) {
+func (c *aSRServiceClient) TranscribeStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ASRInput, TranscriptEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &ASRService_ServiceDesc.Streams[0], ASRService_TranscribeStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[AudioChunk, TranscriptEvent]{ClientStream: stream}
+	x := &grpc.GenericClientStream[ASRInput, TranscriptEvent]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ASRService_TranscribeStreamClient = grpc.BidiStreamingClient[AudioChunk, TranscriptEvent]
+type ASRService_TranscribeStreamClient = grpc.BidiStreamingClient[ASRInput, TranscriptEvent]
 
 // ASRServiceServer is the server API for ASRService service.
 // All implementations must embed UnimplementedASRServiceServer
 // for forward compatibility.
 type ASRServiceServer interface {
-	TranscribeStream(grpc.BidiStreamingServer[AudioChunk, TranscriptEvent]) error
+	TranscribeStream(grpc.BidiStreamingServer[ASRInput, TranscriptEvent]) error
 	mustEmbedUnimplementedASRServiceServer()
 }
 
@@ -65,7 +65,7 @@ type ASRServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedASRServiceServer struct{}
 
-func (UnimplementedASRServiceServer) TranscribeStream(grpc.BidiStreamingServer[AudioChunk, TranscriptEvent]) error {
+func (UnimplementedASRServiceServer) TranscribeStream(grpc.BidiStreamingServer[ASRInput, TranscriptEvent]) error {
 	return status.Error(codes.Unimplemented, "method TranscribeStream not implemented")
 }
 func (UnimplementedASRServiceServer) mustEmbedUnimplementedASRServiceServer() {}
@@ -90,11 +90,11 @@ func RegisterASRServiceServer(s grpc.ServiceRegistrar, srv ASRServiceServer) {
 }
 
 func _ASRService_TranscribeStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(ASRServiceServer).TranscribeStream(&grpc.GenericServerStream[AudioChunk, TranscriptEvent]{ServerStream: stream})
+	return srv.(ASRServiceServer).TranscribeStream(&grpc.GenericServerStream[ASRInput, TranscriptEvent]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ASRService_TranscribeStreamServer = grpc.BidiStreamingServer[AudioChunk, TranscriptEvent]
+type ASRService_TranscribeStreamServer = grpc.BidiStreamingServer[ASRInput, TranscriptEvent]
 
 // ASRService_ServiceDesc is the grpc.ServiceDesc for ASRService service.
 // It's only intended for direct use with grpc.RegisterService,

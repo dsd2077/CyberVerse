@@ -76,14 +76,14 @@ func (f *fakeInferenceService) GenerateLLMStream(context.Context, string, []infe
 	close(errCh)
 	return ch, errCh
 }
-func (f *fakeInferenceService) SynthesizeSpeechStream(context.Context, <-chan string) (<-chan *pb.AudioChunk, <-chan error) {
+func (f *fakeInferenceService) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	ch := make(chan *pb.AudioChunk)
 	errCh := make(chan error)
 	close(ch)
 	close(errCh)
 	return ch, errCh
 }
-func (f *fakeInferenceService) TranscribeStream(context.Context, <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error) {
+func (f *fakeInferenceService) TranscribeStream(context.Context, <-chan []byte, inference.ASRConfig) (<-chan *pb.TranscriptEvent, <-chan error) {
 	ch := make(chan *pb.TranscriptEvent)
 	errCh := make(chan error)
 	close(ch)

@@ -13,6 +13,15 @@ service TTSService {
 message TextChunk {
   string text = 1;
   bool is_final = 2;
+  TTSConfig config = 3;
+}
+
+message TTSConfig {
+  string provider = 1;
+  string voice = 2;
+  string speaking_style = 3;
+  string language = 4;
+  string session_id = 5;
 }
 
 message ListVoicesRequest {}

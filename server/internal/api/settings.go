@@ -19,24 +19,29 @@ var errInferenceUnavailable = errors.New("inference service is unavailable")
 
 // SettingsResponse is the JSON shape exchanged with the frontend Settings page.
 type SettingsResponse struct {
-	Doubao    DoubaoSettings    `json:"doubao"`
-	LiveKit   LiveKitSettings   `json:"livekit"`
-	LLM       LLMSettings       `json:"llm"`
-	TTS       TTSSettings       `json:"tts"`
-	ASR       ASRSettings       `json:"asr"`
-	Inference InferenceSettings `json:"inference"`
+	Doubao         DoubaoSettings        `json:"doubao"`
+	LiveKit        LiveKitSettings       `json:"livekit"`
+	ModelProviders ModelProviderSettings `json:"model_providers"`
+	LLM            LLMSettings           `json:"llm,omitempty"`
+	TTS            TTSSettings           `json:"tts,omitempty"`
+	ASR            ASRSettings           `json:"asr,omitempty"`
+	Inference      InferenceSettings     `json:"inference"`
 }
 
 type DoubaoSettings struct {
 	AccessToken string `json:"access_token"`
 	AppID       string `json:"app_id"`
-	WsURL       string `json:"ws_url"`
 }
 
 type LiveKitSettings struct {
 	URL       string `json:"url"`
 	APIKey    string `json:"api_key"`
 	APISecret string `json:"api_secret"`
+}
+
+type ModelProviderSettings struct {
+	DashScopeAPIKey string `json:"dashscope_api_key"`
+	OpenAIAPIKey    string `json:"openai_api_key"`
 }
 
 type LLMSettings struct {
@@ -111,20 +116,16 @@ type settingsField struct {
 var settingsFields = []settingsField{
 	{"DOUBAO_ACCESS_TOKEN", func(s *SettingsResponse) string { return s.Doubao.AccessToken }},
 	{"DOUBAO_APP_ID", func(s *SettingsResponse) string { return s.Doubao.AppID }},
-	{"DOUBAO_WS_URL", func(s *SettingsResponse) string { return s.Doubao.WsURL }},
 	{"LIVEKIT_URL", func(s *SettingsResponse) string { return s.LiveKit.URL }},
 	{"LIVEKIT_API_KEY", func(s *SettingsResponse) string { return s.LiveKit.APIKey }},
 	{"LIVEKIT_API_SECRET", func(s *SettingsResponse) string { return s.LiveKit.APISecret }},
-	{"OPENAI_API_KEY", func(s *SettingsResponse) string { return s.LLM.APIKey }},
-	{"LLM_MODEL", func(s *SettingsResponse) string { return s.LLM.Model }},
-	{"LLM_TEMPERATURE", func(s *SettingsResponse) string {
-		return strconv.FormatFloat(s.LLM.Temperature, 'f', -1, 64)
+	{"DASHSCOPE_API_KEY", func(s *SettingsResponse) string { return s.ModelProviders.DashScopeAPIKey }},
+	{"OPENAI_API_KEY", func(s *SettingsResponse) string {
+		if s.ModelProviders.OpenAIAPIKey != "" {
+			return s.ModelProviders.OpenAIAPIKey
+		}
+		return s.LLM.APIKey
 	}},
-	{"TTS_MODEL", func(s *SettingsResponse) string { return s.TTS.Model }},
-	{"TTS_VOICE", func(s *SettingsResponse) string { return s.TTS.Voice }},
-	{"ASR_MODEL_SIZE", func(s *SettingsResponse) string { return s.ASR.ModelSize }},
-	{"ASR_LANGUAGE", func(s *SettingsResponse) string { return s.ASR.Language }},
-	{"ASR_DEVICE", func(s *SettingsResponse) string { return s.ASR.Device }},
 	{"GRPC_INFERENCE_ADDR", func(s *SettingsResponse) string { return s.Inference.GRPCAddr }},
 }
 
@@ -133,12 +134,15 @@ func (r *Router) handleGetSettings(w http.ResponseWriter, req *http.Request) {
 		Doubao: DoubaoSettings{
 			AccessToken: os.Getenv("DOUBAO_ACCESS_TOKEN"),
 			AppID:       os.Getenv("DOUBAO_APP_ID"),
-			WsURL:       envOrDefault("DOUBAO_WS_URL", "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"),
 		},
 		LiveKit: LiveKitSettings{
 			URL:       envOrDefault("LIVEKIT_URL", r.cfg.LiveKit.URL),
 			APIKey:    envOrDefault("LIVEKIT_API_KEY", r.cfg.LiveKit.APIKey),
 			APISecret: envOrDefault("LIVEKIT_API_SECRET", r.cfg.LiveKit.APISecret),
+		},
+		ModelProviders: ModelProviderSettings{
+			DashScopeAPIKey: os.Getenv("DASHSCOPE_API_KEY"),
+			OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
 		},
 		LLM: LLMSettings{
 			APIKey:      os.Getenv("OPENAI_API_KEY"),

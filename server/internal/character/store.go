@@ -30,8 +30,10 @@ type Character struct {
 	Description    string      `json:"description"`
 	AvatarImage    string      `json:"avatar_image"`
 	UseFaceCrop    bool        `json:"use_face_crop"`
+	Mode           string      `json:"mode"`
 	VoiceProvider  string      `json:"voice_provider"`
 	VoiceType      string      `json:"voice_type"`
+	Components     Components  `json:"components"`
 	SpeakingStyle  string      `json:"speaking_style"`
 	Personality    string      `json:"personality"`
 	WelcomeMessage string      `json:"welcome_message"`
@@ -44,7 +46,39 @@ type Character struct {
 	UpdatedAt      string      `json:"updated_at"`
 }
 
+type Components struct {
+	LLM string `json:"llm"`
+	ASR string `json:"asr"`
+	TTS string `json:"tts"`
+}
+
 const DefaultIdleVideoProfile = "breathing10s_v1"
+
+func DefaultComponents() Components {
+	return Components{LLM: "qwen", ASR: "qwen", TTS: "qwen"}
+}
+
+func NormalizeComponents(components Components, defaults Components) Components {
+	if defaults.LLM == "" {
+		defaults.LLM = "qwen"
+	}
+	if defaults.ASR == "" {
+		defaults.ASR = "qwen"
+	}
+	if defaults.TTS == "" {
+		defaults.TTS = "qwen"
+	}
+	if components.LLM == "" {
+		components.LLM = defaults.LLM
+	}
+	if components.ASR == "" {
+		components.ASR = defaults.ASR
+	}
+	if components.TTS == "" {
+		components.TTS = defaults.TTS
+	}
+	return components
+}
 
 type Store struct {
 	mu      sync.RWMutex
@@ -111,6 +145,16 @@ func (s *Store) Create(c *Character) (*Character, error) {
 	if c.Images == nil {
 		c.Images = []ImageInfo{}
 	}
+	if c.Mode == "" {
+		c.Mode = "standard"
+	}
+	c.Components = NormalizeComponents(c.Components, DefaultComponents())
+	if c.VoiceProvider == "" {
+		c.VoiceProvider = c.Components.TTS
+	}
+	if c.VoiceType == "" && c.Components.TTS == "qwen" {
+		c.VoiceType = "Momo"
+	}
 
 	dirName := charDirName(c.Name, c.ID)
 	charDir := filepath.Join(s.baseDir, dirName)
@@ -161,6 +205,19 @@ func (s *Store) Update(id string, c *Character) (*Character, error) {
 	}
 	if c.ImageMode == "" {
 		c.ImageMode = existing.ImageMode
+	}
+	if c.Mode == "" {
+		c.Mode = existing.Mode
+	}
+	if c.Mode == "" {
+		c.Mode = "standard"
+	}
+	c.Components = NormalizeComponents(c.Components, existing.Components)
+	if c.VoiceProvider == "" {
+		c.VoiceProvider = c.Components.TTS
+	}
+	if c.VoiceType == "" && c.Components.TTS == "qwen" {
+		c.VoiceType = "Momo"
 	}
 	// Preserve avatar_image if caller sent empty (e.g. frontend strips blob: URLs)
 	if c.AvatarImage == "" && existing.AvatarImage != "" {
@@ -537,6 +594,17 @@ func (s *Store) load() error {
 		}
 		if c.ImageMode == "" {
 			c.ImageMode = "fixed"
+		}
+		// Legacy character.json files had no mode field; default to voice_llm (prior behavior).
+		if c.Mode == "" {
+			c.Mode = "voice_llm"
+		}
+		c.Components = NormalizeComponents(c.Components, DefaultComponents())
+		if c.VoiceProvider == "" {
+			c.VoiceProvider = c.Components.TTS
+		}
+		if c.VoiceType == "" && c.Components.TTS == "qwen" {
+			c.VoiceType = "Momo"
 		}
 		s.chars[c.ID] = &c
 		s.dirNames[c.ID] = e.Name()

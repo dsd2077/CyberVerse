@@ -3,14 +3,16 @@ from typing import AsyncIterator
 
 import numpy as np
 
-from inference.core.types import AudioChunk
+from inference.core.types import AudioChunk, TTSRequestConfig
 from inference.plugins.base import CyberVersePlugin
 
 
 class TTSPlugin(CyberVersePlugin):
     @abstractmethod
     async def synthesize_stream(
-        self, text_stream: AsyncIterator[str]
+        self,
+        text_stream: AsyncIterator[str],
+        request_config: TTSRequestConfig | None = None,
     ) -> AsyncIterator[AudioChunk]:
         ...
 

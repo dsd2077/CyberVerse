@@ -19,8 +19,9 @@ inference = [
     "grpcio-health-checking>=1.60",
 ]
 llm = ["openai>=1.0"]
-tts = ["openai>=1.0"]
+tts = ["openai>=1.0", "scipy>=1.10"]
 voice_llm = ["websockets>=12.0"]
+qwen = ["openai>=1.0", "websockets>=12.0", "scipy>=1.10"]
 flash_head = [
     "opencv-python-headless>=4.12.0",
     "diffusers>=0.34.0",

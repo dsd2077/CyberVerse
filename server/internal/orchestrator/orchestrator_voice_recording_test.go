@@ -77,7 +77,7 @@ func (f *voiceRecordingInferenceStub) GenerateLLMStream(context.Context, string,
 	return ch, errCh
 }
 
-func (f *voiceRecordingInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string) (<-chan *pb.AudioChunk, <-chan error) {
+func (f *voiceRecordingInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	ch := make(chan *pb.AudioChunk)
 	errCh := make(chan error)
 	close(ch)
@@ -85,7 +85,7 @@ func (f *voiceRecordingInferenceStub) SynthesizeSpeechStream(context.Context, <-
 	return ch, errCh
 }
 
-func (f *voiceRecordingInferenceStub) TranscribeStream(context.Context, <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error) {
+func (f *voiceRecordingInferenceStub) TranscribeStream(context.Context, <-chan []byte, inference.ASRConfig) (<-chan *pb.TranscriptEvent, <-chan error) {
 	ch := make(chan *pb.TranscriptEvent)
 	errCh := make(chan error)
 	close(ch)

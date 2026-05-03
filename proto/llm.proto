@@ -22,6 +22,7 @@ message LLMConfig {
   string model = 1;
   float temperature = 2;
   int32 max_tokens = 3;
+  string provider = 4;
 }
 
 message LLMChunk {

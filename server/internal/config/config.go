@@ -13,6 +13,7 @@ type Config struct {
 	Session   SessionConfig   `yaml:"session"`
 	Pipeline  PipelineConfig  `yaml:"pipeline"`
 	Inference InferenceConfig `yaml:"inference_grpc"`
+	Plugins   PluginDefaults  `yaml:"inference"`
 	Recording RecordingConfig `yaml:"recording"`
 }
 
@@ -24,6 +25,16 @@ type RecordingConfig struct {
 
 type InferenceConfig struct {
 	Addr string `yaml:"addr"`
+}
+
+type PluginDefaults struct {
+	LLM PluginDefaultSection `yaml:"llm"`
+	ASR PluginDefaultSection `yaml:"asr"`
+	TTS PluginDefaultSection `yaml:"tts"`
+}
+
+type PluginDefaultSection struct {
+	Default string `yaml:"default"`
 }
 
 type ServerConfig struct {
@@ -47,16 +58,19 @@ type SessionConfig struct {
 
 type PipelineConfig struct {
 	DefaultMode     string      `yaml:"default_mode"`
-	StreamingMode   string      `yaml:"streaming_mode"`                // "direct" (default, P2P WebRTC) or "livekit"
+	StreamingMode   string      `yaml:"streaming_mode"` // "direct" (default, P2P WebRTC) or "livekit"
 	ICEServers      []ICEServer `yaml:"ice_servers,omitempty"`
-	ICETCPPort      int         `yaml:"ice_tcp_port,omitempty"`        // Deprecated: use TURN instead
-	ICEPublicIP     string      `yaml:"ice_public_ip,omitempty"`       // Public IP or hostname (also used by TURN)
-	ICENetworkTypes []string    `yaml:"ice_network_types,omitempty"`   // Deprecated: use TURN instead
-	TURNEnabled     bool        `yaml:"turn_enabled,omitempty"`        // Enable embedded TURN-over-TCP server
-	TURNPort        int         `yaml:"turn_port,omitempty"`           // TCP port for TURN (default 3478)
-	TURNRealm       string      `yaml:"turn_realm,omitempty"`          // TURN realm (default "cyberverse")
-	TURNUsername    string      `yaml:"turn_username,omitempty"`       // TURN username (default "cyberverse")
-	TURNPassword    string      `yaml:"turn_password,omitempty"`       // TURN password (required when enabled)
+	ICETCPPort      int         `yaml:"ice_tcp_port,omitempty"`      // Deprecated: use TURN instead
+	ICEPublicIP     string      `yaml:"ice_public_ip,omitempty"`     // Public IP or hostname (also used by TURN)
+	ICENetworkTypes []string    `yaml:"ice_network_types,omitempty"` // Deprecated: use TURN instead
+	TURNEnabled     bool        `yaml:"turn_enabled,omitempty"`      // Enable embedded TURN-over-TCP server
+	TURNPort        int         `yaml:"turn_port,omitempty"`         // TCP port for TURN (default 3478)
+	TURNRealm       string      `yaml:"turn_realm,omitempty"`        // TURN realm (default "cyberverse")
+	TURNUsername    string      `yaml:"turn_username,omitempty"`     // TURN username (default "cyberverse")
+	TURNPassword    string      `yaml:"turn_password,omitempty"`     // TURN password (required when enabled)
+	DefaultLLM      string      `yaml:"-"`
+	DefaultASR      string      `yaml:"-"`
+	DefaultTTS      string      `yaml:"-"`
 }
 
 // ICEServer configures STUN/TURN servers for direct WebRTC mode.
@@ -94,7 +108,7 @@ func Load(path string) (*Config, error) {
 		cfg.Session.MaxConcurrent = 4
 	}
 	if cfg.Pipeline.DefaultMode == "" {
-		cfg.Pipeline.DefaultMode = "voice_llm"
+		cfg.Pipeline.DefaultMode = "standard"
 	}
 	if cfg.Pipeline.StreamingMode == "" {
 		cfg.Pipeline.StreamingMode = "direct"
@@ -119,6 +133,18 @@ func Load(path string) (*Config, error) {
 	if cfg.Recording.CRF == 0 {
 		cfg.Recording.CRF = 23
 	}
+	if cfg.Plugins.LLM.Default == "" {
+		cfg.Plugins.LLM.Default = "qwen"
+	}
+	if cfg.Plugins.ASR.Default == "" {
+		cfg.Plugins.ASR.Default = "qwen"
+	}
+	if cfg.Plugins.TTS.Default == "" {
+		cfg.Plugins.TTS.Default = "qwen"
+	}
+	cfg.Pipeline.DefaultLLM = cfg.Plugins.LLM.Default
+	cfg.Pipeline.DefaultASR = cfg.Plugins.ASR.Default
+	cfg.Pipeline.DefaultTTS = cfg.Plugins.TTS.Default
 
 	// Inference gRPC address: env var takes precedence
 	if addr := os.Getenv("GRPC_INFERENCE_ADDR"); addr != "" {

@@ -9,7 +9,7 @@ import (
 
 // SynthesizeSpeechStream opens a bidirectional stream: sends text chunks,
 // receives audio chunks.
-func (c *Client) SynthesizeSpeechStream(ctx context.Context, textCh <-chan string) (<-chan *pb.AudioChunk, <-chan error) {
+func (c *Client) SynthesizeSpeechStream(ctx context.Context, textCh <-chan string, config TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	audioCh := make(chan *pb.AudioChunk, 8)
 	errCh := make(chan error, 1)
 
@@ -27,6 +27,18 @@ func (c *Client) SynthesizeSpeechStream(ctx context.Context, textCh <-chan strin
 		sendDone := make(chan error, 1)
 		go func() {
 			defer func() { _ = stream.CloseSend() }()
+			if err := stream.Send(&pb.TextChunk{
+				Config: &pb.TTSConfig{
+					Provider:      config.Provider,
+					Voice:         config.Voice,
+					SpeakingStyle: config.SpeakingStyle,
+					Language:      config.Language,
+					SessionId:     config.SessionID,
+				},
+			}); err != nil {
+				sendDone <- err
+				return
+			}
 			for {
 				select {
 				case <-ctx.Done():

@@ -52,6 +52,7 @@ func NewRouter(
 
 func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/v1/health", r.handleHealth)
+	r.mux.HandleFunc("GET /api/v1/components", r.handleListComponents)
 	r.mux.HandleFunc("POST /api/v1/sessions", r.handleCreateSession)
 	r.mux.HandleFunc("DELETE /api/v1/sessions/{id}", r.handleDeleteSession)
 	r.mux.HandleFunc("POST /api/v1/sessions/{id}/message", r.handleSendMessage)

@@ -5,10 +5,10 @@ import AppHeader from '../components/AppHeader.vue'
 import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
 import { useCharacterStore } from '../stores/characters'
-import type { CharacterForm, ImageInfo } from '../types'
-import { VOICE_OPTIONS } from '../types'
-import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice } from '../services/api'
-import { DEFAULT_OFFICIAL_VOICE, isOfficialVoiceType } from '../utils/voice'
+import type { CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
+import { OPENAI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
+import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents } from '../services/api'
+import { DEFAULT_OFFICIAL_VOICE, DEFAULT_QWEN_TTS_VOICE, isOfficialVoiceType, isOpenAIVoiceType, isQwenTTSVoiceType } from '../utils/voice'
 
 const router = useRouter()
 const route = useRoute()
@@ -17,14 +17,18 @@ const store = useCharacterStore()
 const isEdit = computed(() => !!route.params.id)
 const characterId = computed(() => route.params.id as string)
 
+const DEFAULT_COMPONENTS: CharacterComponents = { llm: 'qwen', asr: 'qwen', tts: 'qwen' }
+
 const form = ref<CharacterForm>({
   name: '',
   description: '',
   avatar_image: '',
   use_face_crop: false,
   image_mode: 'fixed',
-  voice_provider: 'doubao',
-  voice_type: '温柔文雅',
+  mode: 'standard',
+  voice_provider: 'qwen',
+  voice_type: DEFAULT_QWEN_TTS_VOICE,
+  components: { ...DEFAULT_COMPONENTS },
   speaking_style: '',
   personality: '',
   welcome_message: '',
@@ -42,21 +46,120 @@ const voiceError = ref('')
 const testingVoice = ref(false)
 const voiceTestStatus = ref<'success' | 'error' | null>(null)
 const voiceTestMessage = ref('')
+const showModeHelp = ref(false)
 const OFFICIAL_VOICE_PREVIEW_URL = 'https://console.volcengine.com/speech/new/experience/call'
 const CUSTOM_VOICE_CLONE_URL = 'https://console.volcengine.com/speech/new/experience/clone'
+const componentCatalog = ref<ComponentsResponse>({
+  llm: [{ id: 'qwen', name: 'Qwen', model: 'qwen3.6-plus', default: true, available: true }],
+  asr: [{ id: 'qwen', name: 'Qwen', model: 'qwen3-asr-flash-realtime', default: true, available: true }],
+  tts: [{ id: 'qwen', name: 'Qwen', model: 'qwen3-tts-flash-realtime', default: true, available: true }],
+})
 
 const visibleImages = computed(() =>
   images.value.filter(img => !deletedImageFilenames.value.has(img.filename))
 )
 
 const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
+const selectedTTS = computed(() => form.value.components?.tts || DEFAULT_COMPONENTS.tts)
+const usesDoubaoVoice = computed(() => form.value.mode === 'voice_llm' || selectedTTS.value === 'doubao')
+const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
+const providerSelectOptions = (items: ComponentOption[]) =>
+  items.map(item => ({
+    label: item.name,
+    value: item.id,
+  }))
+const llmProviderOptions = computed(() => providerSelectOptions(componentCatalog.value.llm))
+const asrProviderOptions = computed(() => providerSelectOptions(componentCatalog.value.asr))
+const ttsProviderOptions = computed(() => providerSelectOptions(componentCatalog.value.tts))
+function selectedComponent(category: 'llm' | 'asr' | 'tts') {
+  const selected = form.value.components?.[category] || DEFAULT_COMPONENTS[category]
+  return componentCatalog.value[category].find(item => item.id === selected)
+}
+function modelOptions(category: 'llm' | 'asr' | 'tts') {
+  const model = selectedComponent(category)?.model || ''
+  return model ? [{ label: model, value: model }] : []
+}
+const llmModel = computed({
+  get: () => selectedComponent('llm')?.model || '',
+  set: () => {},
+})
+const asrModel = computed({
+  get: () => selectedComponent('asr')?.model || '',
+  set: () => {},
+})
+const ttsModel = computed({
+  get: () => selectedComponent('tts')?.model || '',
+  set: () => {},
+})
+const llmModelOptions = computed(() => modelOptions('llm'))
+const asrModelOptions = computed(() => modelOptions('asr'))
+const ttsModelOptions = computed(() => modelOptions('tts'))
 const canSave = computed(() =>
-  !!form.value.name.trim() && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value)
+  !!form.value.name.trim() && (
+    usesDoubaoVoice.value
+      ? (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value)
+      : !!form.value.voice_type.trim()
+  )
 )
 const canCheckVoice = computed(() =>
-  voiceMode.value === 'official' || !!trimmedCustomVoiceType.value
+  usesDoubaoVoice.value && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value)
 )
 const voiceCheckSucceeded = computed(() => voiceTestStatus.value === 'success')
+
+function normalizeComponents(components?: Partial<CharacterComponents>): CharacterComponents {
+  return {
+    llm: components?.llm || DEFAULT_COMPONENTS.llm,
+    asr: components?.asr || DEFAULT_COMPONENTS.asr,
+    tts: components?.tts || DEFAULT_COMPONENTS.tts,
+  }
+}
+
+function defaultVoiceForTTS(tts: string) {
+  if (tts === 'openai') return 'nova'
+  if (tts === 'doubao') return DEFAULT_OFFICIAL_VOICE
+  return DEFAULT_QWEN_TTS_VOICE
+}
+
+function applyTTSVoiceDefault(tts: string, force = false) {
+  if (form.value.mode === 'voice_llm') {
+    return
+  }
+  form.value.voice_provider = tts
+  const current = form.value.voice_type.trim()
+  if (force || !current) {
+    form.value.voice_type = defaultVoiceForTTS(tts)
+    if (tts === 'doubao') syncVoiceInputs(form.value.voice_type)
+    return
+  }
+
+  if (tts === 'qwen' && (isOfficialVoiceType(current) || isOpenAIVoiceType(current))) {
+    form.value.voice_type = DEFAULT_QWEN_TTS_VOICE
+  } else if (tts === 'openai' && !isOpenAIVoiceType(current)) {
+    form.value.voice_type = 'nova'
+  } else if (tts === 'doubao') {
+    syncVoiceInputs(current)
+  }
+}
+
+function applyModeVoiceDefault(force = false) {
+  if (form.value.mode !== 'voice_llm') {
+    applyTTSVoiceDefault(form.value.components.tts, force)
+    return
+  }
+
+  form.value.voice_provider = 'doubao'
+  const current = form.value.voice_type.trim()
+  const looksLikeStandardVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current)
+  if (force || !current || looksLikeStandardVoice) {
+    form.value.voice_type = DEFAULT_OFFICIAL_VOICE
+  }
+  syncVoiceInputs(form.value.voice_type)
+}
+
+function toggleMode() {
+  form.value.mode = form.value.mode === 'standard' ? 'voice_llm' : 'standard'
+  showModeHelp.value = false
+}
 
 function clearVoiceTestResult() {
   voiceTestStatus.value = null
@@ -94,6 +197,12 @@ function setVoiceMode(mode: 'official' | 'custom') {
 }
 
 function resolveVoiceType() {
+  if (!usesDoubaoVoice.value) {
+    const voice = form.value.voice_type.trim() || defaultVoiceForTTS(selectedTTS.value)
+    form.value.voice_type = voice
+    return voice
+  }
+
   if (voiceMode.value === 'custom') {
     if (!trimmedCustomVoiceType.value) {
       voiceError.value = '请输入已注册的 SC2.0 自定义 speaker_id'
@@ -109,6 +218,8 @@ watch(
   [
     () => form.value.voice_provider,
     () => form.value.voice_type,
+    () => form.value.mode,
+    () => form.value.components.tts,
     () => voiceMode.value,
     () => customVoiceType.value,
   ],
@@ -117,7 +228,29 @@ watch(
   }
 )
 
+watch(
+  () => form.value.components.tts,
+  (tts) => {
+    voiceError.value = ''
+    applyTTSVoiceDefault(tts)
+  }
+)
+
+watch(
+  () => form.value.mode,
+  () => {
+    voiceError.value = ''
+    applyModeVoiceDefault()
+  }
+)
+
 onMounted(async () => {
+  try {
+    componentCatalog.value = await getComponents()
+  } catch (e) {
+    console.warn('Failed to load components:', e)
+  }
+
   if (isEdit.value) {
     await store.fetchOne(characterId.value)
     if (store.current) {
@@ -128,19 +261,21 @@ onMounted(async () => {
         avatar_image: c.avatar_image,
         use_face_crop: c.use_face_crop,
         image_mode: c.image_mode || 'fixed',
+        mode: c.mode || 'standard',
         voice_provider: c.voice_provider,
         voice_type: c.voice_type,
+        components: normalizeComponents(c.components),
         speaking_style: c.speaking_style,
         personality: c.personality,
         welcome_message: c.welcome_message,
         system_prompt: c.system_prompt,
         tags: [...c.tags],
       }
-      syncVoiceInputs(c.voice_type)
+      applyModeVoiceDefault(!form.value.voice_type)
       await loadImages()
     }
   } else {
-    syncVoiceInputs(form.value.voice_type)
+    applyModeVoiceDefault(true)
   }
 })
 
@@ -233,6 +368,8 @@ async function save() {
       return
     }
     payload.voice_type = voiceType
+    payload.components = normalizeComponents(payload.components)
+    payload.voice_provider = payload.mode === 'voice_llm' ? 'doubao' : payload.components.tts
 
     let id: string
     if (isEdit.value) {
@@ -338,118 +475,322 @@ const breadcrumb = computed(() =>
           </label>
         </section>
 
-        <!-- Section 2: 语音配置 -->
+        <!-- Section 2: 组件配置 -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h2 class="text-base font-semibold text-cv-text mb-1">语音配置</h2>
-          <p class="text-[13px] text-cv-text-muted mb-5">为此角色设置交互时使用的语音供应商和声线。</p>
-
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 供应商</span>
-              <CvSelect
-                v-model="form.voice_provider"
-                :options="[{ label: '豆包语音', value: 'doubao' }]"
-                class="mt-1.5"
-              />
-            </label>
-            <div class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 声线类型</span>
-              <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
-                <button
-                  type="button"
-                  @click="setVoiceMode('official')"
-                  class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
-                  :class="voiceMode === 'official'
+          <div class="mb-5 flex flex-wrap items-center gap-3">
+            <h2 class="text-base font-semibold text-cv-text">组件配置</h2>
+            <div class="relative flex items-center gap-2">
+              <button
+                type="button"
+                @click="toggleMode"
+                class="grid h-9 w-[280px] max-w-[calc(100vw-120px)] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1 text-sm transition-colors cursor-pointer"
+                :aria-label="`切换模式，当前为 ${form.mode}`"
+              >
+                <span
+                  class="flex items-center justify-center rounded-cv-sm transition-colors"
+                  :class="form.mode === 'standard'
                     ? 'bg-cv-accent text-white'
-                    : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                    : 'text-cv-text-secondary'"
                 >
-                  官方音色
-                </button>
-                <button
-                  type="button"
-                  @click="setVoiceMode('custom')"
-                  class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
-                  :class="voiceMode === 'custom'
+                  standard
+                </span>
+                <span
+                  class="flex items-center justify-center rounded-cv-sm transition-colors"
+                  :class="form.mode === 'voice_llm'
                     ? 'bg-cv-accent text-white'
-                    : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                    : 'text-cv-text-secondary'"
                 >
-                  克隆音色
-                </button>
+                  voice_llm
+                </span>
+              </button>
+              <button
+                type="button"
+                @click="showModeHelp = !showModeHelp"
+                class="flex h-7 w-7 items-center justify-center rounded-full border border-cv-border text-sm font-medium text-cv-text-muted transition-colors hover:bg-cv-hover hover:text-cv-text cursor-pointer"
+                :aria-expanded="showModeHelp"
+                aria-label="查看模式说明"
+              >
+                ?
+              </button>
+              <div
+                v-if="showModeHelp"
+                class="absolute right-0 top-[calc(100%+8px)] z-20 w-[340px] max-w-[calc(100vw-64px)] rounded-cv-md border border-cv-border bg-cv-elevated p-4 shadow-lg"
+              >
+                <div class="mb-3">
+                  <div class="text-[13px] font-semibold text-cv-text">standard</div>
+                  <p class="mt-1 text-[12px] leading-5 text-cv-text-secondary">
+                    用户语音先由 ASR 转成文本，再交给 LLM 生成回复，最后由 TTS 合成为语音并驱动数字人。
+                  </p>
+                </div>
+                <div>
+                  <div class="text-[13px] font-semibold text-cv-text">voice_llm</div>
+                  <p class="mt-1 text-[12px] leading-5 text-cv-text-secondary">
+                    端到端的语音大模型：语音识别、对话生成和语音合成由同一个 Voice LLM 服务完成。
+                  </p>
+                </div>
               </div>
             </div>
           </div>
 
-          <label class="block mt-4">
-            <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 声线</span>
-            <div class="mt-1.5 flex items-start gap-3">
-              <CvSelect
-                v-if="voiceMode === 'official'"
-                v-model="form.voice_type"
-                :options="VOICE_OPTIONS"
-                :success="voiceCheckSucceeded"
-                class="min-w-0 flex-1"
-              />
-              <div v-else class="relative min-w-0 flex-1">
-                <input
-                  v-model="customVoiceType"
-                  type="text"
-                  placeholder="输入已注册成功的 speaker_id，例如 S_123456"
-                  class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
-                  :class="voiceCheckSucceeded
-                    ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
-                    : 'focus:border-cv-accent focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'"
+          <div v-if="form.mode === 'standard'" class="flex flex-col gap-4">
+            <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pb-3">LLM</span>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
+                <CvSelect
+                  v-model="form.components.llm"
+                  :options="llmProviderOptions"
+                  class="mt-1.5"
                 />
-                <span
-                  v-if="voiceCheckSucceeded"
-                  class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-cv-success"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </span>
-              </div>
-              <button
-                type="button"
-                @click="handleCheckVoice"
-                :disabled="testingVoice || !canCheckVoice"
-                :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
-                class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                check
-              </button>
+              </label>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <CvSelect
+                  v-model="llmModel"
+                  :options="llmModelOptions"
+                  class="mt-1.5"
+                />
+              </label>
             </div>
-            <p v-if="voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-              可到
-              <a
-                :href="OFFICIAL_VOICE_PREVIEW_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="underline underline-offset-2 transition-colors hover:text-cv-text"
-              >
-                火山引擎语音克隆控制台
-              </a>
-              试听音色
-            </p>
-            <p v-if="voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-              请先前往
-              <a
-                :href="CUSTOM_VOICE_CLONE_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="underline underline-offset-2 transition-colors hover:text-cv-text"
-              >
-                火山引擎语音克隆控制台
-              </a>
-              生成 SC2.0 克隆音色
-            </p>
-            <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
-            <p
-              v-if="voiceTestStatus === 'error' && voiceTestMessage"
-              class="mt-2 text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all"
-            >
-              {{ voiceTestMessage }}
-            </p>
-          </label>
+
+            <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pb-3">ASR</span>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
+                <CvSelect
+                  v-model="form.components.asr"
+                  :options="asrProviderOptions"
+                  class="mt-1.5"
+                />
+              </label>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <CvSelect
+                  v-model="asrModel"
+                  :options="asrModelOptions"
+                  class="mt-1.5"
+                />
+              </label>
+            </div>
+
+            <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-start">
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pt-[31px]">TTS</span>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
+                <CvSelect
+                  v-model="form.components.tts"
+                  :options="ttsProviderOptions"
+                  class="mt-1.5"
+                />
+              </label>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <CvSelect
+                  v-model="ttsModel"
+                  :options="ttsModelOptions"
+                  class="mt-1.5"
+                />
+              </label>
+              <label v-if="!usesDoubaoVoice && selectedTTS === 'qwen'" class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                <CvSelect
+                  v-model="form.voice_type"
+                  :options="QWEN_TTS_VOICE_OPTIONS"
+                  class="mt-1.5"
+                />
+              </label>
+              <label v-else-if="isOpenAIVoice" class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                <CvSelect
+                  v-model="form.voice_type"
+                  :options="OPENAI_VOICE_OPTIONS"
+                  class="mt-1.5"
+                />
+              </label>
+              <div v-else class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
+                  <button
+                    type="button"
+                    @click="setVoiceMode('official')"
+                    class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
+                    :class="voiceMode === 'official'
+                      ? 'bg-cv-accent text-white'
+                      : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                  >
+                    官方音色
+                  </button>
+                  <button
+                    type="button"
+                    @click="setVoiceMode('custom')"
+                    class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
+                    :class="voiceMode === 'custom'
+                      ? 'bg-cv-accent text-white'
+                      : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                  >
+                    克隆音色
+                  </button>
+                </div>
+                <div class="mt-3 flex items-start gap-3">
+                  <CvSelect
+                    v-if="voiceMode === 'official'"
+                    v-model="form.voice_type"
+                    :options="VOICE_OPTIONS"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0 flex-1"
+                  />
+                  <div v-else class="relative min-w-0 flex-1">
+                    <input
+                      v-model="customVoiceType"
+                      type="text"
+                      placeholder="输入 speaker_id"
+                      class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
+                      :class="voiceCheckSucceeded
+                        ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
+                        : 'focus:border-cv-accent focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'"
+                    />
+                    <span
+                      v-if="voiceCheckSucceeded"
+                      class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-cv-success"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    @click="handleCheckVoice"
+                    :disabled="testingVoice || !canCheckVoice"
+                    :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
+                    class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    check
+                  </button>
+                </div>
+                <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
+                <p
+                  v-if="voiceTestStatus === 'error' && voiceTestMessage"
+                  class="mt-2 text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all"
+                >
+                  {{ voiceTestMessage }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="flex flex-col gap-4">
+            <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pb-3">VoiceLLM</span>
+              <label class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
+                <CvSelect
+                  v-model="form.voice_provider"
+                  :options="[{ label: '豆包语音', value: 'doubao' }]"
+                  class="mt-1.5"
+                />
+              </label>
+              <div class="block">
+                <span class="text-[12px] font-medium text-cv-text-muted">声线类型</span>
+                <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
+                  <button
+                    type="button"
+                    @click="setVoiceMode('official')"
+                    class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
+                    :class="voiceMode === 'official'
+                      ? 'bg-cv-accent text-white'
+                      : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                  >
+                    官方音色
+                  </button>
+                  <button
+                    type="button"
+                    @click="setVoiceMode('custom')"
+                    class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
+                    :class="voiceMode === 'custom'
+                      ? 'bg-cv-accent text-white'
+                      : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
+                  >
+                    克隆音色
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)] md:items-start">
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pt-3">声线</span>
+              <label class="block">
+                <div class="flex items-start gap-3">
+                  <CvSelect
+                    v-if="voiceMode === 'official'"
+                    v-model="form.voice_type"
+                    :options="VOICE_OPTIONS"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0 flex-1"
+                  />
+                  <div v-else class="relative min-w-0 flex-1">
+                    <input
+                      v-model="customVoiceType"
+                      type="text"
+                      placeholder="输入已注册成功的 speaker_id，例如 S_123456"
+                      class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
+                      :class="voiceCheckSucceeded
+                        ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
+                        : 'focus:border-cv-accent focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'"
+                    />
+                    <span
+                      v-if="voiceCheckSucceeded"
+                      class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-cv-success"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    @click="handleCheckVoice"
+                    :disabled="testingVoice || !canCheckVoice"
+                    :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
+                    class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    check
+                  </button>
+                </div>
+                <p v-if="voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                  可到
+                  <a
+                    :href="OFFICIAL_VOICE_PREVIEW_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 transition-colors hover:text-cv-text"
+                  >
+                    火山引擎语音克隆控制台
+                  </a>
+                  试听音色
+                </p>
+                <p v-if="voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                  请先前往
+                  <a
+                    :href="CUSTOM_VOICE_CLONE_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 transition-colors hover:text-cv-text"
+                  >
+                    火山引擎语音克隆控制台
+                  </a>
+                  生成 SC2.0 克隆音色
+                </p>
+                <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
+                <p
+                  v-if="voiceTestStatus === 'error' && voiceTestMessage"
+                  class="mt-2 text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all"
+                >
+                  {{ voiceTestMessage }}
+                </p>
+              </label>
+            </div>
+          </div>
         </section>
 
         <!-- Section 3: 人设与风格 -->

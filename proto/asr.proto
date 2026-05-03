@@ -6,7 +6,20 @@ option go_package = "github.com/cyberverse/server/internal/pb";
 import "common.proto";
 
 service ASRService {
-  rpc TranscribeStream (stream AudioChunk) returns (stream TranscriptEvent);
+  rpc TranscribeStream (stream ASRInput) returns (stream TranscriptEvent);
+}
+
+message ASRConfig {
+  string provider = 1;
+  string language = 2;
+  string session_id = 3;
+}
+
+message ASRInput {
+  oneof input {
+    ASRConfig config = 1;
+    AudioChunk audio = 2;
+  }
 }
 
 message TranscriptEvent {

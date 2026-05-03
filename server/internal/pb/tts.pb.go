@@ -25,6 +25,7 @@ type TextChunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
 	IsFinal       bool                   `protobuf:"varint,2,opt,name=is_final,json=isFinal,proto3" json:"is_final,omitempty"`
+	Config        *TTSConfig             `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -73,6 +74,89 @@ func (x *TextChunk) GetIsFinal() bool {
 	return false
 }
 
+func (x *TextChunk) GetConfig() *TTSConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type TTSConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Voice         string                 `protobuf:"bytes,2,opt,name=voice,proto3" json:"voice,omitempty"`
+	SpeakingStyle string                 `protobuf:"bytes,3,opt,name=speaking_style,json=speakingStyle,proto3" json:"speaking_style,omitempty"`
+	Language      string                 `protobuf:"bytes,4,opt,name=language,proto3" json:"language,omitempty"`
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TTSConfig) Reset() {
+	*x = TTSConfig{}
+	mi := &file_tts_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TTSConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TTSConfig) ProtoMessage() {}
+
+func (x *TTSConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_tts_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TTSConfig.ProtoReflect.Descriptor instead.
+func (*TTSConfig) Descriptor() ([]byte, []int) {
+	return file_tts_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TTSConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *TTSConfig) GetVoice() string {
+	if x != nil {
+		return x.Voice
+	}
+	return ""
+}
+
+func (x *TTSConfig) GetSpeakingStyle() string {
+	if x != nil {
+		return x.SpeakingStyle
+	}
+	return ""
+}
+
+func (x *TTSConfig) GetLanguage() string {
+	if x != nil {
+		return x.Language
+	}
+	return ""
+}
+
+func (x *TTSConfig) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type ListVoicesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -81,7 +165,7 @@ type ListVoicesRequest struct {
 
 func (x *ListVoicesRequest) Reset() {
 	*x = ListVoicesRequest{}
-	mi := &file_tts_proto_msgTypes[1]
+	mi := &file_tts_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -93,7 +177,7 @@ func (x *ListVoicesRequest) String() string {
 func (*ListVoicesRequest) ProtoMessage() {}
 
 func (x *ListVoicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tts_proto_msgTypes[1]
+	mi := &file_tts_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -106,7 +190,7 @@ func (x *ListVoicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVoicesRequest.ProtoReflect.Descriptor instead.
 func (*ListVoicesRequest) Descriptor() ([]byte, []int) {
-	return file_tts_proto_rawDescGZIP(), []int{1}
+	return file_tts_proto_rawDescGZIP(), []int{2}
 }
 
 type ListVoicesResponse struct {
@@ -118,7 +202,7 @@ type ListVoicesResponse struct {
 
 func (x *ListVoicesResponse) Reset() {
 	*x = ListVoicesResponse{}
-	mi := &file_tts_proto_msgTypes[2]
+	mi := &file_tts_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -130,7 +214,7 @@ func (x *ListVoicesResponse) String() string {
 func (*ListVoicesResponse) ProtoMessage() {}
 
 func (x *ListVoicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tts_proto_msgTypes[2]
+	mi := &file_tts_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -143,7 +227,7 @@ func (x *ListVoicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVoicesResponse.ProtoReflect.Descriptor instead.
 func (*ListVoicesResponse) Descriptor() ([]byte, []int) {
-	return file_tts_proto_rawDescGZIP(), []int{2}
+	return file_tts_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ListVoicesResponse) GetVoices() []*VoiceInfo {
@@ -164,7 +248,7 @@ type VoiceInfo struct {
 
 func (x *VoiceInfo) Reset() {
 	*x = VoiceInfo{}
-	mi := &file_tts_proto_msgTypes[3]
+	mi := &file_tts_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -176,7 +260,7 @@ func (x *VoiceInfo) String() string {
 func (*VoiceInfo) ProtoMessage() {}
 
 func (x *VoiceInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_tts_proto_msgTypes[3]
+	mi := &file_tts_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -189,7 +273,7 @@ func (x *VoiceInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoiceInfo.ProtoReflect.Descriptor instead.
 func (*VoiceInfo) Descriptor() ([]byte, []int) {
-	return file_tts_proto_rawDescGZIP(), []int{3}
+	return file_tts_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *VoiceInfo) GetId() string {
@@ -218,10 +302,18 @@ var File_tts_proto protoreflect.FileDescriptor
 const file_tts_proto_rawDesc = "" +
 	"\n" +
 	"\ttts.proto\x12\n" +
-	"cyberverse\x1a\fcommon.proto\":\n" +
+	"cyberverse\x1a\fcommon.proto\"i\n" +
 	"\tTextChunk\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x19\n" +
-	"\bis_final\x18\x02 \x01(\bR\aisFinal\"\x13\n" +
+	"\bis_final\x18\x02 \x01(\bR\aisFinal\x12-\n" +
+	"\x06config\x18\x03 \x01(\v2\x15.cyberverse.TTSConfigR\x06config\"\x9f\x01\n" +
+	"\tTTSConfig\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05voice\x18\x02 \x01(\tR\x05voice\x12%\n" +
+	"\x0espeaking_style\x18\x03 \x01(\tR\rspeakingStyle\x12\x1a\n" +
+	"\blanguage\x18\x04 \x01(\tR\blanguage\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"\x13\n" +
 	"\x11ListVoicesRequest\"C\n" +
 	"\x12ListVoicesResponse\x12-\n" +
 	"\x06voices\x18\x01 \x03(\v2\x15.cyberverse.VoiceInfoR\x06voices\"K\n" +
@@ -247,25 +339,27 @@ func file_tts_proto_rawDescGZIP() []byte {
 	return file_tts_proto_rawDescData
 }
 
-var file_tts_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_tts_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_tts_proto_goTypes = []any{
 	(*TextChunk)(nil),          // 0: cyberverse.TextChunk
-	(*ListVoicesRequest)(nil),  // 1: cyberverse.ListVoicesRequest
-	(*ListVoicesResponse)(nil), // 2: cyberverse.ListVoicesResponse
-	(*VoiceInfo)(nil),          // 3: cyberverse.VoiceInfo
-	(*AudioChunk)(nil),         // 4: cyberverse.AudioChunk
+	(*TTSConfig)(nil),          // 1: cyberverse.TTSConfig
+	(*ListVoicesRequest)(nil),  // 2: cyberverse.ListVoicesRequest
+	(*ListVoicesResponse)(nil), // 3: cyberverse.ListVoicesResponse
+	(*VoiceInfo)(nil),          // 4: cyberverse.VoiceInfo
+	(*AudioChunk)(nil),         // 5: cyberverse.AudioChunk
 }
 var file_tts_proto_depIdxs = []int32{
-	3, // 0: cyberverse.ListVoicesResponse.voices:type_name -> cyberverse.VoiceInfo
-	0, // 1: cyberverse.TTSService.SynthesizeStream:input_type -> cyberverse.TextChunk
-	1, // 2: cyberverse.TTSService.ListVoices:input_type -> cyberverse.ListVoicesRequest
-	4, // 3: cyberverse.TTSService.SynthesizeStream:output_type -> cyberverse.AudioChunk
-	2, // 4: cyberverse.TTSService.ListVoices:output_type -> cyberverse.ListVoicesResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 0: cyberverse.TextChunk.config:type_name -> cyberverse.TTSConfig
+	4, // 1: cyberverse.ListVoicesResponse.voices:type_name -> cyberverse.VoiceInfo
+	0, // 2: cyberverse.TTSService.SynthesizeStream:input_type -> cyberverse.TextChunk
+	2, // 3: cyberverse.TTSService.ListVoices:input_type -> cyberverse.ListVoicesRequest
+	5, // 4: cyberverse.TTSService.SynthesizeStream:output_type -> cyberverse.AudioChunk
+	3, // 5: cyberverse.TTSService.ListVoices:output_type -> cyberverse.ListVoicesResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_tts_proto_init() }
@@ -280,7 +374,7 @@ func file_tts_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tts_proto_rawDesc), len(file_tts_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
