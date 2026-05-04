@@ -53,6 +53,7 @@ async def test_initialize_sets_qwen_omni_defaults():
     assert plugin.api_key == "dashscope-key"
     assert plugin.model == "qwen3.5-omni-flash-realtime"
     assert plugin.voice == "Tina"
+    assert plugin.system_prompt == ""
     assert plugin.ws_url.endswith("model=qwen3.5-omni-flash-realtime")
 
 
@@ -78,7 +79,25 @@ async def test_check_voice_configures_session_with_voice_override():
     assert session["modalities"] == ["text", "audio"]
     assert session["input_audio_format"] == "pcm"
     assert session["output_audio_format"] == "pcm"
+    assert session["instructions"] == ""
     assert session["turn_detection"]["type"] == "semantic_vad"
+
+
+@pytest.mark.asyncio
+async def test_initialize_keeps_qwen_omni_system_prompt_when_configured():
+    plugin = QwenOmniRealtimePlugin()
+
+    await plugin.initialize(
+        PluginConfig(
+            plugin_name="voice_llm.qwen_omni",
+            params={
+                "api_key": "dashscope-key",
+                "system_prompt": "角色背景",
+            },
+        )
+    )
+
+    assert plugin.system_prompt == "角色背景"
 
 
 @pytest.mark.asyncio

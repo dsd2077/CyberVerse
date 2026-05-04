@@ -67,7 +67,8 @@ class OpenAILLMPlugin(LLMPlugin):
         self, messages: list[dict]
     ) -> AsyncIterator[LLMResponseChunk]:
         full_messages = [self._format_message(message) for message in messages]
-        if self.system_prompt:
+        has_system_message = any(message.get("role") == "system" for message in full_messages)
+        if self.system_prompt and not has_system_message:
             full_messages = [{"role": "system", "content": self.system_prompt}] + full_messages
 
         accumulated = ""

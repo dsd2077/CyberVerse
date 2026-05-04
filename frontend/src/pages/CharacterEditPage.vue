@@ -901,7 +901,7 @@ const breadcrumb = computed(() =>
             <span class="text-[13px] font-medium text-cv-text-secondary">角色性格</span>
             <textarea v-model="form.personality" placeholder="温柔体贴、善于倾听，喜欢用比喻来解释复杂的概念..."
                       class="mt-1.5 w-full h-20 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-sm text-cv-text placeholder:text-cv-text-muted resize-y focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
-            <p class="text-[11px] text-cv-text-muted mt-1">描述角色的性格特征，将融入 system_prompt 生成</p>
+            <p class="text-[11px] text-cv-text-muted mt-1">描述角色的性格特征，会和角色提示词一起组成角色设定</p>
           </label>
 
           <label class="block">
@@ -912,12 +912,12 @@ const breadcrumb = computed(() =>
           </label>
         </section>
 
-        <!-- Section 4: 系统提示词 -->
+        <!-- Section 4: 角色提示词 -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h2 class="text-base font-semibold text-cv-text mb-5">系统提示词</h2>
+          <h2 class="text-base font-semibold text-cv-text mb-5">角色提示词</h2>
 
           <textarea v-model="form.system_prompt"
-                    placeholder="你是一个友善的数字人助手。请用简洁清晰的方式回答用户的问题，保持友好的语气。"
+                    placeholder="写这个角色是谁、和用户的关系、背景设定、偏好的称呼和人设边界。"
                     class="w-full h-40 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-[13px] text-cv-text placeholder:text-cv-text-muted resize-y leading-[22px] focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
           <p class="text-right text-[11px] text-cv-text-muted mt-1">{{ promptLength }} / 2000</p>
         </section>

@@ -28,7 +28,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         self.model = "qwen3.5-omni-flash-realtime"
         self.ws_url = ""
         self.voice = "Tina"
-        self.system_prompt = "你是一个友善的数字人助手。"
+        self.system_prompt = ""
         self.input_sample_rate = 16000
         self.output_sample_rate = 24000
         self.vad_type = "semantic_vad"

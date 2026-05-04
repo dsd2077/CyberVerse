@@ -225,9 +225,9 @@ async function launch() {
               <span class="text-cv-text truncate max-w-[200px]">{{ store.current.welcome_message }}</span>
             </div>
 
-            <!-- System prompt -->
+            <!-- Role prompt -->
             <div class="bg-[#131317] border border-[#24242b] rounded-cv-md px-3 py-2.5">
-              <p class="text-[10px] font-semibold text-cv-text-muted tracking-[0.8px] uppercase mb-1.5">System Prompt</p>
+              <p class="text-[10px] font-semibold text-cv-text-muted tracking-[0.8px] uppercase mb-1.5">Role Prompt</p>
               <p class="text-xs text-cv-text-secondary leading-[18px] line-clamp-4">{{ store.current.system_prompt }}</p>
             </div>
 
