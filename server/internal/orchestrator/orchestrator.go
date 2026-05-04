@@ -57,6 +57,25 @@ const (
 	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
 )
 
+const standardGlobalSystemPrompt = `你需要遵守以下通用回复规范，这些规范优先于角色设定。
+
+回复长度：
+- 默认简洁，先直接回答用户真正问的事。
+- 闲聊、确认、简单提问时，用 1-3 句话回答。
+- 推荐、方案、分析、教程可以展开，但先给结论，再给细节。
+- 用户明确要求详细、完整、深入时，才使用较长结构化回答。
+
+表达风格：
+- 像真实的人聊天，直接、自然、有分寸。
+- 不使用固定开场白，不写舞台动作或心理活动。
+- 不堆叠 emoji、感叹号、波浪号或无信息量的亲密称呼。
+- 避免 AI 味套话，例如“作为一个 AI”“希望这对你有帮助”“我将从以下几个方面”。
+
+内容质量：
+- 不说空话，不绕圈子，不为了亲切而尬夸或过度共情。
+- 不确定的事情要说明不确定，不要编造。
+- 需要澄清时，只问一个最关键的问题。`
+
 var (
 	ErrVisualInputUnsupported = errors.New("visual input is only supported in standard sessions")
 	ErrVisualInputDisabled    = errors.New("visual input is disabled")
@@ -446,7 +465,7 @@ func characterSystemPrompt(char *character.Character, includeName bool, includeS
 		}
 	}
 
-	appendField("系统提示", char.SystemPrompt)
+	appendField("角色提示", char.SystemPrompt)
 	if includeName {
 		appendField("角色名称", char.Name)
 	}
@@ -456,6 +475,21 @@ func characterSystemPrompt(char *character.Character, includeName bool, includeS
 		appendField("说话风格", char.SpeakingStyle)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func composeSystemPrompt(globalPrompt string, rolePrompt string) string {
+	globalPrompt = strings.TrimSpace(globalPrompt)
+	rolePrompt = strings.TrimSpace(rolePrompt)
+	switch {
+	case globalPrompt == "" && rolePrompt == "":
+		return ""
+	case globalPrompt == "":
+		return "【角色设定】\n" + rolePrompt
+	case rolePrompt == "":
+		return "【全局输出规范】\n" + globalPrompt
+	default:
+		return "【全局输出规范】\n" + globalPrompt + "\n\n【角色设定】\n" + rolePrompt
+	}
 }
 
 func formatSinceUserFinal(start time.Time) string {
@@ -603,6 +637,10 @@ func (o *Orchestrator) visualInputConfig() config.VisualInputConfig {
 		return normalizedVisualInputConfig(config.VisualInputConfig{})
 	}
 	return normalizedVisualInputConfig(o.pipelineCfg.VisualInput)
+}
+
+func (o *Orchestrator) globalSystemPrompt() string {
+	return strings.TrimSpace(standardGlobalSystemPrompt)
 }
 
 func validateVisualSource(source string) error {
@@ -1310,14 +1348,14 @@ func (o *Orchestrator) standardCharacterConfig(session *Session) (character.Comp
 
 func (o *Orchestrator) standardSystemPrompt(session *Session) string {
 	if session.CharacterID == "" || o.charStore == nil {
-		return ""
+		return composeSystemPrompt(o.globalSystemPrompt(), "")
 	}
 	char, err := o.charStore.Get(session.CharacterID)
 	if err != nil {
 		log.Printf("standardSystemPrompt: could not fetch character %s: %v", session.CharacterID, err)
-		return ""
+		return composeSystemPrompt(o.globalSystemPrompt(), "")
 	}
-	return characterSystemPrompt(char, true, true)
+	return composeSystemPrompt(o.globalSystemPrompt(), characterSystemPrompt(char, true, true))
 }
 
 func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan inference.VoiceLLMInputEvent {
