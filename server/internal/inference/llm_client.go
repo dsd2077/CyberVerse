@@ -18,9 +18,22 @@ func (c *Client) GenerateLLMStream(ctx context.Context, sessionID string, messag
 
 		pbMessages := make([]*pb.ChatMessage, len(messages))
 		for i, m := range messages {
+			images := make([]*pb.ImageFrame, 0, len(m.Images))
+			for _, img := range m.Images {
+				images = append(images, &pb.ImageFrame{
+					Data:        img.Data,
+					MimeType:    img.MimeType,
+					Width:       img.Width,
+					Height:      img.Height,
+					Source:      img.Source,
+					TimestampMs: img.TimestampMS,
+					FrameSeq:    img.FrameSeq,
+				})
+			}
 			pbMessages[i] = &pb.ChatMessage{
 				Role:    m.Role,
 				Content: m.Content,
+				Images:  images,
 			}
 		}
 

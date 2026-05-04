@@ -23,6 +23,16 @@ func HandleWebSocket(
 	onMessage func(string, WSMessage),
 	onActivity func(string),
 ) http.HandlerFunc {
+	return HandleWebSocketWithReadLimit(hub, sessionID, 0, onMessage, onActivity)
+}
+
+func HandleWebSocketWithReadLimit(
+	hub *Hub,
+	sessionID string,
+	maxMessageSize int64,
+	onMessage func(string, WSMessage),
+	onActivity func(string),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -31,10 +41,11 @@ func HandleWebSocket(
 		}
 
 		client := &Client{
-			SessionID: sessionID,
-			Conn:      conn,
-			Send:      make(chan []byte, 64),
-			hub:       hub,
+			SessionID:      sessionID,
+			Conn:           conn,
+			Send:           make(chan []byte, 64),
+			MaxMessageSize: maxMessageSize,
+			hub:            hub,
 		}
 
 		hub.Register(client)

@@ -1,3 +1,4 @@
+import base64
 import os
 from typing import AsyncIterator
 
@@ -9,6 +10,7 @@ SENTENCE_ENDERS = {"。", "！", "？", ".", "!", "?", "；", ";", "\n"}
 
 class OpenAILLMPlugin(LLMPlugin):
     name = "llm.openai"
+    supports_images = True
 
     def __init__(self) -> None:
         self.client = None
@@ -36,12 +38,37 @@ class OpenAILLMPlugin(LLMPlugin):
         extra_body = config.params.get("extra_body", {})
         self.extra_body = extra_body if isinstance(extra_body, dict) else {}
 
+    @staticmethod
+    def _format_message(message: dict) -> dict:
+        images = message.get("images") or []
+        content = message.get("content", "")
+        if not images:
+            return {"role": message["role"], "content": content}
+
+        parts = []
+        if content:
+            parts.append({"type": "text", "text": content})
+        for image in images:
+            raw = image.get("data", b"")
+            if isinstance(raw, str):
+                encoded = raw
+            else:
+                encoded = base64.b64encode(raw).decode("ascii")
+            mime_type = image.get("mime_type") or "image/jpeg"
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                }
+            )
+        return {"role": message["role"], "content": parts}
+
     async def generate_stream(
         self, messages: list[dict]
     ) -> AsyncIterator[LLMResponseChunk]:
-        full_messages = messages
+        full_messages = [self._format_message(message) for message in messages]
         if self.system_prompt:
-            full_messages = [{"role": "system", "content": self.system_prompt}] + messages
+            full_messages = [{"role": "system", "content": self.system_prompt}] + full_messages
 
         accumulated = ""
         create_kwargs = {

@@ -3,6 +3,8 @@ package cyberverse;
 
 option go_package = "github.com/cyberverse/server/internal/pb";
 
+import "common.proto";
+
 service LLMService {
   rpc GenerateStream (LLMRequest) returns (stream LLMChunk);
 }
@@ -16,6 +18,7 @@ message LLMRequest {
 message ChatMessage {
   string role = 1;
   string content = 2;
+  repeated ImageFrame images = 3;
 }
 
 message LLMConfig {

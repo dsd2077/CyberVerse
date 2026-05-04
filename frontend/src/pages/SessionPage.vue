@@ -7,6 +7,7 @@ import VoiceWaveform from '../components/VoiceWaveform.vue'
 import { useWebRTC } from '../composables/useWebRTC'
 import { useDirectWebRTC } from '../composables/useDirectWebRTC'
 import { useChat } from '../composables/useChat'
+import { useVisualInput, type VisualInputConfig } from '../composables/useVisualInput'
 import { deleteSession } from '../services/api'
 
 const router = useRouter()
@@ -14,6 +15,11 @@ const route = useRoute()
 const sessionId = computed(() => route.params.id as string)
 
 const videoPlayerRef = ref<InstanceType<typeof VideoPlayer> | null>(null)
+const sessionVideoShellRef = ref<HTMLElement | null>(null)
+const visualPreviewShellRef = ref<HTMLElement | null>(null)
+const visualPreviewRef = ref<HTMLVideoElement | null>(null)
+const visualPreviewPosition = ref<{ x: number; y: number } | null>(null)
+const isVisualPreviewDragging = ref(false)
 const elapsed = ref(0)
 const clockMs = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
@@ -21,6 +27,22 @@ const showDiag = ref(false)
 const isChatCollapsed = ref(false)
 
 const streamingMode = (route.query.streaming_mode as string) || 'direct'
+const sessionMode = computed<'voice_llm' | 'standard'>(() =>
+  route.query.mode === 'standard' ? 'standard' : 'voice_llm'
+)
+const isStandardMode = computed(() => sessionMode.value === 'standard')
+
+function parseVisualInputConfig(): Partial<VisualInputConfig> | undefined {
+  const raw = route.query.visual_input
+  if (!raw || Array.isArray(raw)) return undefined
+  try {
+    return JSON.parse(raw) as Partial<VisualInputConfig>
+  } catch {
+    return undefined
+  }
+}
+
+const visualInputConfig = computed(() => parseVisualInputConfig())
 
 // Both composables are called unconditionally (Vue requirement),
 // but only the active one is wired up.
@@ -59,7 +81,142 @@ const {
   loadHistory,
   registerSignalingHandler,
   sendSignaling,
+  sendWSMessage,
+  isConnected: chatConnected,
 } = useChat(() => sessionId.value)
+
+const visualInput = useVisualInput(
+  (msg) => sendWSMessage(msg),
+  () => visualInputConfig.value,
+)
+const canUseVisualInput = computed(() =>
+  isStandardMode.value && chatConnected.value && (visualInputConfig.value?.enabled ?? true)
+)
+const visualPreviewStyle = computed(() => {
+  const pos = visualPreviewPosition.value
+  if (!pos) return undefined
+  return {
+    left: `${pos.x}px`,
+    top: `${pos.y}px`,
+    right: 'auto',
+    bottom: 'auto',
+  }
+})
+
+const VISUAL_PREVIEW_MARGIN = 12
+
+type VisualPreviewDragState = {
+  pointerId: number
+  offsetX: number
+  offsetY: number
+  previewEl: HTMLElement
+}
+
+let visualPreviewDragState: VisualPreviewDragState | null = null
+
+function clampValue(value: number, min: number, max: number): number {
+  if (max < min) return min
+  return Math.min(Math.max(value, min), max)
+}
+
+function clampVisualPreviewPosition(x: number, y: number, previewEl: HTMLElement): { x: number; y: number } {
+  const shell = sessionVideoShellRef.value
+  if (!shell) return { x, y }
+
+  const shellRect = shell.getBoundingClientRect()
+  const previewRect = previewEl.getBoundingClientRect()
+  const maxX = shellRect.width - previewRect.width - VISUAL_PREVIEW_MARGIN
+  const maxY = shellRect.height - previewRect.height - VISUAL_PREVIEW_MARGIN
+
+  return {
+    x: clampValue(x, VISUAL_PREVIEW_MARGIN, maxX),
+    y: clampValue(y, VISUAL_PREVIEW_MARGIN, maxY),
+  }
+}
+
+function updateVisualPreviewPosition(clientX: number, clientY: number) {
+  const drag = visualPreviewDragState
+  const shell = sessionVideoShellRef.value
+  if (!drag || !shell) return
+
+  const shellRect = shell.getBoundingClientRect()
+  visualPreviewPosition.value = clampVisualPreviewPosition(
+    clientX - shellRect.left - drag.offsetX,
+    clientY - shellRect.top - drag.offsetY,
+    drag.previewEl,
+  )
+}
+
+function handleVisualPreviewPointerMove(event: PointerEvent) {
+  if (!visualPreviewDragState || event.pointerId !== visualPreviewDragState.pointerId) return
+  updateVisualPreviewPosition(event.clientX, event.clientY)
+  event.preventDefault()
+}
+
+function stopVisualPreviewDragging(event?: PointerEvent) {
+  if (event && visualPreviewDragState?.pointerId !== event.pointerId) return
+
+  if (visualPreviewDragState) {
+    try {
+      visualPreviewDragState.previewEl.releasePointerCapture(visualPreviewDragState.pointerId)
+    } catch {}
+  }
+
+  visualPreviewDragState = null
+  isVisualPreviewDragging.value = false
+  window.removeEventListener('pointermove', handleVisualPreviewPointerMove)
+  window.removeEventListener('pointerup', stopVisualPreviewDragging)
+  window.removeEventListener('pointercancel', stopVisualPreviewDragging)
+}
+
+function handleVisualPreviewPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return
+
+  const shell = sessionVideoShellRef.value
+  const previewEl = event.currentTarget as HTMLElement | null
+  if (!shell || !previewEl) return
+
+  const shellRect = shell.getBoundingClientRect()
+  const previewRect = previewEl.getBoundingClientRect()
+  visualPreviewDragState = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - previewRect.left,
+    offsetY: event.clientY - previewRect.top,
+    previewEl,
+  }
+  visualPreviewPosition.value = clampVisualPreviewPosition(
+    previewRect.left - shellRect.left,
+    previewRect.top - shellRect.top,
+    previewEl,
+  )
+  isVisualPreviewDragging.value = true
+
+  previewEl.setPointerCapture(event.pointerId)
+  window.addEventListener('pointermove', handleVisualPreviewPointerMove)
+  window.addEventListener('pointerup', stopVisualPreviewDragging)
+  window.addEventListener('pointercancel', stopVisualPreviewDragging)
+  event.preventDefault()
+}
+
+function keepVisualPreviewInBounds() {
+  const pos = visualPreviewPosition.value
+  const previewEl = visualPreviewShellRef.value
+  if (!pos || !previewEl) return
+
+  visualPreviewPosition.value = clampVisualPreviewPosition(pos.x, pos.y, previewEl)
+}
+
+watchEffect(() => {
+  const el = visualPreviewRef.value
+  if (!el) return
+  const stream = visualInput.previewStream.value
+  if (el.srcObject !== stream) {
+    el.srcObject = stream
+  }
+  if (stream) {
+    void el.play().catch(() => {})
+  }
+})
 
 // Initialize idle video URLs from route query (if already cached at session creation)
 const routeIdleUrls = route.query.idle_video_urls
@@ -105,6 +262,8 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
 
 // Auto-connect on mount using session params from query
 onMounted(async () => {
+  window.addEventListener('resize', keepVisualPreviewInBounds)
+
   const startedAt = Date.now()
 
   await chatConnect()
@@ -136,9 +295,13 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  stopVisualPreviewDragging()
+  window.removeEventListener('resize', keepVisualPreviewInBounds)
+  visualInput.stop(undefined, true)
 })
 
 async function handleDisconnect() {
+  visualInput.stop(undefined, true)
   webrtcDisconnect()
   chatDisconnect()
   if (sessionId.value) {
@@ -167,7 +330,7 @@ function formatTime(s: number): string {
 <template>
   <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed }">
     <!-- Left: Video area (60%) -->
-    <div class="session-video-shell">
+    <div ref="sessionVideoShellRef" class="session-video-shell">
       <VideoPlayer
         ref="videoPlayerRef"
         :display-mode="displayMode"
@@ -285,8 +448,63 @@ function formatTime(s: number): string {
         />
       </div>
 
+      <div
+        v-if="isStandardMode && visualInput.error.value"
+        class="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 max-w-[min(90vw,28rem)] px-3 py-2 bg-black/80 border border-red-400/30 text-red-100 text-xs rounded-cv-md"
+      >
+        {{ visualInput.error.value }}
+      </div>
+
+      <div
+        v-if="visualInput.previewStream.value"
+        class="visual-preview"
+        :class="{ dragging: isVisualPreviewDragging }"
+        :style="visualPreviewStyle"
+        ref="visualPreviewShellRef"
+        @pointerdown="handleVisualPreviewPointerDown"
+      >
+        <video
+          ref="visualPreviewRef"
+          class="visual-preview-video"
+          :class="{ 'visual-preview-mirror': visualInput.isCameraActive.value }"
+          autoplay
+          muted
+          playsinline
+        />
+        <button
+          type="button"
+          class="visual-preview-close"
+          title="关闭视频输入"
+          aria-label="关闭视频输入"
+          @pointerdown.stop
+          @click.stop="visualInput.stop()"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+
       <!-- Control bar (bottom center, floating) -->
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-2.5 bg-black/70 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.3)] z-10">
+        <!-- User video input (standard mode only) -->
+        <button
+          v-if="isStandardMode"
+          type="button"
+          :disabled="!canUseVisualInput || visualInput.isStarting.value"
+          :title="visualInput.isCameraActive.value ? '关闭摄像头输入' : '开启摄像头输入'"
+          :aria-label="visualInput.isCameraActive.value ? '关闭摄像头输入' : '开启摄像头输入'"
+          class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          :class="visualInput.isCameraActive.value ? 'bg-cv-accent text-white' : 'bg-white/10 text-cv-text hover:bg-white/16'"
+          @click="visualInput.toggleCamera()"
+        >
+          <svg class="w-5 h-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h5a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 11 16H6a2.5 2.5 0 0 1-2.5-2.5v-7Z" />
+            <path d="m13.5 8 3-2v8l-3-2" stroke-linecap="round" stroke-linejoin="round" />
+            <path v-if="!visualInput.isCameraActive.value" d="M3 3l14 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+
         <!-- Mic button -->
         <button @click="toggleMute()"
                 class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
@@ -450,6 +668,59 @@ function formatTime(s: number): string {
   background: rgba(0, 0, 0, 0.9);
 }
 
+.visual-preview {
+  position: absolute;
+  right: 20px;
+  bottom: 88px;
+  z-index: 12;
+  width: clamp(132px, 18vw, 220px);
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #05070a;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.46);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.visual-preview.dragging {
+  cursor: grabbing;
+}
+
+.visual-preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.visual-preview-mirror {
+  transform: scaleX(-1);
+}
+
+.visual-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.visual-preview-close:hover {
+  background: rgba(0, 0, 0, 0.82);
+}
+
 @media (max-width: 900px) {
   .session-chat-sidebar,
   .session-chat-inner {
@@ -458,6 +729,12 @@ function formatTime(s: number): string {
 
   .session-chat-sidebar {
     flex-basis: min(82vw, 420px);
+  }
+
+  .visual-preview {
+    right: 14px;
+    bottom: 94px;
+    width: min(42vw, 170px);
   }
 }
 </style>

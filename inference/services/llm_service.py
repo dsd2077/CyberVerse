@@ -26,10 +26,30 @@ class LLMGRPCService(llm_pb2_grpc.LLMServiceServicer):
         except (KeyError, RuntimeError) as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
 
-        messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.messages
-        ]
+        messages = []
+        has_images = False
+        for msg in request.messages:
+            images = [
+                {
+                    "data": image.data,
+                    "mime_type": image.mime_type,
+                    "width": image.width,
+                    "height": image.height,
+                    "source": image.source,
+                    "timestamp_ms": image.timestamp_ms,
+                    "frame_seq": image.frame_seq,
+                }
+                for image in msg.images
+            ]
+            has_images = has_images or bool(images)
+            item = {"role": msg.role, "content": msg.content}
+            if images:
+                item["images"] = images
+            messages.append(item)
+
+        if has_images and not getattr(plugin, "supports_images", False):
+            raise RuntimeError("Configured LLM plugin does not support image input")
+
         async for chunk in plugin.generate_stream(messages):
             yield llm_pb2.LLMChunk(
                 token=chunk.token,

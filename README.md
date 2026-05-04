@@ -310,6 +310,12 @@ If you want the browser to connect to the remote server directly instead of thro
 
 Open http://localhost:5173 in your browser — you're ready to go.
 
+### User-Side Visual Input
+
+`standard` sessions support user camera input and screen sharing. After the user explicitly enables a source, the frontend samples low-rate JPEG frames and attaches the latest frames to the next text turn's multimodal LLM request. `voice_llm` sessions do not consume visual input and do not auto-switch to the standard pipeline.
+
+Camera and screen capture require HTTPS or localhost in the browser. Sampling interval, frame size, and payload limits are configured under `pipeline.visual_input`.
+
 ## Roadmap
 
 ### 1. **Digital Human Creation Platform**  
@@ -323,6 +329,7 @@ Configure characters, inference, and launch real-time digital-human sessions.
 - [x] Voice cloning: supports Doubao voice cloning
 - [x] Hybrid input: supports both voice and text in the same conversation
 - [x] Voice interruption while the model is speaking, plus session pause and resume
+- [x] User camera input and screen-sharing visual frames in standard mode
 - [ ] Import knowledge, documents, and biographical material for character-grounded RAG Q&A
 - [ ] Face-to-face: user-side camera/video input with understanding of motion, gestures, and other visual cues
 - [ ] Embeddable for developers (Web component or SDK) to integrate self-hosted instances into their own sites

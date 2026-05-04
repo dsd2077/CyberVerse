@@ -50,6 +50,23 @@ type ChatMessage struct {
 	TurnSeq   uint64    `json:"turn_seq,omitempty"`
 }
 
+type VisualFrame struct {
+	Data        []byte
+	MimeType    string
+	Width       int32
+	Height      int32
+	Source      string
+	TimestampMS int64
+	FrameSeq    int64
+	ReceivedAt  time.Time
+}
+
+type VisualState struct {
+	ActiveSource   string
+	Frames         []VisualFrame
+	LastAcceptedAt time.Time
+}
+
 type DialogContextItem struct {
 	Role      string
 	Text      string
@@ -77,7 +94,8 @@ type Session struct {
 	VoiceWelcomeSent bool `json:"-"`
 	// RecordingDir is the absolute path where recordings for this session are saved.
 	// Set by the orchestrator when the first recording turn begins.
-	RecordingDir string `json:"-"`
+	RecordingDir string      `json:"-"`
+	Visual       VisualState `json:"-"`
 	mu           sync.RWMutex
 }
 
@@ -240,6 +258,72 @@ func (s *Session) DialogContextSnapshot() []DialogContextItem {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]DialogContextItem(nil), s.DialogContext...)
+}
+
+func copyVisualFrame(frame VisualFrame) VisualFrame {
+	copied := frame
+	if frame.Data != nil {
+		copied.Data = append([]byte(nil), frame.Data...)
+	}
+	return copied
+}
+
+func (s *Session) StartVisualInput(source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Visual.ActiveSource != source {
+		s.Visual.Frames = nil
+		s.Visual.LastAcceptedAt = time.Time{}
+	}
+	s.Visual.ActiveSource = source
+	s.LastActiveAt = time.Now()
+}
+
+func (s *Session) StopVisualInput(source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if source == "" || s.Visual.ActiveSource == "" || s.Visual.ActiveSource == source {
+		s.Visual = VisualState{}
+	}
+	s.LastActiveAt = time.Now()
+}
+
+func (s *Session) StoreVisualFrame(frame VisualFrame, maxRecent int, minInterval time.Duration, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if maxRecent <= 0 {
+		maxRecent = 1
+	}
+	if !s.Visual.LastAcceptedAt.IsZero() && minInterval > 0 && now.Sub(s.Visual.LastAcceptedAt) < minInterval {
+		return false
+	}
+	if s.Visual.ActiveSource != frame.Source {
+		s.Visual.ActiveSource = frame.Source
+		s.Visual.Frames = nil
+	}
+	frame.ReceivedAt = now
+	s.Visual.Frames = append(s.Visual.Frames, copyVisualFrame(frame))
+	if len(s.Visual.Frames) > maxRecent {
+		s.Visual.Frames = append([]VisualFrame(nil), s.Visual.Frames[len(s.Visual.Frames)-maxRecent:]...)
+	}
+	s.Visual.LastAcceptedAt = now
+	s.LastActiveAt = now
+	return true
+}
+
+func (s *Session) LatestVisualFrames(now time.Time, ttl time.Duration) []VisualFrame {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.Visual.Frames) == 0 || ttl <= 0 {
+		return nil
+	}
+	frames := make([]VisualFrame, 0, len(s.Visual.Frames))
+	for _, frame := range s.Visual.Frames {
+		if now.Sub(frame.ReceivedAt) <= ttl {
+			frames = append(frames, copyVisualFrame(frame))
+		}
+	}
+	return frames
 }
 
 // SessionManager manages active sessions.

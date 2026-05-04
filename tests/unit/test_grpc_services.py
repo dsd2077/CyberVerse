@@ -255,6 +255,36 @@ async def test_llm_generate_stream(registry):
     assert results[1].is_final is True
 
 
+@pytest.mark.asyncio
+async def test_llm_rejects_images_when_plugin_does_not_support_them(registry):
+    svc = LLMGRPCService(registry)
+    request = llm_pb2.LLMRequest(
+        session_id="session-1",
+        messages=[
+            llm_pb2.ChatMessage(
+                role="user",
+                content="What is on screen?",
+                images=[
+                    common_pb2.ImageFrame(
+                        data=b"\xff\xd8\xff",
+                        mime_type="image/jpeg",
+                        width=1,
+                        height=1,
+                        source="screen",
+                        timestamp_ms=123,
+                        frame_seq=1,
+                    )
+                ],
+            )
+        ],
+        config=llm_pb2.LLMConfig(provider="mock"),
+    )
+
+    with pytest.raises(RuntimeError, match="does not support image input"):
+        async for _ in svc.GenerateStream(request, MagicMock()):
+            pass
+
+
 # --- TTS Service Tests ---
 
 @pytest.mark.asyncio

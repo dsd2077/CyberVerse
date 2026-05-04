@@ -6,6 +6,8 @@ from inference.plugins.base import CyberVersePlugin
 
 
 class LLMPlugin(CyberVersePlugin):
+    supports_images = False
+
     @abstractmethod
     async def generate_stream(
         self, messages: list[dict]

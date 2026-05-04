@@ -9,28 +9,36 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 65536 // 64KB — SDP messages can exceed 4KB
+	writeWait             = 10 * time.Second
+	pongWait              = 60 * time.Second
+	pingPeriod            = (pongWait * 9) / 10
+	defaultMaxMessageSize = 1024 * 1024
 )
 
 // Client represents a single WebSocket connection.
 type Client struct {
-	SessionID string
-	Conn      *websocket.Conn
-	Send      chan []byte
-	hub       *Hub
+	SessionID      string
+	Conn           *websocket.Conn
+	Send           chan []byte
+	MaxMessageSize int64
+	hub            *Hub
 }
 
 // WSMessage represents a message received from a WebSocket client.
 type WSMessage struct {
-	Type      string  `json:"type"`
-	Text      string  `json:"text,omitempty"`
-	SDP       string  `json:"sdp,omitempty"`
-	Candidate string  `json:"candidate,omitempty"`
-	SDPMid    string  `json:"sdp_mid,omitempty"`
-	SDPMLine  *uint16 `json:"sdp_mline_index,omitempty"`
+	Type        string  `json:"type"`
+	Text        string  `json:"text,omitempty"`
+	SDP         string  `json:"sdp,omitempty"`
+	Candidate   string  `json:"candidate,omitempty"`
+	SDPMid      string  `json:"sdp_mid,omitempty"`
+	SDPMLine    *uint16 `json:"sdp_mline_index,omitempty"`
+	Source      string  `json:"source,omitempty"`
+	Mime        string  `json:"mime,omitempty"`
+	Data        string  `json:"data,omitempty"`
+	Width       int32   `json:"width,omitempty"`
+	Height      int32   `json:"height,omitempty"`
+	TimestampMS int64   `json:"timestamp_ms,omitempty"`
+	FrameSeq    int64   `json:"frame_seq,omitempty"`
 }
 
 // ReadPump reads messages from the WebSocket and dispatches them via onMessage.
@@ -44,6 +52,10 @@ func (c *Client) ReadPump(
 		c.Conn.Close()
 	}()
 
+	maxMessageSize := c.MaxMessageSize
+	if maxMessageSize <= 0 {
+		maxMessageSize = defaultMaxMessageSize
+	}
 	c.Conn.SetReadLimit(maxMessageSize)
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.Conn.SetPongHandler(func(string) error {

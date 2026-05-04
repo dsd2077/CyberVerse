@@ -85,6 +85,7 @@ type ChatMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
 	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	Images        []*ImageFrame          `protobuf:"bytes,3,rep,name=images,proto3" json:"images,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -131,6 +132,13 @@ func (x *ChatMessage) GetContent() string {
 		return x.Content
 	}
 	return ""
+}
+
+func (x *ChatMessage) GetImages() []*ImageFrame {
+	if x != nil {
+		return x.Images
+	}
+	return nil
 }
 
 type LLMConfig struct {
@@ -274,16 +282,17 @@ var File_llm_proto protoreflect.FileDescriptor
 const file_llm_proto_rawDesc = "" +
 	"\n" +
 	"\tllm.proto\x12\n" +
-	"cyberverse\"\x8f\x01\n" +
+	"cyberverse\x1a\fcommon.proto\"\x8f\x01\n" +
 	"\n" +
 	"LLMRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x123\n" +
 	"\bmessages\x18\x02 \x03(\v2\x17.cyberverse.ChatMessageR\bmessages\x12-\n" +
-	"\x06config\x18\x03 \x01(\v2\x15.cyberverse.LLMConfigR\x06config\";\n" +
+	"\x06config\x18\x03 \x01(\v2\x15.cyberverse.LLMConfigR\x06config\"k\n" +
 	"\vChatMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"~\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\x12.\n" +
+	"\x06images\x18\x03 \x03(\v2\x16.cyberverse.ImageFrameR\x06images\"~\n" +
 	"\tLLMConfig\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12 \n" +
 	"\vtemperature\x18\x02 \x01(\x02R\vtemperature\x12\x1d\n" +
@@ -317,17 +326,19 @@ var file_llm_proto_goTypes = []any{
 	(*ChatMessage)(nil), // 1: cyberverse.ChatMessage
 	(*LLMConfig)(nil),   // 2: cyberverse.LLMConfig
 	(*LLMChunk)(nil),    // 3: cyberverse.LLMChunk
+	(*ImageFrame)(nil),  // 4: cyberverse.ImageFrame
 }
 var file_llm_proto_depIdxs = []int32{
 	1, // 0: cyberverse.LLMRequest.messages:type_name -> cyberverse.ChatMessage
 	2, // 1: cyberverse.LLMRequest.config:type_name -> cyberverse.LLMConfig
-	0, // 2: cyberverse.LLMService.GenerateStream:input_type -> cyberverse.LLMRequest
-	3, // 3: cyberverse.LLMService.GenerateStream:output_type -> cyberverse.LLMChunk
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	4, // 2: cyberverse.ChatMessage.images:type_name -> cyberverse.ImageFrame
+	0, // 3: cyberverse.LLMService.GenerateStream:input_type -> cyberverse.LLMRequest
+	3, // 4: cyberverse.LLMService.GenerateStream:output_type -> cyberverse.LLMChunk
+	4, // [4:5] is the sub-list for method output_type
+	3, // [3:4] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_llm_proto_init() }
@@ -335,6 +346,7 @@ func file_llm_proto_init() {
 	if File_llm_proto != nil {
 		return
 	}
+	file_common_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

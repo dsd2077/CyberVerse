@@ -103,6 +103,12 @@ export function useChat(sessionId: () => string) {
     ws.value.send(JSON.stringify(msg))
   }
 
+  function sendWSMessage(msg: any): boolean {
+    if (!ws.value || ws.value.readyState !== WebSocket.OPEN) return false
+    ws.value.send(JSON.stringify(msg))
+    return true
+  }
+
   function connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       const wsBase = import.meta.env.VITE_WS_BASE || `ws://${window.location.host}`
@@ -231,6 +237,11 @@ export function useChat(sessionId: () => string) {
           break
 
         case 'avatar_warning':
+          console.warn('[CyberVerse]', data.message || data)
+          break
+
+        case 'visual_input_error':
+        case 'visual_input_unsupported':
           console.warn('[CyberVerse]', data.message || data)
           break
 
@@ -369,5 +380,6 @@ export function useChat(sessionId: () => string) {
     loadHistory,
     registerSignalingHandler,
     sendSignaling,
+    sendWSMessage,
   }
 }

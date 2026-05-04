@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,11 @@ const avatarImageMaxUploadHint = "角色头像图片超过当前 10MB 上传限�
 const (
 	doubaoDialogContextMaxPairs  = 20
 	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
+)
+
+var (
+	ErrVisualInputUnsupported = errors.New("visual input is only supported in standard sessions")
+	ErrVisualInputDisabled    = errors.New("visual input is disabled")
 )
 
 type voiceAVSyncBuffer struct {
@@ -568,6 +574,129 @@ func (o *Orchestrator) HealthCheck(ctx context.Context) error {
 		return errors.New("inference service is not configured")
 	}
 	return o.inference.HealthCheck(ctx)
+}
+
+func normalizedVisualInputConfig(cfg config.VisualInputConfig) config.VisualInputConfig {
+	if cfg.FrameIntervalMS == 0 {
+		cfg.FrameIntervalMS = 1000
+	}
+	if cfg.MaxWidth == 0 {
+		cfg.MaxWidth = 1280
+	}
+	if cfg.MaxHeight == 0 {
+		cfg.MaxHeight = 720
+	}
+	if cfg.MaxFrameBytes == 0 {
+		cfg.MaxFrameBytes = 512 * 1024
+	}
+	if cfg.MaxRecentFrames == 0 {
+		cfg.MaxRecentFrames = 2
+	}
+	if cfg.FrameTTLMS == 0 {
+		cfg.FrameTTLMS = 10000
+	}
+	return cfg
+}
+
+func (o *Orchestrator) visualInputConfig() config.VisualInputConfig {
+	if o == nil {
+		return normalizedVisualInputConfig(config.VisualInputConfig{})
+	}
+	return normalizedVisualInputConfig(o.pipelineCfg.VisualInput)
+}
+
+func validateVisualSource(source string) error {
+	switch source {
+	case "camera", "screen":
+		return nil
+	default:
+		return fmt.Errorf("invalid visual source")
+	}
+}
+
+func (o *Orchestrator) visualSession(sessionID string) (*Session, config.VisualInputConfig, error) {
+	session, err := o.sessionMgr.Get(sessionID)
+	if err != nil {
+		return nil, config.VisualInputConfig{}, err
+	}
+	if session.Mode != ModeStandard {
+		return nil, config.VisualInputConfig{}, ErrVisualInputUnsupported
+	}
+	cfg := o.visualInputConfig()
+	if !cfg.IsEnabled() {
+		return nil, cfg, ErrVisualInputDisabled
+	}
+	return session, cfg, nil
+}
+
+func (o *Orchestrator) HandleVisualInputStart(sessionID string, source string) error {
+	if err := validateVisualSource(source); err != nil {
+		return err
+	}
+	session, _, err := o.visualSession(sessionID)
+	if err != nil {
+		return err
+	}
+	session.StartVisualInput(source)
+	return nil
+}
+
+func (o *Orchestrator) HandleVisualInputStop(sessionID string, source string) error {
+	if source != "" {
+		if err := validateVisualSource(source); err != nil {
+			return err
+		}
+	}
+	session, _, err := o.visualSession(sessionID)
+	if err != nil {
+		return err
+	}
+	session.StopVisualInput(source)
+	return nil
+}
+
+func (o *Orchestrator) HandleVisualFrame(sessionID string, msg ws.WSMessage) error {
+	if err := validateVisualSource(msg.Source); err != nil {
+		return err
+	}
+	session, cfg, err := o.visualSession(sessionID)
+	if err != nil {
+		return err
+	}
+	if msg.Mime != "image/jpeg" {
+		return fmt.Errorf("invalid visual frame mime")
+	}
+	if msg.Width <= 0 || msg.Height <= 0 || int(msg.Width) > cfg.MaxWidth || int(msg.Height) > cfg.MaxHeight {
+		return fmt.Errorf("invalid visual frame dimensions")
+	}
+	encoded := strings.TrimSpace(msg.Data)
+	if encoded == "" {
+		return fmt.Errorf("visual frame data is required")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return fmt.Errorf("invalid visual frame data")
+	}
+	if len(decoded) == 0 || len(decoded) > cfg.MaxFrameBytes {
+		return fmt.Errorf("visual frame exceeds size limit")
+	}
+	if len(decoded) < 3 || decoded[0] != 0xff || decoded[1] != 0xd8 || decoded[2] != 0xff {
+		return fmt.Errorf("invalid visual frame jpeg data")
+	}
+
+	now := time.Now()
+	frame := VisualFrame{
+		Data:        decoded,
+		MimeType:    msg.Mime,
+		Width:       msg.Width,
+		Height:      msg.Height,
+		Source:      msg.Source,
+		TimestampMS: msg.TimestampMS,
+		FrameSeq:    msg.FrameSeq,
+	}
+	minInterval := time.Duration(cfg.FrameIntervalMS) * time.Millisecond
+	session.StoreVisualFrame(frame, cfg.MaxRecentFrames, minInterval, now)
+	return nil
 }
 
 func (o *Orchestrator) CheckVoice(ctx context.Context, provider string, voiceType string) (string, error) {
@@ -1451,6 +1580,28 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 	}
 	for _, m := range history {
 		messages = append(messages, inference.ChatMessage{Role: m.Role, Content: m.Content})
+	}
+	visualCfg := o.visualInputConfig()
+	visualFrames := session.LatestVisualFrames(time.Now(), time.Duration(visualCfg.FrameTTLMS)*time.Millisecond)
+	if len(visualFrames) > 0 {
+		images := make([]inference.ImageFrame, 0, len(visualFrames))
+		for _, frame := range visualFrames {
+			images = append(images, inference.ImageFrame{
+				Data:        frame.Data,
+				MimeType:    frame.MimeType,
+				Width:       frame.Width,
+				Height:      frame.Height,
+				Source:      frame.Source,
+				TimestampMS: frame.TimestampMS,
+				FrameSeq:    frame.FrameSeq,
+			})
+		}
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "user" {
+				messages[i].Images = images
+				break
+			}
+		}
 	}
 
 	// 1. Start LLM stream

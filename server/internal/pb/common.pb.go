@@ -197,6 +197,98 @@ func (x *VideoChunk) GetIsFinal() bool {
 	return false
 }
 
+type ImageFrame struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	MimeType      string                 `protobuf:"bytes,2,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Width         int32                  `protobuf:"varint,3,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32                  `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
+	Source        string                 `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	TimestampMs   int64                  `protobuf:"varint,6,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	FrameSeq      int64                  `protobuf:"varint,7,opt,name=frame_seq,json=frameSeq,proto3" json:"frame_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImageFrame) Reset() {
+	*x = ImageFrame{}
+	mi := &file_common_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImageFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImageFrame) ProtoMessage() {}
+
+func (x *ImageFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_common_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImageFrame.ProtoReflect.Descriptor instead.
+func (*ImageFrame) Descriptor() ([]byte, []int) {
+	return file_common_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ImageFrame) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ImageFrame) GetMimeType() string {
+	if x != nil {
+		return x.MimeType
+	}
+	return ""
+}
+
+func (x *ImageFrame) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *ImageFrame) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *ImageFrame) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ImageFrame) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+func (x *ImageFrame) GetFrameSeq() int64 {
+	if x != nil {
+		return x.FrameSeq
+	}
+	return 0
+}
+
 type PluginConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PluginName    string                 `protobuf:"bytes,1,opt,name=plugin_name,json=pluginName,proto3" json:"plugin_name,omitempty"`
@@ -207,7 +299,7 @@ type PluginConfig struct {
 
 func (x *PluginConfig) Reset() {
 	*x = PluginConfig{}
-	mi := &file_common_proto_msgTypes[2]
+	mi := &file_common_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -219,7 +311,7 @@ func (x *PluginConfig) String() string {
 func (*PluginConfig) ProtoMessage() {}
 
 func (x *PluginConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_common_proto_msgTypes[2]
+	mi := &file_common_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -232,7 +324,7 @@ func (x *PluginConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PluginConfig.ProtoReflect.Descriptor instead.
 func (*PluginConfig) Descriptor() ([]byte, []int) {
-	return file_common_proto_rawDescGZIP(), []int{2}
+	return file_common_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *PluginConfig) GetPluginName() string {
@@ -274,7 +366,16 @@ const file_common_proto_rawDesc = "" +
 	"\x03fps\x18\x05 \x01(\x05R\x03fps\x12\x1f\n" +
 	"\vchunk_index\x18\x06 \x01(\x05R\n" +
 	"chunkIndex\x12\x19\n" +
-	"\bis_final\x18\a \x01(\bR\aisFinal\"\xa8\x01\n" +
+	"\bis_final\x18\a \x01(\bR\aisFinal\"\xc3\x01\n" +
+	"\n" +
+	"ImageFrame\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
+	"\tmime_type\x18\x02 \x01(\tR\bmimeType\x12\x14\n" +
+	"\x05width\x18\x03 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x04 \x01(\x05R\x06height\x12\x16\n" +
+	"\x06source\x18\x05 \x01(\tR\x06source\x12!\n" +
+	"\ftimestamp_ms\x18\x06 \x01(\x03R\vtimestampMs\x12\x1b\n" +
+	"\tframe_seq\x18\a \x01(\x03R\bframeSeq\"\xa8\x01\n" +
 	"\fPluginConfig\x12\x1f\n" +
 	"\vplugin_name\x18\x01 \x01(\tR\n" +
 	"pluginName\x12<\n" +
@@ -295,15 +396,16 @@ func file_common_proto_rawDescGZIP() []byte {
 	return file_common_proto_rawDescData
 }
 
-var file_common_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_common_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_common_proto_goTypes = []any{
 	(*AudioChunk)(nil),   // 0: cyberverse.AudioChunk
 	(*VideoChunk)(nil),   // 1: cyberverse.VideoChunk
-	(*PluginConfig)(nil), // 2: cyberverse.PluginConfig
-	nil,                  // 3: cyberverse.PluginConfig.ParamsEntry
+	(*ImageFrame)(nil),   // 2: cyberverse.ImageFrame
+	(*PluginConfig)(nil), // 3: cyberverse.PluginConfig
+	nil,                  // 4: cyberverse.PluginConfig.ParamsEntry
 }
 var file_common_proto_depIdxs = []int32{
-	3, // 0: cyberverse.PluginConfig.params:type_name -> cyberverse.PluginConfig.ParamsEntry
+	4, // 0: cyberverse.PluginConfig.params:type_name -> cyberverse.PluginConfig.ParamsEntry
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -322,7 +424,7 @@ func file_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_common_proto_rawDesc), len(file_common_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

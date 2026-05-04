@@ -32,12 +32,24 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export interface CreateSessionResponse {
   session_id: string
+  mode: 'voice_llm' | 'standard'
   streaming_mode: string  // "direct" or "livekit"
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
   warnings?: string[]
+  visual_input?: {
+    enabled: boolean
+    frame_interval_ms: number
+    max_width: number
+    max_height: number
+    jpeg_quality: number
+    max_frame_bytes: number
+    ws_max_message_bytes: number
+    max_recent_frames: number
+    frame_ttl_ms: number
+  }
 }
 
 export interface SessionInfo {

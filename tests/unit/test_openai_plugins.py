@@ -77,6 +77,23 @@ class TestOpenAILLMPlugin:
         assert sent_messages[0]["role"] == "system"
         assert sent_messages[0]["content"] == "Be concise."
 
+    def test_formats_image_messages_for_chat_completions(self):
+        message = OpenAILLMPlugin._format_message({
+            "role": "user",
+            "content": "What is visible?",
+            "images": [
+                {
+                    "data": b"\xff\xd8\xff",
+                    "mime_type": "image/jpeg",
+                }
+            ],
+        })
+
+        assert message["role"] == "user"
+        assert message["content"][0] == {"type": "text", "text": "What is visible?"}
+        assert message["content"][1]["type"] == "image_url"
+        assert message["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,/9j/"
+
     @pytest.mark.asyncio
     async def test_shutdown(self):
         plugin = OpenAILLMPlugin()

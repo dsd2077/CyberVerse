@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/cyberverse/server/internal/config"
 	"github.com/cyberverse/server/internal/livekit"
 	"github.com/cyberverse/server/internal/orchestrator"
 	"github.com/cyberverse/server/internal/ws"
@@ -20,13 +22,27 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	SessionID     string   `json:"session_id"`
-	StreamingMode string   `json:"streaming_mode"`
-	LiveKitURL    string   `json:"livekit_url,omitempty"`
-	Token         string   `json:"livekit_token,omitempty"`
-	IdleVideoURL  string   `json:"idle_video_url,omitempty"`
-	IdleVideoURLs []string `json:"idle_video_urls,omitempty"`
-	Warnings      []string `json:"warnings,omitempty"`
+	SessionID     string               `json:"session_id"`
+	Mode          string               `json:"mode"`
+	StreamingMode string               `json:"streaming_mode"`
+	LiveKitURL    string               `json:"livekit_url,omitempty"`
+	Token         string               `json:"livekit_token,omitempty"`
+	IdleVideoURL  string               `json:"idle_video_url,omitempty"`
+	IdleVideoURLs []string             `json:"idle_video_urls,omitempty"`
+	Warnings      []string             `json:"warnings,omitempty"`
+	VisualInput   *VisualInputResponse `json:"visual_input,omitempty"`
+}
+
+type VisualInputResponse struct {
+	Enabled           bool    `json:"enabled"`
+	FrameIntervalMS   int     `json:"frame_interval_ms"`
+	MaxWidth          int     `json:"max_width"`
+	MaxHeight         int     `json:"max_height"`
+	JPEGQuality       float64 `json:"jpeg_quality"`
+	MaxFrameBytes     int     `json:"max_frame_bytes"`
+	WSMaxMessageBytes int64   `json:"ws_max_message_bytes"`
+	MaxRecentFrames   int     `json:"max_recent_frames"`
+	FrameTTLMS        int     `json:"frame_ttl_ms"`
 }
 
 type SendMessageRequest struct {
@@ -35,6 +51,51 @@ type SendMessageRequest struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+func modeString(mode orchestrator.PipelineMode) string {
+	if mode == orchestrator.ModeStandard {
+		return "standard"
+	}
+	return "voice_llm"
+}
+
+func normalizedVisualInputResponse(cfg config.VisualInputConfig) VisualInputResponse {
+	if cfg.FrameIntervalMS == 0 {
+		cfg.FrameIntervalMS = 1000
+	}
+	if cfg.MaxWidth == 0 {
+		cfg.MaxWidth = 1280
+	}
+	if cfg.MaxHeight == 0 {
+		cfg.MaxHeight = 720
+	}
+	if cfg.JPEGQuality == 0 {
+		cfg.JPEGQuality = 0.78
+	}
+	if cfg.MaxFrameBytes == 0 {
+		cfg.MaxFrameBytes = 512 * 1024
+	}
+	if cfg.WSMaxMessageBytes == 0 {
+		cfg.WSMaxMessageBytes = 1024 * 1024
+	}
+	if cfg.MaxRecentFrames == 0 {
+		cfg.MaxRecentFrames = 2
+	}
+	if cfg.FrameTTLMS == 0 {
+		cfg.FrameTTLMS = 10000
+	}
+	return VisualInputResponse{
+		Enabled:           cfg.IsEnabled(),
+		FrameIntervalMS:   cfg.FrameIntervalMS,
+		MaxWidth:          cfg.MaxWidth,
+		MaxHeight:         cfg.MaxHeight,
+		JPEGQuality:       cfg.JPEGQuality,
+		MaxFrameBytes:     cfg.MaxFrameBytes,
+		WSMaxMessageBytes: cfg.WSMaxMessageBytes,
+		MaxRecentFrames:   cfg.MaxRecentFrames,
+		FrameTTLMS:        cfg.FrameTTLMS,
+	}
 }
 
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
@@ -114,6 +175,15 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 
 	resp := CreateSessionResponse{
 		SessionID: sessionID,
+		Mode:      modeString(mode),
+	}
+	if mode == orchestrator.ModeStandard {
+		visualCfg := config.VisualInputConfig{}
+		if r.cfg != nil {
+			visualCfg = r.cfg.Pipeline.VisualInput
+		}
+		visualResp := normalizedVisualInputResponse(visualCfg)
+		resp.VisualInput = &visualResp
 	}
 
 	if r.orch != nil && body.CharacterID != "" {
@@ -280,9 +350,16 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	handler := ws.HandleWebSocket(
+	maxMessageSize := int64(0)
+	if r.cfg != nil {
+		visualCfg := normalizedVisualInputResponse(r.cfg.Pipeline.VisualInput)
+		maxMessageSize = visualCfg.WSMaxMessageBytes
+	}
+
+	handler := ws.HandleWebSocketWithReadLimit(
 		r.wsHub,
 		id,
+		maxMessageSize,
 		func(sessionID string, msg ws.WSMessage) {
 			switch msg.Type {
 			case "text_input":
@@ -304,6 +381,18 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 				if r.orch != nil {
 					r.orch.HandleSignaling(sessionID, msg)
 				}
+			case "visual_input_start":
+				r.handleVisualInputMessage(sessionID, msg, func() error {
+					return r.orch.HandleVisualInputStart(sessionID, msg.Source)
+				})
+			case "visual_frame":
+				r.handleVisualInputMessage(sessionID, msg, func() error {
+					return r.orch.HandleVisualFrame(sessionID, msg)
+				})
+			case "visual_input_stop":
+				r.handleVisualInputMessage(sessionID, msg, func() error {
+					return r.orch.HandleVisualInputStop(sessionID, msg.Source)
+				})
 			}
 		},
 		func(sessionID string) {
@@ -311,6 +400,25 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		},
 	)
 	handler(w, req)
+}
+
+func (r *Router) handleVisualInputMessage(sessionID string, _ ws.WSMessage, fn func() error) {
+	if r.orch == nil {
+		return
+	}
+	if err := fn(); err != nil {
+		msgType := "visual_input_error"
+		if errors.Is(err, orchestrator.ErrVisualInputUnsupported) || errors.Is(err, orchestrator.ErrVisualInputDisabled) {
+			msgType = "visual_input_unsupported"
+		}
+		log.Printf("visual input message failed for session %s: %v", sessionID, err)
+		if r.wsHub != nil {
+			r.wsHub.BroadcastJSON(sessionID, map[string]any{
+				"type":    msgType,
+				"message": err.Error(),
+			})
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

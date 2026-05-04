@@ -136,7 +136,8 @@ async function launch() {
   if (!activeAvatarModel.value) return
   connecting.value = true
   try {
-    const resp = await createSession(characterId.value, store.current?.mode || 'standard')
+    const launchMode = store.current?.mode || 'standard'
+    const resp = await createSession(characterId.value, launchMode)
     resp.warnings?.forEach((warning) => {
       console.warn('[CyberVerse]', warning)
     })
@@ -144,10 +145,12 @@ async function launch() {
       path: `/session/${resp.session_id}`,
       query: {
         streaming_mode: resp.streaming_mode || 'direct',
+        mode: resp.mode || launchMode,
         livekit_url: resp.livekit_url,
         livekit_token: resp.livekit_token,
         idle_video_url: resp.idle_video_url,
         idle_video_urls: resp.idle_video_urls ? JSON.stringify(resp.idle_video_urls) : undefined,
+        visual_input: resp.visual_input ? JSON.stringify(resp.visual_input) : undefined,
         character_id: characterId.value,
       },
     })

@@ -6,10 +6,21 @@ import (
 	pb "github.com/cyberverse/server/internal/pb"
 )
 
+type ImageFrame struct {
+	Data        []byte
+	MimeType    string
+	Width       int32
+	Height      int32
+	Source      string
+	TimestampMS int64
+	FrameSeq    int64
+}
+
 // ChatMessage represents a single message in a conversation.
 type ChatMessage struct {
 	Role    string
 	Content string
+	Images  []ImageFrame
 }
 
 // LLMConfig holds parameters for LLM generation.

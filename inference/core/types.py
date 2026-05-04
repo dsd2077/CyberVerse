@@ -29,6 +29,17 @@ class VideoChunk:
 
 
 @dataclass
+class ImageFrame:
+    data: bytes
+    mime_type: str = "image/jpeg"
+    width: int = 0
+    height: int = 0
+    source: str = ""
+    timestamp_ms: int = 0
+    frame_seq: int = 0
+
+
+@dataclass
 class TranscriptEvent:
     text: str
     is_final: bool = False
