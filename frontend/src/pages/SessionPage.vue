@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watchEffect, unref, onUnmounted, computed, onMounted } from 'vue'
+import { ref, watch, watchEffect, unref, onUnmounted, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import ChatPanel from '../components/ChatPanel.vue'
@@ -229,6 +229,16 @@ if (routeIdleUrls && routeIdleUrls.length > 0) {
   idleVideoUrls.value = [routeIdleUrl]
 }
 
+// Standby MP4 failed to decode (404/HTML, corrupt file, etc.) — do not keep black layer over WebRTC.
+const standbyDecodeFailed = ref(false)
+watch(idleVideoUrls, () => {
+  standbyDecodeFailed.value = false
+}, { deep: true })
+
+function onStandbyMp4Failed() {
+  standbyDecodeFailed.value = true
+}
+
 // Switch to webrtc only when fresh frames are actually arriving.
 // The backend now delays avatar_status=speaking until the first video frame is
 // about to be published, so we no longer need the "frozen last frame" fallback
@@ -240,15 +250,18 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
 
   let result: 'webrtc' | 'standby' | 'placeholder'
   let reason = ''
-  if (idleVideoUrl.value && avatarStatus.value !== 'speaking') {
+  if (idleVideoUrl.value && !standbyDecodeFailed.value && avatarStatus.value !== 'speaking') {
     result = 'standby'
     reason = `avatarStatus=${avatarStatus.value}`
   } else if (hasFreshRealtimeFrame) {
     result = 'webrtc'
     reason = `fresh frame (${lastFrameAt ? (Date.now() - lastFrameAt) + 'ms ago' : ''})`
-  } else if (idleVideoUrl.value) {
+  } else if (idleVideoUrl.value && !standbyDecodeFailed.value) {
     result = 'standby'
     reason = `fallback (speaking but no fresh frame yet)`
+  } else if (standbyDecodeFailed.value && connectionState.value === 'connected') {
+    result = 'webrtc'
+    reason = 'standby MP4 decode failed, WebRTC layer'
   } else {
     result = 'placeholder'
     reason = 'no idle video'
@@ -337,6 +350,7 @@ function formatTime(s: number): string {
         :standby-src="idleVideoUrl"
         :standby-sources="idleVideoUrls"
         class="w-full flex-1 min-h-0"
+        @standby-failed="onStandbyMp4Failed"
       />
 
       <!-- Back button (top-left, glass) -->

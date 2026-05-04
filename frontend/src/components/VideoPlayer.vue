@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
+const emit = defineEmits<{
+  standbyFailed: []
+}>()
+
 const props = defineProps<{
   displayMode?: 'webrtc' | 'standby' | 'placeholder'
   standbySrc?: string
@@ -58,6 +62,13 @@ function onStandbyEnded() {
   const srcs = effectiveSources.value
   if (srcs.length <= 1) return // single video uses native loop
   currentIndex.value = (currentIndex.value + 1) % srcs.length
+}
+
+function onStandbyError(ev: Event) {
+  const el = ev.target
+  if (el instanceof HTMLVideoElement) {
+    emit('standbyFailed')
+  }
 }
 
 function syncContainerSize() {
@@ -185,6 +196,7 @@ defineExpose({ videoRef })
         class="video-element"
         :class="{ 'video-hidden': currentDisplayMode !== 'standby' }"
         @ended="onStandbyEnded"
+        @error="onStandbyError"
       />
     </div>
   </div>
