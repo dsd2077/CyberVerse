@@ -376,6 +376,7 @@ async function handleActivateImage(filename: string) {
   if (!isEdit.value) return
   try {
     await activateCharacterImage(characterId.value, filename)
+    await loadImages()
     await store.fetchOne(characterId.value)
     if (store.current) {
       form.value.avatar_image = store.current.avatar_image

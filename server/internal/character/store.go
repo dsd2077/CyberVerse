@@ -655,7 +655,7 @@ func shortID(id string) string {
 	return clean
 }
 
-// ListImages returns images sorted by filename for a character.
+// ListImages returns images with the active image first, then by filename.
 func (s *Store) ListImages(id string) ([]ImageInfo, error) {
 	s.mu.RLock()
 	c, ok := s.chars[id]
@@ -666,6 +666,12 @@ func (s *Store) ListImages(id string) ([]ImageInfo, error) {
 	imgs := make([]ImageInfo, len(c.Images))
 	copy(imgs, c.Images)
 	sort.Slice(imgs, func(i, j int) bool {
+		if imgs[i].Filename == c.ActiveImage {
+			return true
+		}
+		if imgs[j].Filename == c.ActiveImage {
+			return false
+		}
 		return imgs[i].Filename < imgs[j].Filename
 	})
 	return imgs, nil
@@ -743,9 +749,11 @@ func (s *Store) ActivateImage(id, filename string) error {
 	}
 
 	found := false
-	for _, img := range c.Images {
+	activeIndex := -1
+	for i, img := range c.Images {
 		if img.Filename == filename {
 			found = true
+			activeIndex = i
 			break
 		}
 	}
@@ -753,6 +761,11 @@ func (s *Store) ActivateImage(id, filename string) error {
 		return fmt.Errorf("image not found: %s", filename)
 	}
 
+	if activeIndex > 0 {
+		active := c.Images[activeIndex]
+		copy(c.Images[1:activeIndex+1], c.Images[0:activeIndex])
+		c.Images[0] = active
+	}
 	c.ActiveImage = filename
 	c.AvatarImage = fmt.Sprintf("/api/v1/characters/%s/images/%s", id, filename)
 	c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

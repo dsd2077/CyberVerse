@@ -104,3 +104,55 @@ func TestIdleVideoFilenameIncludesResolutionVariant(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+func TestActivateImageMovesImageFirstAndUpdatesAvatarCover(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	char, err := store.Create(&Character{
+		Name:      "Avatar Order",
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, filename := range []string{"img_001.png", "img_002.png", "img_003.png"} {
+		if err := store.AddImage(char.ID, ImageInfo{
+			Filename: filename,
+			OrigName: filename,
+			AddedAt:  "1",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.ActivateImage(char.ID, "img_003.png"); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.Get(char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ActiveImage != "img_003.png" {
+		t.Fatalf("expected active image img_003.png, got %q", updated.ActiveImage)
+	}
+	wantCover := "/api/v1/characters/" + char.ID + "/images/img_003.png"
+	if updated.AvatarImage != wantCover {
+		t.Fatalf("expected avatar cover %q, got %q", wantCover, updated.AvatarImage)
+	}
+	if len(updated.Images) == 0 || updated.Images[0].Filename != "img_003.png" {
+		t.Fatalf("expected active image first in stored order, got %#v", updated.Images)
+	}
+
+	imgs, err := store.ListImages(char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imgs) != 3 || imgs[0].Filename != "img_003.png" {
+		t.Fatalf("expected active image first in list response, got %#v", imgs)
+	}
+}

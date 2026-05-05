@@ -97,7 +97,14 @@ const displayImages = computed<DisplayImage[]>(() => {
 
   // Server images
   if (props.images) {
-    for (const img of props.images) {
+    const orderedImages = [...props.images].sort((a, b) => {
+      if (!props.activeImage) return 0
+      if (a.filename === props.activeImage) return -1
+      if (b.filename === props.activeImage) return 1
+      return 0
+    })
+
+    for (const img of orderedImages) {
       list.push({
         key: 'srv-' + img.filename,
         src: img.url || (props.characterId
@@ -128,6 +135,7 @@ const displayImages = computed<DisplayImage[]>(() => {
 const totalCount = computed(() => displayImages.value.length)
 const hasImages = computed(() => totalCount.value > 0)
 const currentImage = computed(() => displayImages.value[currentIndex.value] || null)
+const displayImageOrderKey = computed(() => displayImages.value.map(img => img.key).join('|'))
 const cropBoxStyle = computed(() => {
   const box = cropBox.value
   if (!box) return {}
@@ -174,6 +182,16 @@ watch(totalCount, (n) => {
     currentIndex.value = n - 1
   }
 })
+
+watch(
+  [() => props.activeImage, displayImageOrderKey],
+  ([filename]) => {
+    if (!filename) return
+    const index = displayImages.value.findIndex(img => img.filename === filename)
+    if (index >= 0) currentIndex.value = index
+  },
+  { immediate: true },
+)
 
 watch(cropResolution, () => {
   syncCropDimensionDrafts(activeDimensionInput.value)

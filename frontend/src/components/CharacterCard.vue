@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Character } from '../types'
 import { formatVoiceTypeDisplay } from '../utils/voice'
@@ -6,6 +7,11 @@ import { formatVoiceTypeDisplay } from '../utils/voice'
 const router = useRouter()
 const props = defineProps<{ character: Character }>()
 const emit = defineEmits<{ delete: [id: string] }>()
+const coverImage = computed(() =>
+  props.character.active_image
+    ? `/api/v1/characters/${props.character.id}/images/${encodeURIComponent(props.character.active_image)}`
+    : props.character.avatar_image
+)
 
 // Generate a gradient from character name hash
 function nameToGradient(name: string): string {
@@ -30,8 +36,8 @@ function edit() {
        @click="edit">
     <!-- Avatar area -->
     <div class="relative h-[180px] overflow-hidden">
-      <div class="w-full h-full" :style="{ background: character.avatar_image ? undefined : nameToGradient(character.name) }">
-        <img v-if="character.avatar_image" :src="character.avatar_image" class="w-full h-full object-cover" />
+      <div class="w-full h-full" :style="{ background: coverImage ? undefined : nameToGradient(character.name) }">
+        <img v-if="coverImage" :src="coverImage" class="w-full h-full object-cover" />
       </div>
       <!-- Hover actions -->
       <div class="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
