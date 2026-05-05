@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import type { Character } from '../types'
 import { formatVoiceTypeDisplay } from '../utils/voice'
 
 const router = useRouter()
+const { t, locale } = useI18n()
 const props = defineProps<{ character: Character }>()
 const emit = defineEmits<{ delete: [id: string] }>()
 const coverImage = computed(() =>
@@ -62,7 +64,7 @@ function edit() {
     <div class="p-4">
       <h3 class="text-base font-semibold text-cv-text">{{ character.name }}</h3>
       <p class="mt-1 text-[13px] text-cv-text-secondary leading-5 line-clamp-2">
-        {{ character.description || '暂无描述' }}
+        {{ character.description || t('characterCard.noDescription') }}
       </p>
 
       <!-- Divider -->
@@ -74,14 +76,14 @@ function edit() {
           <span class="w-1.5 h-1.5 rounded-full bg-cv-success" />
           <span
             class="max-w-[165px] truncate text-[11px] text-cv-text-muted"
-            :title="formatVoiceTypeDisplay(character.voice_type)"
+            :title="formatVoiceTypeDisplay(character.voice_type, t, locale)"
           >
-            {{ formatVoiceTypeDisplay(character.voice_type) }}
+            {{ formatVoiceTypeDisplay(character.voice_type, t, locale) }}
           </span>
         </div>
         <button @click.stop="launch"
                 class="px-4 py-1.5 bg-cv-accent text-white text-[13px] font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer">
-          启动 →
+          {{ t('characterCard.launch') }}
         </button>
       </div>
     </div>

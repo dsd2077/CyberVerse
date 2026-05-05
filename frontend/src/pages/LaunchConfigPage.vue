@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useCharacterStore } from '../stores/characters'
 import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, updateLaunchConfig } from '../services/api'
 import CvSelect from '../components/CvSelect.vue'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
 import { formatVoiceTypeDisplay } from '../utils/voice'
 
 const router = useRouter()
 const route = useRoute()
 const store = useCharacterStore()
+const { t, locale } = useI18n()
 const characterId = computed(() => route.params.id as string)
 const connecting = ref(false)
 const serviceConnected = ref(false)
@@ -63,8 +66,12 @@ function sectionHasRestartPending(section: ConfigSection): boolean {
   return false
 }
 
-const restartBadgeHint =
-  '保存当前配置，然后重启 inference 推理服务，使配置生效'
+const restartBadgeHint = computed(() => t('launch.restartHint'))
+
+function launchSectionTitle(section: ConfigSection): string {
+  const key = section.key || ''
+  return key ? t(`launch.sections.${key}`) : section.title
+}
 
 onMounted(async () => {
   await store.fetchOne(characterId.value).catch(() => {})
@@ -82,7 +89,7 @@ onMounted(async () => {
     configSections.value = config.sections.map(s => ({ ...s, collapsed: false }))
     originalSections.value = cloneSections(configSections.value)
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : '加载配置失败'
+    errorMessage.value = e instanceof Error ? e.message : t('launch.loadConfigFailed')
     console.error('Failed to load launch config:', e)
   } finally {
     loading.value = false
@@ -120,12 +127,12 @@ async function saveConfig() {
     })
     originalSections.value = cloneSections(configSections.value)
     if (resp.requires_restart) {
-      saveMessage.value = '配置已保存，需要重启推理服务才能生效'
+      saveMessage.value = t('launch.savedRequiresRestart')
     } else {
-      saveMessage.value = '配置已保存'
+      saveMessage.value = t('launch.saved')
     }
   } catch (e) {
-    errorMessage.value = '保存配置失败'
+    errorMessage.value = t('launch.saveFailed')
     console.error('Failed to save launch config:', e)
   } finally {
     saving.value = false
@@ -155,7 +162,7 @@ async function launch() {
       },
     })
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : '启动失败'
+    errorMessage.value = e instanceof Error ? e.message : t('launch.launchFailed')
     console.error('Failed to launch:', e)
   } finally {
     connecting.value = false
@@ -171,18 +178,19 @@ async function launch() {
       <div class="flex items-center gap-4">
         <button @click="router.back()"
                 class="h-[34px] px-3 bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#969eaa] text-[13px] hover:border-cyber-cyan/40 transition-colors cursor-pointer">
-          ← 返回
+          {{ t('common.back') }}
         </button>
         <span class="text-sm font-bold tracking-[1.68px] uppercase text-[#f6efe8]">CyberVerse</span>
+        <LanguageSwitcher />
       </div>
-      <span class="text-[13px] text-[#505864]">角色列表 / 部署配置</span>
+      <span class="text-[13px] text-[#505864]">{{ t('launch.breadcrumb') }}</span>
       <div class="flex items-center gap-2">
         <span
           class="w-[7px] h-[7px] rounded-full"
           :class="serviceConnected ? 'bg-cyber-cyan shadow-[0_0_6px_rgba(52,230,243,0.5)]' : 'bg-[#ff6b6b] shadow-[0_0_6px_rgba(255,107,107,0.35)]'"
         />
         <span class="text-[13px]" :class="serviceConnected ? 'text-[#8fe8ef]' : 'text-[#ff9b9b]'">
-          {{ serviceConnected ? '推理服务已连接' : '推理服务未连接' }}
+          {{ serviceConnected ? t('common.serviceConnected') : t('common.serviceDisconnected') }}
         </span>
       </div>
     </header>
@@ -204,24 +212,24 @@ async function launch() {
 
             <!-- Info rows -->
             <div class="flex justify-between text-xs font-medium">
-              <span class="text-[#80808c]">声线</span>
+              <span class="text-[#80808c]">{{ t('launch.voice') }}</span>
               <span
                 class="max-w-[200px] truncate text-right text-cv-text"
-                :title="formatVoiceTypeDisplay(store.current.voice_type)"
+                :title="formatVoiceTypeDisplay(store.current.voice_type, t, locale)"
               >
-                {{ formatVoiceTypeDisplay(store.current.voice_type) }}
+                {{ formatVoiceTypeDisplay(store.current.voice_type, t, locale) }}
               </span>
             </div>
             <div class="flex justify-between text-xs font-medium">
-              <span class="text-[#80808c]">说话风格</span>
-              <span class="text-cv-text">{{ store.current.speaking_style || '—' }}</span>
+              <span class="text-[#80808c]">{{ t('launch.speakingStyle') }}</span>
+              <span class="text-cv-text">{{ store.current.speaking_style || t('common.emptyDash') }}</span>
             </div>
             <div v-if="store.current.personality" class="flex justify-between text-xs">
-              <span class="font-medium text-[#80808c]">性格</span>
+              <span class="font-medium text-[#80808c]">{{ t('launch.personality') }}</span>
               <span class="text-cv-text truncate max-w-[200px]">{{ store.current.personality }}</span>
             </div>
             <div v-if="store.current.welcome_message" class="flex justify-between text-xs">
-              <span class="font-medium text-[#80808c]">欢迎语</span>
+              <span class="font-medium text-[#80808c]">{{ t('launch.welcomeMessage') }}</span>
               <span class="text-cv-text truncate max-w-[200px]">{{ store.current.welcome_message }}</span>
             </div>
 
@@ -233,7 +241,7 @@ async function launch() {
 
             <button @click="router.push(`/characters/${characterId}/edit`)"
                     class="text-[13px] font-medium text-[#619ef5] hover:text-cv-accent-hover transition-colors cursor-pointer self-start">
-              编辑角色 →
+              {{ t('launch.editCharacter') }}
             </button>
           </div>
         </div>
@@ -242,14 +250,14 @@ async function launch() {
       <!-- Right: Config area -->
       <main class="flex-1 pl-4 pr-12 py-10 flex flex-col gap-7">
         <div>
-          <h1 class="text-[28px] font-extrabold text-[#fbf6ef]">部署配置</h1>
+          <h1 class="text-[28px] font-extrabold text-[#fbf6ef]">{{ t('launch.title') }}</h1>
           <p class="text-sm text-[#6e7682] mt-2">
-            根据您的硬件环境调整推理参数。当前运行模型：{{ activeAvatarModel || '未连接' }}
+            {{ t('launch.subtitle', { model: activeAvatarModel || t('common.notConnected') }) }}
           </p>
         </div>
 
         <!-- Loading -->
-        <div v-if="loading" class="text-[#6e7682] text-sm py-8">加载配置中...</div>
+        <div v-if="loading" class="text-[#6e7682] text-sm py-8">{{ t('launch.loadingConfig') }}</div>
 
         <!-- Error -->
         <div v-if="errorMessage" class="text-[13px] text-[#ff9b9b] bg-[rgba(255,107,107,0.08)] border border-[rgba(255,107,107,0.2)] px-4 py-2.5">
@@ -257,7 +265,7 @@ async function launch() {
         </div>
 
         <div v-if="runtimeConfigMismatch" class="text-[13px] text-[#ffb36b] bg-[rgba(255,147,70,0.08)] border border-[rgba(255,147,70,0.2)] px-4 py-2.5">
-          配置文件默认模型是 {{ configuredDefaultModel }}，但当前推理进程实际运行的是 {{ activeAvatarModel }}。部署页以运行时模型为准；修改默认模型后需要重启推理服务。
+          {{ t('launch.runtimeMismatch', { configured: configuredDefaultModel, active: activeAvatarModel }) }}
         </div>
 
         <!-- Save message -->
@@ -274,14 +282,14 @@ async function launch() {
               <span class="text-[10px] text-[#505a6e]" @click="section.collapsed = !section.collapsed" style="cursor:pointer">
                 {{ section.collapsed ? '▶' : '▼' }}
               </span>
-              <span class="text-sm font-bold text-[#c8d0dc]">{{ section.title }}</span>
+              <span class="text-sm font-bold text-[#c8d0dc]">{{ launchSectionTitle(section) }}</span>
             </div>
             <div
               v-if="sectionHasRestartPending(section)"
               class="group relative flex items-center gap-1"
             >
               <span class="px-2 py-0.5 text-[11px] bg-[rgba(255,147,70,0.12)] border border-[rgba(255,147,70,0.4)] text-[#ff9346]">
-                需重启
+                {{ t('launch.restartRequired') }}
               </span>
               <button
                 type="button"
@@ -353,11 +361,11 @@ async function launch() {
         <div class="flex justify-end gap-4 mt-4">
           <button @click="saveConfig" :disabled="!hasChanges || saving"
                   class="h-12 px-6 bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#969eaa] text-[14px] font-medium hover:border-cyber-cyan/40 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
-            {{ saving ? '保存中...' : '保存配置' }}
+            {{ saving ? t('common.saving') : t('launch.saveConfig') }}
           </button>
           <button @click="launch" :disabled="connecting || !activeAvatarModel"
                   class="h-12 px-8 bg-gradient-to-b from-cyber-cyan to-[#14a0ac] text-cyber-base text-[15px] font-extrabold shadow-[0_0_20px_rgba(52,230,243,0.2)] hover:shadow-[0_0_30px_rgba(52,230,243,0.35)] transition-shadow cursor-pointer disabled:opacity-50">
-            {{ connecting ? '连接中...' : '启动数字人' }}
+            {{ connecting ? t('launch.launching') : t('launch.launch') }}
           </button>
         </div>
       </main>

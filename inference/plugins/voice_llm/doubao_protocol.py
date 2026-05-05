@@ -48,15 +48,15 @@ class DoubaoEvent:
     SAY_HELLO = 300
     CHAT_TEXT_QUERY = 501
     CHAT_TEXT_QUERY_CONFIRMED = 553
-    REPLY_START = 350          # 助手开始回复
-    TTS_SENTENCE_DONE = 351    # TTS 一句话合成完毕 (含 text 字段)
-    AUDIO_DATA = 352           # 音频帧
-    REPLY_DONE = 359           # 助手一轮回复结束 (音频全部发完)
-    ASR_START = 450            # 用户语音识别开始
-    ASR_RESULT = 451           # ASR 中间/最终结果 (含 results[].text)
-    TURN_FINISHED = 459        # 用户这轮说完了 (在助手回复之前触发)
-    LLM_TOKEN = 550            # LLM 流式 token (含 content 字段)
-    LLM_DONE = 559             # LLM 生成完毕
+    REPLY_START = 350          # Assistant reply starts.
+    TTS_SENTENCE_DONE = 351    # One TTS sentence is synthesized, including the text field.
+    AUDIO_DATA = 352           # Audio frame.
+    REPLY_DONE = 359           # Assistant reply turn is done after all audio is sent.
+    ASR_START = 450            # User speech recognition starts.
+    ASR_RESULT = 451           # Intermediate or final ASR result, including results[].text.
+    TURN_FINISHED = 459        # User turn is complete; emitted before assistant reply.
+    LLM_TOKEN = 550            # Streaming LLM token, including the content field.
+    LLM_DONE = 559             # LLM generation is complete.
 
 
 @dataclass

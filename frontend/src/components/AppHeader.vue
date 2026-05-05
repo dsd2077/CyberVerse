@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { getHealth } from '../services/api'
+import LanguageSwitcher from './LanguageSwitcher.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const search = ref('')
 const serviceConnected = ref(false)
 
@@ -31,12 +34,13 @@ withDefaults(defineProps<{
     <div class="flex items-center gap-3">
       <button v-if="showBack" @click="router.back()"
               class="text-cv-text-secondary hover:text-cv-text text-sm cursor-pointer transition-colors">
-        ← 返回
+        {{ t('common.back') }}
       </button>
       <span v-if="showBack" class="text-cv-border">|</span>
       <span class="text-lg font-bold text-cv-text tracking-[-0.5px] cursor-pointer" @click="router.push(logoTo)">
         CyberVerse
       </span>
+      <LanguageSwitcher />
     </div>
 
     <!-- Center: Search -->
@@ -45,7 +49,7 @@ withDefaults(defineProps<{
         <input
           v-model="search"
           type="text"
-          placeholder="搜索角色..."
+          :placeholder="t('common.searchCharacters')"
           class="w-full h-9 bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-8 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all"
         />
       </div>
@@ -70,10 +74,10 @@ withDefaults(defineProps<{
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-2 text-[13px]">
         <span class="w-2 h-2 rounded-full" :class="serviceConnected ? 'bg-cv-success' : 'bg-cv-danger'" />
-        <span class="text-cv-text-secondary">{{ serviceConnected ? '推理服务已连接' : '推理服务未连接' }}</span>
+        <span class="text-cv-text-secondary">{{ serviceConnected ? t('common.serviceConnected') : t('common.serviceDisconnected') }}</span>
       </div>
       <button type="button"
-              aria-label="系统设置"
+              :aria-label="t('appHeader.statusSettingsLabel')"
               @click="router.push('/settings')"
               class="w-8 h-8 flex items-center justify-center rounded-cv-md text-cv-text-secondary hover:text-cv-text hover:bg-cv-hover transition-all cursor-pointer">
         <svg class="w-[18px] h-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"

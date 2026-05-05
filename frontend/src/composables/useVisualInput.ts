@@ -1,4 +1,5 @@
 import { computed, ref, shallowRef } from 'vue'
+import { translate } from '../i18n'
 
 export type VisualSource = 'camera' | 'screen'
 
@@ -186,11 +187,11 @@ export function useVisualInput(
   async function start(source: VisualSource) {
     const cfg = config()
     if (!cfg.enabled) {
-      error.value = '当前会话未启用视觉输入'
+      error.value = translate('visualInput.disabled')
       return
     }
     if (!window.isSecureContext) {
-      error.value = '摄像头和屏幕共享需要 HTTPS 或 localhost'
+      error.value = translate('visualInput.insecureContext')
       return
     }
     isStarting.value = true
@@ -221,9 +222,9 @@ export function useVisualInput(
     } catch (e: any) {
       stop(undefined, false)
       if (e?.name === 'NotAllowedError') {
-        error.value = source === 'camera' ? '摄像头权限被拒绝' : '屏幕共享权限被拒绝'
+        error.value = source === 'camera' ? translate('visualInput.cameraDenied') : translate('visualInput.screenDenied')
       } else {
-        error.value = e?.message || '无法启动视觉输入'
+        error.value = e?.message || translate('visualInput.startFailed')
       }
     } finally {
       isStarting.value = false

@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { getConversationMessages, sendMessage } from '../services/api'
+import { translate } from '../i18n'
 
 export interface ChatMessage {
   id?: string  // Optional ID for deduplication
@@ -295,7 +296,7 @@ export function useChat(sessionId: () => string) {
         console.error('[useChat] Cannot send text: missing session id')
         messages.value.push({
           role: 'system',
-          content: '发送失败：会话未初始化，请刷新后重试。',
+          content: translate('chat.sendFailedNoSession'),
           timestamp: Date.now(),
         })
         return
@@ -304,7 +305,7 @@ export function useChat(sessionId: () => string) {
         console.error('[useChat] HTTP fallback send failed:', err)
         messages.value.push({
           role: 'system',
-          content: '发送失败：网络异常，请稍后重试。',
+          content: translate('chat.sendFailedNetwork'),
           timestamp: Date.now(),
         })
       })

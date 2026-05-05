@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ImageInfo } from '../types'
 
 interface DisplayImage {
@@ -44,6 +45,7 @@ const emit = defineEmits<{
   activateImage: [filename: string]
 }>()
 
+const { t } = useI18n()
 const currentIndex = ref(0)
 const dragOver = ref(false)
 const showLightbox = ref(false)
@@ -660,7 +662,7 @@ async function applyCrop() {
       <!-- Pending badge -->
       <div v-if="currentImage?.pending"
            class="absolute bottom-3 left-3 px-2.5 py-1 bg-cv-accent/80 text-white text-[11px] font-medium rounded-full backdrop-blur-sm">
-        待上传
+        {{ t('avatarUpload.pending') }}
       </div>
 
       <!-- Active image badge -->
@@ -669,7 +671,7 @@ async function applyCrop() {
         <svg class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M3 8.5l3.5 3.5L13 5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        当前头像
+        {{ t('avatarUpload.active') }}
       </div>
 
       <!-- Set as active button -->
@@ -679,7 +681,7 @@ async function applyCrop() {
         <svg class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 8.5l3.5 3.5L13 5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        设为头像
+        {{ t('avatarUpload.setActive') }}
       </button>
 
       <!-- Delete button (top-right) -->
@@ -696,7 +698,7 @@ async function applyCrop() {
         <svg class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M8 3v10M3 8h10" stroke-linecap="round" />
         </svg>
-        添加图片
+        {{ t('avatarUpload.addImage') }}
       </button>
 
       <!-- Left arrow -->
@@ -740,8 +742,8 @@ async function applyCrop() {
           <path d="M10 4v12M4 10h12" stroke-linecap="round" />
         </svg>
       </div>
-      <p class="text-sm font-medium text-cv-text-secondary">上传角色头像</p>
-      <p class="text-xs text-cv-text-muted mt-1">支持 PNG、JPG，建议 512x512</p>
+      <p class="text-sm font-medium text-cv-text-secondary">{{ t('avatarUpload.title') }}</p>
+      <p class="text-xs text-cv-text-muted mt-1">{{ t('avatarUpload.hint') }}</p>
     </div>
 
     <!-- Counter -->
@@ -755,7 +757,7 @@ async function applyCrop() {
     <!-- Face crop toggle -->
     <div class="mt-4 pt-4 border-t border-cv-border-subtle">
       <div class="flex items-center justify-between">
-        <span class="text-[13px] text-cv-text-secondary">是否裁剪人脸</span>
+        <span class="text-[13px] text-cv-text-secondary">{{ t('avatarUpload.faceCrop') }}</span>
         <button @click="emit('update:useFaceCrop', !useFaceCrop)"
                 class="relative w-11 h-6 rounded-full transition-colors cursor-pointer"
                 :class="useFaceCrop ? 'bg-cv-accent' : 'bg-cv-elevated'">
@@ -763,7 +765,7 @@ async function applyCrop() {
                 :class="useFaceCrop ? 'translate-x-5 bg-white' : 'translate-x-0 bg-cv-text-muted'" />
         </button>
       </div>
-      <p class="text-[11px] text-cv-text-muted mt-2 leading-4">开启后将自动检测并裁剪图片中的人脸区域</p>
+      <p class="text-[11px] text-cv-text-muted mt-2 leading-4">{{ t('avatarUpload.faceCropHint') }}</p>
     </div>
   </div>
 

@@ -1,23 +1,31 @@
 """
-真实数字人视频生成集成测试。
+Integration test for real digital human video generation.
 
-前置条件（不满足则 skip）：
-  - CUDA 可用
-  - checkpoints/SoulX-FlashHead-1_3B 与 wav2vec 权重已下载
-  - 已安装 flash_head 依赖（含 torch、opencv 等）
-  - 系统 ``ffmpeg`` 在 PATH 中（用于 H.264 与 **AAC 音轨 mux**）
-  - 存在 ``examples/girl.png`` 作为数字人条件图
-  - 存在 ``examples/podcast_sichuan_16k.wav``（16kHz mono PCM）；每次测试**随机截取最多 60s** 片段喂入（插件 deque 仅保留**末尾 8s** 参与推理，长段可保证这 8s 为连续真实语音）
+Prerequisites; otherwise the test is skipped:
+  - CUDA is available.
+  - checkpoints/SoulX-FlashHead-1_3B and wav2vec weights are downloaded.
+  - flash_head dependencies are installed, including torch and opencv.
+  - System ffmpeg is on PATH for H.264 and AAC audio muxing.
+  - examples/girl.png exists as the digital human conditioning image.
+  - examples/podcast_sichuan_16k.wav exists as 16 kHz mono PCM. Each test feeds a
+    random segment up to 60 seconds; the plugin deque keeps only the trailing
+    8 seconds for inference, and a longer segment keeps that tail as continuous
+    real speech.
 
-运行（仓库根目录）::
+Run from the repository root::
 
     pytest tests/integration/test_flash_head_generates_real_video.py -m integration -v -s
 
-可选环境变量：
+Optional environment variables:
 
-- ``CYBERVERSE_AVATAR_TEST_MP4``：输出 MP4 路径，默认 ``artifacts/flash_head_smoke.mp4``。
-- ``CYBERVERSE_FLASH_HEAD_MIN_INIT_SEC``：若设置（如 ``10``），则要求 ``initialize`` 墙钟时间不低于该值，用于发现「秒过」的异常环境；默认不校验（避免慢盘/热缓存误杀）。
-- ``CYBERVERSE_FLASH_HEAD_AUDIO_SEED``：若设置，则随机音频起点可复现（传入 ``random.Random.seed`` 的任意可哈希值）。
+- ``CYBERVERSE_AVATAR_TEST_MP4``: output MP4 path; defaults to
+  ``artifacts/flash_head_smoke.mp4``.
+- ``CYBERVERSE_FLASH_HEAD_MIN_INIT_SEC``: when set, for example ``10``,
+  require ``initialize`` wall-clock time to be at least this value to catch
+  suspicious instant-load environments; unset by default to avoid false failures
+  on slow disks or warm caches.
+- ``CYBERVERSE_FLASH_HEAD_AUDIO_SEED``: when set, makes the random audio start
+  reproducible with any hashable value accepted by ``random.Random.seed``.
 """
 
 from __future__ import annotations
@@ -39,13 +47,13 @@ import pytest
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# 集成测试用人像底图（FlashHead 内部会按 infer target_size 做 resize/center crop）
+# Portrait source image for integration tests; FlashHead resizes and center-crops it to infer target_size.
 AVATAR_IMAGE = REPO_ROOT / "examples" / "girl.png"
 EXAMPLE_WAV_16K = REPO_ROOT / "examples" / "podcast_sichuan_16k.wav"
 SR_16K = 16000
-# 每次随机截取的时长（秒）；若文件更短则使用整段
+# Random segment length in seconds; use the whole file when it is shorter.
 AUDIO_SEGMENT_SECONDS = 5
-# FlashHead 插件 deque 长度，短于此时 skip（否则预填零占比过大）
+# FlashHead plugin deque length; shorter input is skipped to avoid excessive zero prefill.
 MIN_WAV_FRAMES_FOR_TEST = SR_16K * 8
 
 
@@ -70,10 +78,10 @@ def _load_wav_pcm16_mono_random_segment(
     segment_seconds: float,
     rng: random.Random,
 ) -> tuple[bytes, int, int]:
-    """从 WAV 中随机截取一段 contiguous PCM（16kHz mono int16）。
+    """Pick a random contiguous PCM segment from a WAV file.
 
-    返回 ``(pcm_bytes, start_frame, n_frames)``。若文件总长短于 ``segment_seconds``，
-    则 ``n_frames`` 为整文件帧数且 ``start_frame == 0``。
+    Returns ``(pcm_bytes, start_frame, n_frames)``. If the file is shorter than
+    ``segment_seconds``, ``n_frames`` covers the whole file and ``start_frame == 0``.
     """
     want = int(SR_16K * segment_seconds)
     with wave.open(str(path), "rb") as w:
@@ -95,7 +103,7 @@ def _load_wav_pcm16_mono_random_segment(
 
 
 def _pcm_s16le_tail_for_duration(pcm: bytes, sample_rate: int, duration_sec: float) -> bytes:
-    """取 PCM 末尾若干采样，使时长约等于 ``duration_sec``（与 deque 末尾语义一致）；不足则前补静音。"""
+    """Take the PCM tail for ``duration_sec`` and left-pad silence if needed."""
     need_samples = max(1, int(round(duration_sec * sample_rate)))
     need_bytes = need_samples * 2
     if len(pcm) >= need_bytes:
@@ -112,7 +120,7 @@ def _write_mp4_h264_ffmpeg(
     pcm_s16le_mono: bytes | None = None,
     audio_sample_rate: int = SR_16K,
 ) -> None:
-    """libx264 + yuv420p；若提供 ``pcm_s16le_mono`` 则编码 AAC 音轨并 mux（需 ffmpeg）。"""
+    """Write libx264 + yuv420p MP4; mux AAC audio when PCM is provided."""
     t, h, w, c = frames.shape
     assert c == 3
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,7 +198,7 @@ def _write_mp4_h264_ffmpeg(
 
 
 def _write_mp4_opencv_mp4v(frames: np.ndarray, fps: int, path: Path) -> None:
-    """frames: (T, H, W, 3) uint8 RGB。部分播放器对 mp4v 支持差，仅作回退。"""
+    """Write RGB frames with OpenCV mp4v as a fallback for environments without ffmpeg."""
     import cv2
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +241,7 @@ def _write_mp4_rgb(
 
 
 def _assert_rgb_frames_not_static_placeholder(frames: np.ndarray) -> None:
-    """在写文件前检查：非纯色、相邻帧有足够差异（避免静音+灰图类「假通过」）。"""
+    """Check for non-solid frames and enough inter-frame motion before writing output."""
     assert frames.ndim == 4 and frames.shape[-1] == 3
     flat = frames.reshape(frames.shape[0], -1)
     spatial_std = flat.std(axis=1)
@@ -244,7 +252,8 @@ def _assert_rgb_frames_not_static_placeholder(frames: np.ndarray) -> None:
         d = np.abs(frames[1:].astype(np.int32) - frames[:-1].astype(np.int32))
         mean_step = float(d.mean())
         max_step = float(d.max())
-        # 单 chunk + 短视频里口型变化可以较缓，全零音频时均值可 <1；此处用「均值或峰值」避免误杀真实推理（实测约 2.98）
+        # Lip motion can be subtle in a single short chunk. Zero audio may have mean < 1,
+        # so use mean or peak to avoid false failures for real inference.
         assert mean_step >= 2.5 or max_step >= 24.0, (
             f"相邻帧几乎无变化（疑似静态或无效推理），mean_abs_diff={mean_step:.4f}, max={max_step:.1f}"
         )
@@ -301,7 +310,7 @@ def _ffprobe_assert_video_ok(
         assert ap.returncode == 0, f"无音频轨: {(ap.stderr or '').strip()}"
         acodec = (ap.stdout or "").strip()
         assert acodec == "aac", f"期望 AAC 音轨，得到 codec={acodec!r}"
-    # 强制完整解码一遍，避免「有 moov 但帧损坏」仍过 ffprobe 元数据
+    # Force a full decode so files with a valid moov atom but corrupt frames do not pass metadata checks.
     dec = subprocess.run(
         [
             "ffmpeg",
@@ -366,7 +375,7 @@ async def test_flash_head_generates_mp4_file():
                 f"initialize 仅耗时 {init_sec:.2f}s < {need}s，疑似未真实加载权重（可检查是否走错/缓存异常）"
             )
 
-        # 使用仓库内示例人像；pipeline.prepare_params 会按 target_size 处理尺寸
+        # Use the repository sample portrait; pipeline.prepare_params handles target_size.
         await plugin.set_avatar(str(AVATAR_IMAGE), use_face_crop=False)
 
         rng = random.Random()

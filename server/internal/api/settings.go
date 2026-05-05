@@ -75,6 +75,7 @@ type launchConfigParamJSON struct {
 }
 
 type launchConfigSectionJSON struct {
+	Key    string                  `json:"key"`
 	Title  string                  `json:"title"`
 	Badge  string                  `json:"badge"`
 	Params []launchConfigParamJSON `json:"params"`
@@ -432,8 +433,8 @@ func (r *Router) buildAvatarModelInfo(ctx context.Context) (*avatarModelInfoResp
 
 func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON {
 	var sections []launchConfigSectionJSON
-	avatarSection := launchConfigSectionJSON{Title: "头像模型 (Avatar)", Badge: "restart"}
-	gpuSection := launchConfigSectionJSON{Title: "GPU 配置", Badge: "restart"}
+	avatarSection := launchConfigSectionJSON{Key: "avatar", Title: "头像模型 (Avatar)", Badge: "restart"}
+	gpuSection := launchConfigSectionJSON{Key: "gpu", Title: "GPU 配置", Badge: "restart"}
 
 	if r.configPath != "" {
 		doc, err := config.ReadYAMLNode(r.configPath)
@@ -541,7 +542,7 @@ func (r *Router) buildLaunchSections(modelName string) []launchConfigSectionJSON
 	}
 
 	if r.inferParamsExists(modelName) {
-		videoSection := launchConfigSectionJSON{Title: "视频输出", Badge: "restart"}
+		videoSection := launchConfigSectionJSON{Key: "video_output", Title: "视频输出", Badge: "restart"}
 		inferPath := inferParamsConfigPath(modelName)
 		if doc, err := config.ReadYAMLNode(r.configPath); err == nil {
 			keys, err := config.GetMappingKeys(doc, inferPath)

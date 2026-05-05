@@ -149,7 +149,7 @@ pipeline:
     turn_password: "${TURN_PASSWORD}"
     ice_public_ip: "" # Set real public IP/domain when needed; empty defaults to 127.0.0.1
 recording:
-    enabled: true # 设为 true 开启录制
+    enabled: true # Set to true to enable recording.
     output_dir: "./recordings"
     crf: 23
 inference_grpc:

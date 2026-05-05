@@ -760,7 +760,7 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
                         )
                     video = self._run_pipeline_distributed(
                         audio_array, audio_start_idx, audio_end_idx
-                    )  # 生成视频帧
+                    )  # Generate video frames.
                     chunk_elapsed_s = time.perf_counter() - chunk_start_time
                     if video is None:
                         logger.debug(

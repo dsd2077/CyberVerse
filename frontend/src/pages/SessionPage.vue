@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, watchEffect, unref, onUnmounted, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import VoiceWaveform from '../components/VoiceWaveform.vue'
@@ -12,6 +13,7 @@ import { deleteSession } from '../services/api'
 
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 const sessionId = computed(() => route.params.id as string)
 
 const videoPlayerRef = ref<InstanceType<typeof VideoPlayer> | null>(null)
@@ -356,7 +358,7 @@ function formatTime(s: number): string {
       <!-- Back button (top-left, glass) -->
       <button @click="handleDisconnect"
               class="absolute top-5 left-5 px-3 py-2 bg-black/70 backdrop-blur-sm rounded-cv-md text-sm text-cv-text hover:bg-black/90 transition-colors cursor-pointer z-10">
-        ← 返回
+        {{ t('session.back') }}
       </button>
 
       <!-- FPS indicator (top-right, glass) — click to toggle diagnostics -->
@@ -373,8 +375,8 @@ function formatTime(s: number): string {
         v-if="isChatCollapsed"
         type="button"
         class="chat-expand-button"
-        title="展开对话"
-        aria-label="展开对话"
+        :title="t('session.expandChat')"
+        :aria-label="t('session.expandChat')"
         @click="toggleChatPanel"
       >
         <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -385,70 +387,70 @@ function formatTime(s: number): string {
       <!-- Diagnostics panel -->
       <div v-if="showDiag && connectionState === 'connected'"
            class="absolute top-14 right-5 w-80 max-h-[70vh] overflow-y-auto bg-black/85 backdrop-blur-md rounded-lg border border-white/10 p-3 text-[11px] font-mono text-cv-text z-20 space-y-2">
-        <div class="text-xs font-semibold text-cv-accent mb-1">Frame Jitter</div>
+        <div class="text-xs font-semibold text-cv-accent mb-1">{{ t('session.frameJitter') }}</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">
-          <span class="text-cv-text-muted">Mean interval</span>
+          <span class="text-cv-text-muted">{{ t('session.meanInterval') }}</span>
           <span>{{ debugState.jitter.meanIntervalMs }} ms</span>
-          <span class="text-cv-text-muted">Stddev</span>
+          <span class="text-cv-text-muted">{{ t('session.stddev') }}</span>
           <span :class="debugState.jitter.stddevMs > 15 ? 'text-yellow-400' : ''">
             {{ debugState.jitter.stddevMs }} ms
           </span>
-          <span class="text-cv-text-muted">P95</span>
+          <span class="text-cv-text-muted">{{ t('session.p95') }}</span>
           <span :class="debugState.jitter.p95IntervalMs > 80 ? 'text-red-400' : ''">
             {{ debugState.jitter.p95IntervalMs }} ms
           </span>
-          <span class="text-cv-text-muted">Max</span>
+          <span class="text-cv-text-muted">{{ t('session.max') }}</span>
           <span :class="debugState.jitter.maxIntervalMs > 100 ? 'text-red-400' : ''">
             {{ debugState.jitter.maxIntervalMs }} ms
           </span>
-          <span class="text-cv-text-muted">Stutters</span>
+          <span class="text-cv-text-muted">{{ t('session.stutters') }}</span>
           <span :class="debugState.jitter.stutterCount > 0 ? 'text-yellow-400' : ''">
             {{ debugState.jitter.stutterCount }} / {{ debugState.jitter.windowSize }} frames
           </span>
         </div>
 
-        <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">Playback</div>
+        <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">{{ t('session.playback') }}</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">
           <span class="text-cv-text-muted">FPS</span>
           <span>{{ debugState.fps }}</span>
-          <span class="text-cv-text-muted">Decoded</span>
+          <span class="text-cv-text-muted">{{ t('session.decoded') }}</span>
           <span>{{ debugState.decodedFrames }}</span>
-          <span class="text-cv-text-muted">Dropped</span>
+          <span class="text-cv-text-muted">{{ t('session.dropped') }}</span>
           <span :class="debugState.droppedFrames > 0 ? 'text-red-400' : ''">
             {{ debugState.droppedFrames }}
           </span>
-          <span class="text-cv-text-muted">Ready state</span>
+          <span class="text-cv-text-muted">{{ t('session.readyState') }}</span>
           <span>{{ debugState.readyState }}</span>
-          <span class="text-cv-text-muted">Display mode</span>
+          <span class="text-cv-text-muted">{{ t('session.displayMode') }}</span>
           <span>{{ displayMode }}</span>
         </div>
 
         <template v-if="debugState.network">
-          <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">Network (WebRTC)</div>
+          <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">{{ t('session.network') }}</div>
           <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">
             <span class="text-cv-text-muted">RTT</span>
             <span>{{ debugState.network.roundTripTimeMs ?? '—' }} ms</span>
-            <span class="text-cv-text-muted">Jitter (RTP)</span>
+            <span class="text-cv-text-muted">{{ t('session.jitterRTP') }}</span>
             <span>{{ debugState.network.jitterMs ?? '—' }} ms</span>
-            <span class="text-cv-text-muted">Packet loss</span>
+            <span class="text-cv-text-muted">{{ t('session.packetLoss') }}</span>
             <span :class="debugState.network.lossRate > 0.01 ? 'text-red-400' : ''">
               {{ debugState.network.packetsLost }} ({{ (debugState.network.lossRate * 100).toFixed(2) }}%)
             </span>
-            <span class="text-cv-text-muted">NACK / PLI / FIR</span>
+            <span class="text-cv-text-muted">{{ t('session.nackPliFir') }}</span>
             <span>{{ debugState.network.nackCount }} / {{ debugState.network.pliCount }} / {{ debugState.network.firCount }}</span>
-            <span class="text-cv-text-muted">Jitter buffer</span>
+            <span class="text-cv-text-muted">{{ t('session.jitterBuffer') }}</span>
             <span>{{ debugState.network.jitterBufferDelayMs ?? '—' }} ms</span>
-            <span class="text-cv-text-muted">Resolution</span>
+            <span class="text-cv-text-muted">{{ t('session.resolution') }}</span>
             <span>{{ debugState.network.frameWidth }}x{{ debugState.network.frameHeight }}</span>
-            <span class="text-cv-text-muted">Codec</span>
+            <span class="text-cv-text-muted">{{ t('session.codec') }}</span>
             <span>{{ debugState.network.codec || '—' }}</span>
           </div>
         </template>
 
-        <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">Notes</div>
+        <div class="text-xs font-semibold text-cv-accent mt-2 mb-1">{{ t('session.notes') }}</div>
         <div class="text-[10px] text-cv-text-muted space-y-0.5 max-h-24 overflow-y-auto">
           <div v-for="(note, i) in debugState.notes" :key="i">{{ note }}</div>
-          <div v-if="!debugState.notes.length" class="italic">No events</div>
+          <div v-if="!debugState.notes.length" class="italic">{{ t('session.noEvents') }}</div>
         </div>
       </div>
 
@@ -456,7 +458,7 @@ function formatTime(s: number): string {
       <div class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
         <VoiceWaveform
           type="user"
-          label="麦克风输入"
+          :label="t('session.micInput')"
           :levels="micBarLevels"
           :muted="isMuted"
         />
@@ -488,8 +490,8 @@ function formatTime(s: number): string {
         <button
           type="button"
           class="visual-preview-close"
-          title="关闭视频输入"
-          aria-label="关闭视频输入"
+          :title="t('session.closeVisualInput')"
+          :aria-label="t('session.closeVisualInput')"
           @pointerdown.stop
           @click.stop="visualInput.stop()"
         >
@@ -506,8 +508,8 @@ function formatTime(s: number): string {
           v-if="isStandardMode"
           type="button"
           :disabled="!canUseVisualInput || visualInput.isStarting.value"
-          :title="visualInput.isCameraActive.value ? '关闭摄像头输入' : '开启摄像头输入'"
-          :aria-label="visualInput.isCameraActive.value ? '关闭摄像头输入' : '开启摄像头输入'"
+          :title="visualInput.isCameraActive.value ? t('session.cameraOff') : t('session.cameraOn')"
+          :aria-label="visualInput.isCameraActive.value ? t('session.cameraOff') : t('session.cameraOn')"
           class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           :class="visualInput.isCameraActive.value ? 'bg-cv-accent text-white' : 'bg-white/10 text-cv-text hover:bg-white/16'"
           @click="visualInput.toggleCamera()"
@@ -555,8 +557,8 @@ function formatTime(s: number): string {
             <button
               type="button"
               class="chat-toggle-button"
-              title="收起对话"
-              aria-label="收起对话"
+              :title="t('session.collapseChat')"
+              :aria-label="t('session.collapseChat')"
               :aria-expanded="!isChatCollapsed"
               @click="toggleChatPanel"
             >
@@ -564,9 +566,9 @@ function formatTime(s: number): string {
                 <path d="M6 3l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <span class="text-base font-semibold text-cv-text truncate">对话</span>
+            <span class="text-base font-semibold text-cv-text truncate">{{ t('session.chatTitle') }}</span>
           </div>
-          <button class="text-[13px] text-cv-text-muted hover:text-cv-text transition-colors cursor-pointer">清空</button>
+          <button class="text-[13px] text-cv-text-muted hover:text-cv-text transition-colors cursor-pointer">{{ t('session.clear') }}</button>
         </div>
 
         <!-- Messages (reuse ChatPanel) -->
@@ -584,7 +586,7 @@ function formatTime(s: number): string {
 
         <!-- Footer hint -->
         <div class="h-6 flex items-center justify-center shrink-0">
-          <span class="text-[11px] text-cv-text-muted">Shift+Enter 换行 · VoiceLLM 模式下可直接语音对话</span>
+          <span class="text-[11px] text-cv-text-muted">{{ t('session.footerHint') }}</span>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import CharacterCard from '../components/CharacterCard.vue'
 import SetupBanner from '../components/SetupBanner.vue'
@@ -8,6 +9,7 @@ import { useCharacterStore } from '../stores/characters'
 import { useSettingsStore } from '../stores/settings'
 
 const router = useRouter()
+const { t } = useI18n()
 const characterStore = useCharacterStore()
 const settingsStore = useSettingsStore()
 const search = ref('')
@@ -28,7 +30,7 @@ const filtered = computed(() => {
 })
 
 async function handleDelete(id: string) {
-  if (confirm('确定要删除这个角色吗？')) {
+  if (confirm(t('characterList.deleteConfirm'))) {
     await characterStore.remove(id)
   }
 }
@@ -45,18 +47,18 @@ async function handleDelete(id: string) {
       <!-- Title area -->
       <div class="flex items-start justify-between mb-8">
         <div>
-          <h1 class="text-[32px] font-semibold text-cv-text tracking-[-0.5px]">选择角色</h1>
-          <p class="mt-2 text-sm text-cv-text-secondary">选择一个数字人角色开始互动，或创建你自己的专属角色</p>
+          <h1 class="text-[32px] font-semibold text-cv-text tracking-[-0.5px]">{{ t('characterList.title') }}</h1>
+          <p class="mt-2 text-sm text-cv-text-secondary">{{ t('characterList.subtitle') }}</p>
         </div>
         <button @click="router.push('/characters/new')"
                 class="px-5 py-2.5 bg-cv-accent text-white text-sm font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer">
-          + 创建角色
+          {{ t('characterList.create') }}
         </button>
       </div>
 
       <!-- Loading -->
       <div v-if="characterStore.loading" class="text-center py-20 text-cv-text-muted">
-        加载中...
+        {{ t('common.loading') }}
       </div>
 
       <!-- Character grid -->
@@ -79,13 +81,13 @@ async function handleDelete(id: string) {
             <path d="M16 4l2 2M18 4l-2 2" stroke-linecap="round" />
           </svg>
         </div>
-        <h2 class="text-xl font-semibold text-cv-text-secondary mb-2">还没有创建任何角色</h2>
+        <h2 class="text-xl font-semibold text-cv-text-secondary mb-2">{{ t('characterList.emptyTitle') }}</h2>
         <p class="text-sm text-cv-text-muted mb-6 text-center">
-          创建你的第一个数字人角色<br/>开始智能对话
+          <span v-html="t('characterList.emptyBody')" />
         </p>
         <button @click="router.push('/characters/new')"
                 class="px-7 py-3 bg-cv-accent text-white text-sm font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer">
-          + 创建第一个角色
+          {{ t('characterList.createFirst') }}
         </button>
       </div>
     </main>

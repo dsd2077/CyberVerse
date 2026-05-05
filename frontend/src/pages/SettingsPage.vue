@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import { useSettingsStore } from '../stores/settings'
 import type { Settings } from '../types'
 
 const router = useRouter()
+const { t } = useI18n()
 const store = useSettingsStore()
 const saving = ref(false)
 const testing = ref(false)
-const testResult = ref<string | null>(null)
+const testResult = ref<'success' | 'error' | null>(null)
 
 type LegacySettings = Partial<Settings> & {
   llm?: { api_key?: string }
@@ -73,9 +75,9 @@ async function test() {
   testResult.value = null
   try {
     const res = await store.testConnection()
-    testResult.value = res.status === 'ok' ? '连接成功' : '连接失败'
+    testResult.value = res.status === 'ok' ? 'success' : 'error'
   } catch {
-    testResult.value = '连接失败'
+    testResult.value = 'error'
   } finally {
     testing.value = false
   }
@@ -84,23 +86,23 @@ async function test() {
 
 <template>
   <div class="min-h-screen bg-cv-base">
-    <AppHeader showBack :breadcrumb="['角色列表', '系统设置']" />
+    <AppHeader showBack :breadcrumb="[t('settings.breadcrumbs.list'), t('settings.breadcrumbs.settings')]" />
 
     <main class="max-w-[800px] mx-auto px-8 py-10">
-      <h1 class="text-xl font-semibold text-cv-text mb-1">系统设置</h1>
-      <p class="text-[13px] text-cv-text-muted mb-8">配置服务凭证，角色可在组件配置中选择已启用的模型组件</p>
+      <h1 class="text-xl font-semibold text-cv-text mb-1">{{ t('settings.title') }}</h1>
+      <p class="text-[13px] text-cv-text-muted mb-8">{{ t('settings.subtitle') }}</p>
 
       <div class="flex flex-col gap-6">
         <!-- Doubao -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">豆包语音</h3>
+          <h3 class="text-sm font-semibold text-cv-text mb-4">{{ t('settings.doubaoVoice') }}</h3>
           <label class="block mb-3">
             <span class="text-[13px] text-cv-text-secondary">Access Token</span>
             <div class="relative mt-1.5">
               <input v-model="form.doubao.access_token" :type="showTokens['doubao_token'] ? 'text' : 'password'"
                      class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
               <button @click="toggleShow('doubao_token')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
-                {{ showTokens['doubao_token'] ? '隐藏' : '显示' }}
+                {{ showTokens['doubao_token'] ? t('common.hide') : t('common.show') }}
               </button>
             </div>
           </label>
@@ -129,7 +131,7 @@ async function test() {
                 <input v-model="form.livekit.api_secret" :type="showTokens['lk_secret'] ? 'text' : 'password'"
                        class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
                 <button @click="toggleShow('lk_secret')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
-                  {{ showTokens['lk_secret'] ? '隐藏' : '显示' }}
+                  {{ showTokens['lk_secret'] ? t('common.hide') : t('common.show') }}
                 </button>
               </div>
             </label>
@@ -149,7 +151,7 @@ async function test() {
                 class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all"
               />
               <button @click="toggleShow('dashscope_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
-                {{ showTokens['dashscope_key'] ? '隐藏' : '显示' }}
+                {{ showTokens['dashscope_key'] ? t('common.hide') : t('common.show') }}
               </button>
             </div>
           </label>
@@ -168,7 +170,7 @@ async function test() {
                 class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all"
               />
               <button @click="toggleShow('openai_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
-                {{ showTokens['openai_key'] ? '隐藏' : '显示' }}
+                {{ showTokens['openai_key'] ? t('common.hide') : t('common.show') }}
               </button>
             </div>
           </label>
@@ -176,9 +178,9 @@ async function test() {
 
         <!-- Inference -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">推理服务连接</h3>
+          <h3 class="text-sm font-semibold text-cv-text mb-4">{{ t('settings.inferenceConnection') }}</h3>
           <label class="block">
-            <span class="text-[13px] text-cv-text-secondary">gRPC 地址</span>
+            <span class="text-[13px] text-cv-text-secondary">{{ t('settings.grpcAddress') }}</span>
             <input v-model="form.inference.grpc_addr" placeholder="localhost:50051"
                    class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none transition-all" />
           </label>
@@ -186,14 +188,16 @@ async function test() {
 
         <!-- Actions -->
         <div class="flex items-center justify-end gap-3 pb-4">
-          <span v-if="testResult" class="text-sm" :class="testResult === '连接成功' ? 'text-cv-success' : 'text-cv-danger'">{{ testResult }}</span>
+          <span v-if="testResult" class="text-sm" :class="testResult === 'success' ? 'text-cv-success' : 'text-cv-danger'">
+            {{ testResult === 'success' ? t('settings.connectionSuccess') : t('settings.connectionFailed') }}
+          </span>
           <button @click="test" :disabled="testing"
                   class="px-5 py-2.5 border border-cv-border text-cv-text-secondary text-sm rounded-cv-md hover:bg-cv-hover hover:text-cv-text transition-all cursor-pointer disabled:opacity-40">
-            {{ testing ? '测试中...' : '测试连接' }}
+            {{ testing ? t('settings.testing') : t('settings.testConnection') }}
           </button>
           <button @click="save" :disabled="saving"
                   class="px-6 py-2.5 bg-cv-accent text-white text-sm font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer disabled:opacity-40 shadow-[0_2px_8px_rgba(59,130,246,0.3)]">
-            {{ saving ? '保存中...' : '保存' }}
+            {{ saving ? t('common.saving') : t('common.save') }}
           </button>
         </div>
       </div>

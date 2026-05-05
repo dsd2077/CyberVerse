@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
@@ -8,11 +9,12 @@ import { useCharacterStore } from '../stores/characters'
 import type { CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
 import { OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents } from '../services/api'
-import { DEFAULT_OFFICIAL_VOICE, DEFAULT_QWEN_OMNI_VOICE, DEFAULT_QWEN_TTS_VOICE, isOfficialVoiceType, isOpenAIVoiceType, isQwenOmniVoiceType, isQwenTTSVoiceType } from '../utils/voice'
+import { DEFAULT_OFFICIAL_VOICE, DEFAULT_QWEN_OMNI_VOICE, DEFAULT_QWEN_TTS_VOICE, isOfficialVoiceType, isOpenAIVoiceType, isQwenOmniVoiceType, isQwenTTSVoiceType, localizedVoiceOptions } from '../utils/voice'
 
 const router = useRouter()
 const route = useRoute()
 const store = useCharacterStore()
+const { t, locale } = useI18n()
 
 const isEdit = computed(() => !!route.params.id)
 const characterId = computed(() => route.params.id as string)
@@ -73,10 +75,10 @@ const usesQwenOmniVoice = computed(() =>
   form.value.mode === 'voice_llm' && selectedVoiceLLMProvider.value === 'qwen_omni'
 )
 const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
-const voiceLLMProviderOptions = [
-  { label: '豆包语音', value: 'doubao' },
+const voiceLLMProviderOptions = computed(() => [
+  { label: t('settings.doubaoVoice'), value: 'doubao' },
   { label: 'Qwen Omni', value: 'qwen_omni' },
-]
+])
 const providerSelectOptions = (items: ComponentOption[]) =>
   items.map(item => ({
     label: item.name,
@@ -108,6 +110,10 @@ const ttsModel = computed({
 const llmModelOptions = computed(() => modelOptions('llm'))
 const asrModelOptions = computed(() => modelOptions('asr'))
 const ttsModelOptions = computed(() => modelOptions('tts'))
+const qwenTTSVoiceOptions = computed(() => localizedVoiceOptions(QWEN_TTS_VOICE_OPTIONS, locale.value))
+const qwenOmniVoiceOptions = computed(() => localizedVoiceOptions(QWEN_OMNI_VOICE_OPTIONS, locale.value))
+const officialVoiceOptions = computed(() => localizedVoiceOptions(VOICE_OPTIONS, locale.value))
+const openAIVoiceOptions = computed(() => localizedVoiceOptions(OPENAI_VOICE_OPTIONS, locale.value))
 const canSave = computed(() =>
   !!form.value.name.trim() && (
     usesDoubaoVoice.value
@@ -244,7 +250,7 @@ function resolveVoiceType() {
 
   if (voiceMode.value === 'custom') {
     if (!trimmedCustomVoiceType.value) {
-      voiceError.value = '请输入已注册的 SC2.0 自定义 speaker_id'
+      voiceError.value = t('characterEdit.customSpeakerRequired')
       return null
     }
     return trimmedCustomVoiceType.value
@@ -461,7 +467,7 @@ async function save() {
 }
 
 async function handleDelete() {
-  if (!confirm('确定要删除这个角色吗？此操作不可撤销。')) return
+  if (!confirm(t('characterEdit.deleteConfirm'))) return
   await store.remove(characterId.value)
   router.push('/characters')
 }
@@ -469,7 +475,9 @@ async function handleDelete() {
 const promptLength = computed(() => form.value.system_prompt.length)
 
 const breadcrumb = computed(() =>
-  isEdit.value ? ['角色列表', '编辑角色'] : ['角色列表', '创建角色']
+  isEdit.value
+    ? [t('characterEdit.breadcrumbs.list'), t('characterEdit.breadcrumbs.edit')]
+    : [t('characterEdit.breadcrumbs.list'), t('characterEdit.breadcrumbs.create')]
 )
 </script>
 
@@ -479,7 +487,7 @@ const breadcrumb = computed(() =>
 
     <!-- Page title -->
     <div class="text-center py-8">
-      <h1 class="text-2xl font-bold text-cv-text">{{ isEdit ? '编辑角色' : '创建新角色' }}</h1>
+      <h1 class="text-2xl font-bold text-cv-text">{{ isEdit ? t('characterEdit.pageTitleEdit') : t('characterEdit.pageTitleCreate') }}</h1>
     </div>
 
     <!-- Content -->
@@ -506,8 +514,8 @@ const breadcrumb = computed(() =>
              class="mt-4 bg-cv-surface border border-cv-border rounded-cv-lg p-4">
           <div class="flex items-center justify-between">
             <div>
-              <span class="text-[13px] font-medium text-cv-text-secondary">随机切换头像</span>
-              <p class="text-[11px] text-cv-text-muted mt-1">开启后每次进入会话时随机选择一张头像</p>
+              <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.randomAvatar') }}</span>
+              <p class="text-[11px] text-cv-text-muted mt-1">{{ t('characterEdit.randomAvatarHint') }}</p>
             </div>
             <button @click="form.image_mode = form.image_mode === 'random' ? 'fixed' : 'random'"
                     class="relative w-11 h-6 rounded-full transition-colors cursor-pointer"
@@ -521,33 +529,33 @@ const breadcrumb = computed(() =>
 
       <!-- Right column: Form -->
       <div class="flex-1 flex flex-col gap-6">
-        <!-- Section 1: 基本信息 -->
+        <!-- Section 1: Basic info -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h2 class="text-base font-semibold text-cv-text mb-5">基本信息</h2>
+          <h2 class="text-base font-semibold text-cv-text mb-5">{{ t('characterEdit.basicInfo') }}</h2>
 
           <label class="block mb-4">
-            <span class="text-[13px] font-medium text-cv-text-secondary">角色名称 <span class="text-cv-danger">*</span></span>
-            <input v-model="form.name" type="text" placeholder="输入角色名称..."
+            <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.name') }} <span class="text-cv-danger">*</span></span>
+            <input v-model="form.name" type="text" :placeholder="t('characterEdit.namePlaceholder')"
                    class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
           </label>
 
           <label class="block">
-            <span class="text-[13px] font-medium text-cv-text-secondary">角色描述</span>
-            <textarea v-model="form.description" placeholder="简要描述该角色的特点和用途..."
+            <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.description') }}</span>
+            <textarea v-model="form.description" :placeholder="t('characterEdit.descriptionPlaceholder')"
                       class="mt-1.5 w-full h-20 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-sm text-cv-text placeholder:text-cv-text-muted resize-y focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
           </label>
         </section>
 
-        <!-- Section 2: 组件配置 -->
+        <!-- Section 2: Component configuration -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
           <div class="mb-5 flex flex-wrap items-center gap-3">
-            <h2 class="text-base font-semibold text-cv-text">组件配置</h2>
+            <h2 class="text-base font-semibold text-cv-text">{{ t('characterEdit.components') }}</h2>
             <div class="relative flex items-center gap-2">
               <button
                 type="button"
                 @click="toggleMode"
                 class="grid h-9 w-[280px] max-w-[calc(100vw-120px)] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1 text-sm transition-colors cursor-pointer"
-                :aria-label="`切换模式，当前为 ${form.mode}`"
+                :aria-label="t('characterEdit.modeToggleLabel', { mode: form.mode })"
               >
                 <span
                   class="flex items-center justify-center rounded-cv-sm transition-colors"
@@ -571,7 +579,7 @@ const breadcrumb = computed(() =>
                 @click="showModeHelp = !showModeHelp"
                 class="flex h-7 w-7 items-center justify-center rounded-full border border-cv-border text-sm font-medium text-cv-text-muted transition-colors hover:bg-cv-hover hover:text-cv-text cursor-pointer"
                 :aria-expanded="showModeHelp"
-                aria-label="查看模式说明"
+                :aria-label="t('characterEdit.modeHelpLabel')"
               >
                 ?
               </button>
@@ -582,13 +590,13 @@ const breadcrumb = computed(() =>
                 <div class="mb-3">
                   <div class="text-[13px] font-semibold text-cv-text">standard</div>
                   <p class="mt-1 text-[12px] leading-5 text-cv-text-secondary">
-                    用户语音先由 ASR 转成文本，再交给 LLM 生成回复，最后由 TTS 合成为语音并驱动数字人。
+                    {{ t('characterEdit.standardHelp') }}
                   </p>
                 </div>
                 <div>
                   <div class="text-[13px] font-semibold text-cv-text">voice_llm</div>
                   <p class="mt-1 text-[12px] leading-5 text-cv-text-secondary">
-                    端到端的语音大模型：语音识别、对话生成和语音合成由同一个 Voice LLM 服务完成。
+                    {{ t('characterEdit.voiceLLMHelp') }}
                   </p>
                 </div>
               </div>
@@ -607,7 +615,7 @@ const breadcrumb = computed(() =>
                 />
               </label>
               <label class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.model') }}</span>
                 <CvSelect
                   v-model="llmModel"
                   :options="llmModelOptions"
@@ -627,7 +635,7 @@ const breadcrumb = computed(() =>
                 />
               </label>
               <label class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.model') }}</span>
                 <CvSelect
                   v-model="asrModel"
                   :options="asrModelOptions"
@@ -647,7 +655,7 @@ const breadcrumb = computed(() =>
                 />
               </label>
               <label class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.model') }}</span>
                 <CvSelect
                   v-model="ttsModel"
                   :options="ttsModelOptions"
@@ -656,36 +664,36 @@ const breadcrumb = computed(() =>
               </label>
               <template v-if="!usesDoubaoVoice && selectedTTS === 'qwen'">
                 <label class="block">
-                  <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                  <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.voice') }}</span>
                   <CvSelect
                     v-model="form.voice_type"
-                    :options="QWEN_TTS_VOICE_OPTIONS"
+                    :options="qwenTTSVoiceOptions"
                     class="mt-1.5"
                   />
                 </label>
                 <p class="text-[11px] leading-5 text-cv-text-muted md:col-span-3 md:col-start-2 md:-mt-1">
-                  可到
+                  {{ t('characterEdit.canPreviewAt') }}
                   <a
                     :href="QWEN_TTS_VOICE_PREVIEW_URL"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="underline underline-offset-2 transition-colors hover:text-cv-text"
                   >
-                    Qwen TTS 官方音色列表
+                    {{ t('characterEdit.qwenTTSVoiceList') }}
                   </a>
-                  试听音色
+                  {{ t('characterEdit.previewVoice') }}
                 </p>
               </template>
               <label v-else-if="isOpenAIVoice" class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.voice') }}</span>
                 <CvSelect
                   v-model="form.voice_type"
-                  :options="OPENAI_VOICE_OPTIONS"
+                  :options="openAIVoiceOptions"
                   class="mt-1.5"
                 />
               </label>
               <div v-else class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">音色</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.voice') }}</span>
                 <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
                   <button
                     type="button"
@@ -695,7 +703,7 @@ const breadcrumb = computed(() =>
                       ? 'bg-cv-accent text-white'
                       : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
                   >
-                    官方音色
+                    {{ t('characterEdit.officialVoice') }}
                   </button>
                   <button
                     type="button"
@@ -705,14 +713,14 @@ const breadcrumb = computed(() =>
                       ? 'bg-cv-accent text-white'
                       : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
                   >
-                    克隆音色
+                    {{ t('characterEdit.clonedVoice') }}
                   </button>
                 </div>
                 <div class="mt-3 flex items-start gap-3">
                   <CvSelect
                     v-if="voiceMode === 'official'"
                     v-model="form.voice_type"
-                    :options="VOICE_OPTIONS"
+                    :options="officialVoiceOptions"
                     :success="voiceCheckSucceeded"
                     class="min-w-0 flex-1"
                   />
@@ -720,7 +728,7 @@ const breadcrumb = computed(() =>
                     <input
                       v-model="customVoiceType"
                       type="text"
-                      placeholder="输入 speaker_id"
+                      :placeholder="t('characterEdit.customSpeakerPlaceholder')"
                       class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
                       :class="voiceCheckSucceeded
                         ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
@@ -742,7 +750,7 @@ const breadcrumb = computed(() =>
                     :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
                     class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    check
+                    {{ t('common.check') }}
                   </button>
                 </div>
                 <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
@@ -768,7 +776,7 @@ const breadcrumb = computed(() =>
                 />
               </label>
               <div v-if="usesDoubaoVoice" class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">声线类型</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('characterEdit.voiceType') }}</span>
                 <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
                   <button
                     type="button"
@@ -778,7 +786,7 @@ const breadcrumb = computed(() =>
                       ? 'bg-cv-accent text-white'
                       : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
                   >
-                    官方音色
+                    {{ t('characterEdit.officialVoice') }}
                   </button>
                   <button
                     type="button"
@@ -788,12 +796,12 @@ const breadcrumb = computed(() =>
                       ? 'bg-cv-accent text-white'
                       : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
                   >
-                    克隆音色
+                    {{ t('characterEdit.clonedVoice') }}
                   </button>
                 </div>
               </div>
               <label v-else class="block">
-                <span class="text-[12px] font-medium text-cv-text-muted">模型</span>
+                <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.model') }}</span>
                 <input
                   type="text"
                   value="qwen3.5-omni-flash-realtime"
@@ -804,20 +812,20 @@ const breadcrumb = computed(() =>
             </div>
 
             <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)] md:items-start">
-              <span class="text-[13px] font-medium text-cv-text-secondary md:pt-3">声线</span>
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pt-3">{{ t('characterEdit.lineVoice') }}</span>
               <label class="block">
                 <div class="flex items-start gap-3">
                   <CvSelect
                     v-if="usesQwenOmniVoice"
                     v-model="form.voice_type"
-                    :options="QWEN_OMNI_VOICE_OPTIONS"
+                    :options="qwenOmniVoiceOptions"
                     :success="voiceCheckSucceeded"
                     class="min-w-0 flex-1"
                   />
                   <CvSelect
                     v-else-if="voiceMode === 'official'"
                     v-model="form.voice_type"
-                    :options="VOICE_OPTIONS"
+                    :options="officialVoiceOptions"
                     :success="voiceCheckSucceeded"
                     class="min-w-0 flex-1"
                   />
@@ -825,7 +833,7 @@ const breadcrumb = computed(() =>
                     <input
                       v-model="customVoiceType"
                       type="text"
-                      placeholder="输入已注册成功的 speaker_id，例如 S_123456"
+                      :placeholder="t('characterEdit.registeredSpeakerPlaceholder')"
                       class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
                       :class="voiceCheckSucceeded
                         ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
@@ -847,44 +855,44 @@ const breadcrumb = computed(() =>
                     :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
                     class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    check
+                    {{ t('common.check') }}
                   </button>
                 </div>
                 <p v-if="usesDoubaoVoice && voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-                  可到
+                  {{ t('characterEdit.canPreviewAt') }}
                   <a
                     :href="OFFICIAL_VOICE_PREVIEW_URL"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="underline underline-offset-2 transition-colors hover:text-cv-text"
                   >
-                    火山引擎语音克隆控制台
+                    {{ t('characterEdit.doubaoVoiceConsole') }}
                   </a>
-                  试听音色
+                  {{ t('characterEdit.previewVoice') }}
                 </p>
                 <p v-if="usesQwenOmniVoice" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-                  可到
+                  {{ t('characterEdit.canPreviewAt') }}
                   <a
                     :href="QWEN_OMNI_VOICE_LIST_URL"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="underline underline-offset-2 transition-colors hover:text-cv-text"
                   >
-                    Qwen Omni 官方音色列表
+                    {{ t('characterEdit.qwenOmniVoiceList') }}
                   </a>
-                  试听音色
+                  {{ t('characterEdit.previewVoice') }}
                 </p>
                 <p v-if="usesDoubaoVoice && voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-                  请先前往
+                  {{ t('characterEdit.clonePrerequisitePrefix') }}
                   <a
                     :href="CUSTOM_VOICE_CLONE_URL"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="underline underline-offset-2 transition-colors hover:text-cv-text"
                   >
-                    火山引擎语音克隆控制台
+                    {{ t('characterEdit.doubaoVoiceConsole') }}
                   </a>
-                  生成 SC2.0 克隆音色
+                  {{ t('characterEdit.clonePrerequisiteSuffix') }}
                 </p>
                 <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
                 <p
@@ -898,38 +906,38 @@ const breadcrumb = computed(() =>
           </div>
         </section>
 
-        <!-- Section 3: 人设与风格 -->
+        <!-- Section 3: Persona and style -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h2 class="text-base font-semibold text-cv-text mb-5">人设与风格</h2>
+          <h2 class="text-base font-semibold text-cv-text mb-5">{{ t('characterEdit.personaStyle') }}</h2>
 
           <label class="block mb-4">
-            <span class="text-[13px] font-medium text-cv-text-secondary">说话风格</span>
-            <input v-model="form.speaking_style" type="text" placeholder="温柔、专业"
+            <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.speakingStyle') }}</span>
+            <input v-model="form.speaking_style" type="text" :placeholder="t('characterEdit.speakingStylePlaceholder')"
                    class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
-            <p class="text-[11px] text-cv-text-muted mt-1">描述角色的语言风格，如"幽默风趣"、"严谨专业"</p>
+            <p class="text-[11px] text-cv-text-muted mt-1">{{ t('characterEdit.speakingStyleHint') }}</p>
           </label>
 
           <label class="block mb-4">
-            <span class="text-[13px] font-medium text-cv-text-secondary">角色性格</span>
-            <textarea v-model="form.personality" placeholder="温柔体贴、善于倾听，喜欢用比喻来解释复杂的概念..."
+            <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.personality') }}</span>
+            <textarea v-model="form.personality" :placeholder="t('characterEdit.personalityPlaceholder')"
                       class="mt-1.5 w-full h-20 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-sm text-cv-text placeholder:text-cv-text-muted resize-y focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
-            <p class="text-[11px] text-cv-text-muted mt-1">描述角色的性格特征，会和角色提示词一起组成角色设定</p>
+            <p class="text-[11px] text-cv-text-muted mt-1">{{ t('characterEdit.personalityHint') }}</p>
           </label>
 
           <label class="block">
-            <span class="text-[13px] font-medium text-cv-text-secondary">欢迎语</span>
-            <textarea v-model="form.welcome_message" placeholder="你好，我是小雪，有什么可以帮助你的吗？"
+            <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.welcomeMessage') }}</span>
+            <textarea v-model="form.welcome_message" :placeholder="t('characterEdit.welcomeMessagePlaceholder')"
                       class="mt-1.5 w-full h-[60px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-sm text-cv-text placeholder:text-cv-text-muted resize-y focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
-            <p class="text-[11px] text-cv-text-muted mt-1">角色开场白，连接后自动播放</p>
+            <p class="text-[11px] text-cv-text-muted mt-1">{{ t('characterEdit.welcomeMessageHint') }}</p>
           </label>
         </section>
 
-        <!-- Section 4: 角色提示词 -->
+        <!-- Section 4: Role prompt -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h2 class="text-base font-semibold text-cv-text mb-5">角色提示词</h2>
+          <h2 class="text-base font-semibold text-cv-text mb-5">{{ t('characterEdit.systemPrompt') }}</h2>
 
           <textarea v-model="form.system_prompt"
-                    placeholder="写这个角色是谁、和用户的关系、背景设定、偏好的称呼和人设边界。"
+                    :placeholder="t('characterEdit.systemPromptPlaceholder')"
                     class="w-full h-40 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-[13px] text-cv-text placeholder:text-cv-text-muted resize-y leading-[22px] focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
           <p class="text-right text-[11px] text-cv-text-muted mt-1">{{ promptLength }} / 2000</p>
         </section>
@@ -941,18 +949,18 @@ const breadcrumb = computed(() =>
       <div class="max-w-[1100px] mx-auto flex items-center justify-between">
         <button v-if="isEdit" @click="handleDelete"
                 class="text-cv-danger text-sm hover:bg-cv-danger-muted px-3 py-1.5 rounded-cv-md transition-colors cursor-pointer">
-          删除角色
+          {{ t('characterEdit.deleteCharacter') }}
         </button>
         <div v-else />
         <div class="flex items-center gap-3">
           <button @click="router.back()"
                   class="px-5 py-2.5 border border-cv-border text-cv-text-secondary text-sm rounded-cv-md hover:bg-cv-hover hover:text-cv-text transition-all cursor-pointer">
-            取消
+            {{ t('common.cancel') }}
           </button>
           <button @click="save" :disabled="saving || !canSave"
                   :class="{ 'opacity-40 cursor-not-allowed': saving || !canSave }"
                   class="px-6 py-2.5 bg-cv-accent text-white text-sm font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-            {{ saving ? '保存中...' : '保存角色' }}
+            {{ saving ? t('common.saving') : t('characterEdit.saveCharacter') }}
           </button>
         </div>
       </div>

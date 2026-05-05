@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { ConnectionState } from '../composables/useWebRTC'
 
 defineProps<{
@@ -11,6 +12,8 @@ const emit = defineEmits<{
   disconnect: []
   toggleMute: []
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -20,17 +23,17 @@ const emit = defineEmits<{
       class="btn btn-primary"
       @click="$emit('connect')"
     >
-      Connect
+      {{ t('controlBar.connect') }}
     </button>
     <button
       v-else-if="connectionState === 'connected'"
       class="btn btn-danger"
       @click="$emit('disconnect')"
     >
-      Disconnect
+      {{ t('controlBar.disconnect') }}
     </button>
     <button v-else class="btn" disabled>
-      Connecting...
+      {{ t('controlBar.connecting') }}
     </button>
 
     <button
@@ -39,7 +42,7 @@ const emit = defineEmits<{
       @click="$emit('toggleMute')"
       :disabled="connectionState !== 'connected'"
     >
-      {{ isMuted ? 'Unmute' : 'Mute' }}
+      {{ isMuted ? t('controlBar.unmute') : t('controlBar.mute') }}
     </button>
 
     <span class="connection-status" :class="connectionState">

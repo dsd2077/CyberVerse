@@ -46,7 +46,7 @@ type Bot struct {
 	pcmRemoteTracksMu sync.Mutex
 	pcmRemoteTracks   map[*webrtc.TrackRemote]*lkmedia.PCMRemoteTrack
 
-	lastPublishEnd time.Time // [AVGap] 上次发布结束的时间戳
+	lastPublishEnd time.Time // [AVGap] Timestamp when the previous publish completed.
 
 	// AV pipeline
 	encodeCh         chan *RawAVSegment

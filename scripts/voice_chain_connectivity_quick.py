@@ -25,7 +25,7 @@ def http_delete(url: str, timeout_s: int = 10):
 
 
 def main():
-    # 允许通过环境变量控制等待时长，便于观察是否真的产出视频块。
+    # Allow the wait time to be controlled by env vars so video chunks can be observed.
     duration_s = int(__import__("os").environ.get("VOICE_TEST_DURATION_S", "180"))
 
     # Create voice_llm session

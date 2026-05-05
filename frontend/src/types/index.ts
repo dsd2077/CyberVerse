@@ -92,6 +92,7 @@ export interface ConfigParam {
 }
 
 export interface ConfigSection {
+  key: 'avatar' | 'video_output' | 'gpu' | string
   title: string
   badge: 'restart' | 'configurable'
   params: ConfigParam[]

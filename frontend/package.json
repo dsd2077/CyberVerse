@@ -12,6 +12,7 @@
     "livekit-client": "^2.17.3",
     "pinia": "^3.0.4",
     "vue": "^3.5.30",
+    "vue-i18n": "^11.4.0",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {

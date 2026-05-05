@@ -84,7 +84,7 @@ type Store struct {
 	mu      sync.RWMutex
 	baseDir string
 	chars   map[string]*Character
-	// dirNames caches id → directory name (e.g. "程欣_8981e0a1")
+	// dirNames caches id to directory name, for example "char_8981e0a1".
 	dirNames map[string]string
 }
 

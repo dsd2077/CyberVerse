@@ -3,31 +3,31 @@ import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client'
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error'
 
-// ─── 诊断日志工具 ──────────────────────────────────────────────────────────
+// Diagnostics
 const T0 = performance.now()
 function ts() {
   return `+${((performance.now() - T0) / 1000).toFixed(3)}s`
 }
 
-// 合并流状态（音频和视频都进同一个 <video> 元素）
+// Combined stream state: audio and video go into the same <video> element.
 let _videoEl: HTMLVideoElement | null = null
 let _videoMST: MediaStreamTrack | null = null
 let _audioMST: MediaStreamTrack | null = null
 
-// 帧计数
+// Frame counters.
 let videoFrameCount = 0
 let videoFirstFrameTime: number | null = null
 let videoLastFrameWallMs: number | null = null
 let audioPlayWallMs: number | null = null
 
-// RVFC 段内 checkpoint
+// Segment checkpoint for requestVideoFrameCallback.
 let rvfcCheckpointMedia: number | null = null
 let rvfcCheckpointCurrentTime: number | null = null
 let debugPollTimer: ReturnType<typeof setInterval> | null = null
 
-// ─── 帧间抖动(Jitter)测量 ─────────────────────────────────────────────────
-// 滑动窗口记录最近 N 帧的 wall-clock 到达时间，用于计算帧间隔分布
-const JITTER_WINDOW = 120 // 保留最近 120 帧（约 4-5 秒 @25fps）
+// Frame jitter measurement.
+// A sliding window records wall-clock arrival times for interval statistics.
+const JITTER_WINDOW = 120 // Keep the latest 120 frames, roughly 4-5 seconds at 25 FPS.
 let frameArrivalTimes: number[] = []
 let framePresentationTimes: number[] = [] // RVFC mediaTime
 
@@ -49,7 +49,7 @@ function recordFrameArrival(wallMs: number, mediaTime?: number) {
   }
 }
 
-/** 计算帧间隔统计：均值、标准差、最大值、P95、卡顿次数 */
+/** Compute frame interval statistics: mean, standard deviation, max, P95, and stutter count. */
 function computeJitterStats(): FrameJitterStats {
   const times = frameArrivalTimes
   if (times.length < 2) {
@@ -65,19 +65,19 @@ function computeJitterStats(): FrameJitterStats {
   const stddev = Math.sqrt(variance)
   const p95 = intervals[Math.floor(intervals.length * 0.95)]
   const maxInterval = intervals[intervals.length - 1]
-  // 卡顿定义：帧间隔 > 均值 * 2 且 > 60ms（即明显超出预期帧率）
+  // Stutter definition: interval > mean * 2 and > 60ms, clearly above the expected frame rate.
   const stutterThreshold = Math.max(mean * 2, 60)
   const stutterCount = intervals.filter(v => v > stutterThreshold).length
   return { meanIntervalMs: Math.round(mean * 10) / 10, stddevMs: Math.round(stddev * 10) / 10, maxIntervalMs: Math.round(maxInterval), p95IntervalMs: Math.round(p95), stutterCount, windowSize: intervals.length }
 }
 
 export type FrameJitterStats = {
-  meanIntervalMs: number    // 平均帧间隔 (ms)
-  stddevMs: number          // 帧间隔标准差 (ms) — 越大越卡
-  maxIntervalMs: number     // 最大帧间隔 (ms)
-  p95IntervalMs: number     // P95 帧间隔 (ms)
-  stutterCount: number      // 卡顿次数（帧间隔 > 2倍均值 且 > 60ms）
-  windowSize: number        // 统计窗口帧数
+  meanIntervalMs: number    // Average frame interval in ms.
+  stddevMs: number          // Frame interval standard deviation in ms; higher means less smooth.
+  maxIntervalMs: number     // Maximum frame interval in ms.
+  p95IntervalMs: number     // P95 frame interval in ms.
+  stutterCount: number      // Number of stutters.
+  windowSize: number        // Number of frames in the statistics window.
 }
 
 export type WebRTCNetworkStats = {
@@ -85,16 +85,16 @@ export type WebRTCNetworkStats = {
   jitterMs: number | null
   packetsLost: number
   packetsReceived: number
-  lossRate: number           // 丢包率 (0-1)
+  lossRate: number           // Packet loss rate from 0 to 1.
   bytesReceived: number
   framesDecoded: number
   framesDropped: number
   frameWidth: number
   frameHeight: number
-  nackCount: number          // NACK 请求次数
-  pliCount: number           // PLI 请求次数
-  firCount: number           // FIR 请求次数
-  jitterBufferDelayMs: number | null  // 抖动缓冲延迟
+  nackCount: number          // Number of NACK requests.
+  pliCount: number           // Number of PLI requests.
+  firCount: number           // Number of FIR requests.
+  jitterBufferDelayMs: number | null  // Jitter buffer delay.
   jitterBufferEmittedCount: number
   codec: string
 }
@@ -117,7 +117,7 @@ export type AVSyncDebugState = {
   droppedFrames: number
   totalFrames: number
   notes: string[]
-  // ─── 新增量化指标 ───
+  // Quantitative diagnostics.
   jitter: FrameJitterStats
   network: WebRTCNetworkStats | null
 }
@@ -176,9 +176,9 @@ function resetState() {
 }
 
 /**
- * 把音频和视频合并进同一个 <video> 元素的 MediaStream。
- * 这是保证音画同步的关键：浏览器对同一 MediaElement 内的 A/V 轨道
- * 会通过 RTCP SR 做原生 lipsync，视频卡顿时音频也会随之等待。
+ * Merge audio and video tracks into one MediaStream on the same <video> element.
+ * This is required for browser-native lip sync: A/V tracks in one MediaElement
+ * are synchronized through RTCP sender reports, so audio waits when video stalls.
  */
 function mergeCombinedStream() {
   const el = _videoEl
@@ -189,15 +189,15 @@ function mergeCombinedStream() {
 
   el.srcObject = new MediaStream(tracks)
   console.log(
-    `[AVSync][${ts()}] ✅ 合并流已设置 → <video>: video=✓ audio=${!!_audioMST}` +
-      ` (浏览器将原生同步音画)`
+    `[AVSync][${ts()}] ✅ combined stream set on <video>: video=✓ audio=${!!_audioMST}` +
+      ` (browser will synchronize audio and video natively)`
   )
 }
 
 function logIncomingTrack(kind: 'audio' | 'video', track: RemoteTrack) {
   const mediaTrack = track.mediaStreamTrack
   console.log(
-    `[AVSync][${ts()}] ${kind === 'audio' ? '🔊 AUDIO' : '🎬 VIDEO'} 收到: sid=${track.sid}` +
+    `[AVSync][${ts()}] ${kind === 'audio' ? '🔊 AUDIO' : '🎬 VIDEO'} received: sid=${track.sid}` +
       ` readyState=${mediaTrack.readyState} muted=${mediaTrack.muted} enabled=${mediaTrack.enabled}`
   )
 }
@@ -224,8 +224,8 @@ function attachVideoFrameCallback(elParam: HTMLVideoElement) {
             ? ((videoFirstFrameTime - audioPlayWallMs) / 1000).toFixed(3)
             : 'N/A'
         console.log(
-          `[AVSync][${ts()}] 🎬 VIDEO 首帧 (timeupdate): currentTime=${el.currentTime.toFixed(3)}s` +
-            ` | 比 audio.play 晚 ${delay}s`
+          `[AVSync][${ts()}] 🎬 VIDEO first frame (timeupdate): currentTime=${el.currentTime.toFixed(3)}s` +
+            ` | ${delay}s after audio.play`
         )
       }
     })
@@ -245,9 +245,9 @@ function attachVideoFrameCallback(elParam: HTMLVideoElement) {
           ? ((now - audioPlayWallMs) / 1000).toFixed(3)
           : 'N/A'
       console.log(
-        `[AVSync][${ts()}] 🎬 VIDEO 首帧: mediaTime=${meta.mediaTime.toFixed(3)}s` +
+        `[AVSync][${ts()}] 🎬 VIDEO first frame: mediaTime=${meta.mediaTime.toFixed(3)}s` +
           ` presentedFrames=${meta.presentedFrames}` +
-          ` | 比 audio.play 晚 ${delay}s`
+          ` | ${delay}s after audio.play`
       )
     }
 
@@ -258,8 +258,8 @@ function attachVideoFrameCallback(elParam: HTMLVideoElement) {
         const dCt = ct - rvfcCheckpointCurrentTime
         const seg = dVm - dCt
         console.log(
-          `[AVSync][${ts()}] 📊 每50帧: 段Δmedia=${dVm.toFixed(3)}s 段ΔcurrentTime=${dCt.toFixed(3)}s` +
-            ` 段偏差(media-ct)=${seg.toFixed(3)}s | mediaTime=${meta.mediaTime.toFixed(3)}s`
+          `[AVSync][${ts()}] 📊 per-50 frames: segment dMedia=${dVm.toFixed(3)}s segment dCurrentTime=${dCt.toFixed(3)}s` +
+            ` segment drift(media-ct)=${seg.toFixed(3)}s | mediaTime=${meta.mediaTime.toFixed(3)}s`
         )
       }
       rvfcCheckpointMedia = meta.mediaTime
@@ -286,11 +286,11 @@ export function useWebRTC() {
   const pendingVideoTracks: RemoteTrack[] = []
   let networkStatsTimer: ReturnType<typeof setInterval> | null = null
 
-  /** 通过 LiveKit Room 内部的 RTCPeerConnection 采集 WebRTC 统计 */
+  /** Collect WebRTC statistics from the RTCPeerConnection inside the LiveKit Room. */
   async function pollNetworkStats() {
     if (!room) return
     try {
-      // LiveKit Room 的 engine.subscriber.pc 是接收端 PeerConnection
+      // LiveKit Room engine.subscriber.pc is the receiving PeerConnection.
       const pc = (room as any).engine?.subscriber?.pc as RTCPeerConnection | undefined
       if (!pc) return
       const stats = await pc.getStats()
@@ -505,7 +505,7 @@ export function useWebRTC() {
             mergeCombinedStream()
             attachVideoFrameCallback(videoElement.value)
           } else {
-            console.log(`[AVSync][${ts()}] 🎬 VIDEO track 排队 (videoElement 未就绪)`)
+            console.log(`[AVSync][${ts()}] 🎬 VIDEO track queued (videoElement not ready)`)
             pendingVideoTracks.push(track)
           }
         }
@@ -527,7 +527,7 @@ export function useWebRTC() {
                 audioPlayWallMs = performance.now()
                 debugState.value.firstPlayAtMs = Date.now()
                 console.log(
-                  `[AVSync][${ts()}] ▶ 首次播放: currentTime=${el.currentTime.toFixed(3)}s`
+                  `[AVSync][${ts()}] ▶ first play: currentTime=${el.currentTime.toFixed(3)}s`
                 )
               }
             }, { once: true })
@@ -555,7 +555,7 @@ export function useWebRTC() {
       pushNote('room connected')
       await room.localParticipant.setMicrophoneEnabled(true)
       tryAttachLocalMic(room)
-      // 每秒采集一次 WebRTC 网络统计
+      // Collect WebRTC network statistics once per second.
       networkStatsTimer = setInterval(() => void pollNetworkStats(), 1000)
     } catch (e: unknown) {
       stopMicMetering()
@@ -575,7 +575,7 @@ export function useWebRTC() {
     }
     pendingVideoTracks.length = 0
 
-    // 清理 <video> 元素的合并流
+    // Clear the combined stream from the <video> element.
     if (videoElement.value) {
       videoElement.value.srcObject = null
     }
@@ -625,7 +625,7 @@ export function useWebRTC() {
       if (videoFirstFrameTime !== null && debugState.value.videoFirstFrameAtMs === null) {
         debugState.value.videoFirstFrameAtMs = Date.now()
       }
-      // 更新帧抖动统计
+      // Update frame jitter statistics.
       debugState.value.jitter = computeJitterStats()
     }, 500)
     el.addEventListener('emptied', () => pushNote('video element emptied'))

@@ -240,6 +240,9 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 	foundGPUSection := false
 	for _, section := range resp.Sections {
 		if section.Title == "头像模型 (Avatar)" {
+			if section.Key != "avatar" {
+				t.Fatalf("expected avatar section key, got %q", section.Key)
+			}
 			foundAvatarSection = true
 			paths := map[string]any{}
 			for _, param := range section.Params {
@@ -260,6 +263,9 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 			continue
 		}
 		if section.Title == "视频输出" {
+			if section.Key != "video_output" {
+				t.Fatalf("expected video_output section key, got %q", section.Key)
+			}
 			foundVideoSection = true
 			paths := map[string]any{}
 			for _, param := range section.Params {
@@ -275,6 +281,9 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 		}
 		if section.Title != "GPU 配置" {
 			continue
+		}
+		if section.Key != "gpu" {
+			t.Fatalf("expected gpu section key, got %q", section.Key)
 		}
 		foundGPUSection = true
 		paths := map[string]bool{}
@@ -325,6 +334,9 @@ func TestGetLaunchConfigReadsVideoSectionFromMainConfig(t *testing.T) {
 	foundAvatarSection := false
 	for _, section := range resp.Sections {
 		if section.Title == "头像模型 (Avatar)" {
+			if section.Key != "avatar" {
+				t.Fatalf("expected avatar section key, got %q", section.Key)
+			}
 			foundAvatarSection = true
 			paths := map[string]any{}
 			for _, param := range section.Params {
@@ -340,6 +352,9 @@ func TestGetLaunchConfigReadsVideoSectionFromMainConfig(t *testing.T) {
 		}
 		if section.Title != "视频输出" {
 			continue
+		}
+		if section.Key != "video_output" {
+			t.Fatalf("expected video_output section key, got %q", section.Key)
 		}
 		foundVideoSection = true
 		paths := map[string]any{}

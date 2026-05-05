@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
+const { t } = useI18n()
 const dismissed = ref(false)
 
 defineProps<{ show: boolean }>()
@@ -17,16 +19,16 @@ defineProps<{ show: boolean }>()
           <path d="M8 1L1 14h14L8 1z" stroke-linejoin="round" />
           <path d="M8 6v3M8 11.5v.5" stroke-linecap="round" />
         </svg>
-        <span class="text-cv-accent text-sm font-medium">系统尚未配置</span>
+        <span class="text-cv-accent text-sm font-medium">{{ t('setup.title') }}</span>
       </div>
       <p class="text-[13px] text-cv-text-secondary">
-        请先配置 DashScope 或所选组件的服务凭证，以便正常启动数字人会话。
+        {{ t('setup.body') }}
       </p>
     </div>
     <div class="flex items-center gap-3 shrink-0">
       <button @click="router.push('/settings')"
               class="px-4 py-1.5 bg-cv-accent text-white text-[13px] font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer">
-        去配置 →
+        {{ t('setup.action') }}
       </button>
       <button @click="dismissed = true"
               class="text-cv-text-muted hover:text-cv-text transition-colors cursor-pointer">

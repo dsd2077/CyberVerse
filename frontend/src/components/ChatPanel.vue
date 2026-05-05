@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted, onUnmounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ChatMessage, AvatarStatus } from '../composables/useChat'
 
 const props = defineProps<{
@@ -16,6 +17,7 @@ const emit = defineEmits<{
   loadMore: []
 }>()
 
+const { t } = useI18n()
 const inputText = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const sentinel = ref<HTMLElement | null>(null)
@@ -124,10 +126,10 @@ onUnmounted(() => {
           <span class="loading-dot" /><span class="loading-dot" /><span class="loading-dot" />
         </div>
         <div v-else-if="historyHasMore" class="load-more-hint">
-          ↑ 向上滚动加载更多
+          {{ t('chat.loadMore') }}
         </div>
         <div v-else-if="messages.some(m => m.isHistory)" class="history-end">
-          — 已加载全部历史 —
+          {{ t('chat.historyEnd') }}
         </div>
       </div>
 
@@ -135,8 +137,8 @@ onUnmounted(() => {
         <!-- Session separator -->
         <div v-if="sessionBreaks.has(i)" class="session-separator">
           <span class="separator-line" />
-          <span v-if="msg.isHistory" class="separator-label">上一次对话</span>
-          <span v-else class="separator-label">当前对话</span>
+          <span v-if="msg.isHistory" class="separator-label">{{ t('chat.previousConversation') }}</span>
+          <span v-else class="separator-label">{{ t('chat.currentConversation') }}</span>
           <span class="separator-line" />
         </div>
 
@@ -161,11 +163,11 @@ onUnmounted(() => {
       <input
         v-model="inputText"
         type="text"
-        placeholder="Type a message..."
+        :placeholder="t('chat.inputPlaceholder')"
         @keydown="handleKeydown"
       />
       <button class="send-btn" @click="handleSend" :disabled="!inputText.trim()">
-        Send
+        {{ t('chat.send') }}
       </button>
     </div>
   </div>
