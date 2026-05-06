@@ -28,6 +28,7 @@ type VoiceLLMInput struct {
 	//	*VoiceLLMInput_Audio
 	//	*VoiceLLMInput_Text
 	//	*VoiceLLMInput_Config
+	//	*VoiceLLMInput_Image
 	Input         isVoiceLLMInput_Input `protobuf_oneof:"input"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -97,6 +98,15 @@ func (x *VoiceLLMInput) GetConfig() *VoiceLLMConfig {
 	return nil
 }
 
+func (x *VoiceLLMInput) GetImage() *ImageFrame {
+	if x != nil {
+		if x, ok := x.Input.(*VoiceLLMInput_Image); ok {
+			return x.Image
+		}
+	}
+	return nil
+}
+
 type isVoiceLLMInput_Input interface {
 	isVoiceLLMInput_Input()
 }
@@ -113,11 +123,17 @@ type VoiceLLMInput_Config struct {
 	Config *VoiceLLMConfig `protobuf:"bytes,3,opt,name=config,proto3,oneof"`
 }
 
+type VoiceLLMInput_Image struct {
+	Image *ImageFrame `protobuf:"bytes,4,opt,name=image,proto3,oneof"`
+}
+
 func (*VoiceLLMInput_Audio) isVoiceLLMInput_Input() {}
 
 func (*VoiceLLMInput_Text) isVoiceLLMInput_Input() {}
 
 func (*VoiceLLMInput_Config) isVoiceLLMInput_Input() {}
+
+func (*VoiceLLMInput_Image) isVoiceLLMInput_Input() {}
 
 type VoiceLLMOutput struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -568,11 +584,12 @@ var File_voice_llm_proto protoreflect.FileDescriptor
 const file_voice_llm_proto_rawDesc = "" +
 	"\n" +
 	"\x0fvoice_llm.proto\x12\n" +
-	"cyberverse\x1a\fcommon.proto\"\x94\x01\n" +
+	"cyberverse\x1a\fcommon.proto\"\xc4\x01\n" +
 	"\rVoiceLLMInput\x12.\n" +
 	"\x05audio\x18\x01 \x01(\v2\x16.cyberverse.AudioChunkH\x00R\x05audio\x12\x14\n" +
 	"\x04text\x18\x02 \x01(\tH\x00R\x04text\x124\n" +
-	"\x06config\x18\x03 \x01(\v2\x1a.cyberverse.VoiceLLMConfigH\x00R\x06configB\a\n" +
+	"\x06config\x18\x03 \x01(\v2\x1a.cyberverse.VoiceLLMConfigH\x00R\x06config\x12.\n" +
+	"\x05image\x18\x04 \x01(\v2\x16.cyberverse.ImageFrameH\x00R\x05imageB\a\n" +
 	"\x05input\"\xff\x01\n" +
 	"\x0eVoiceLLMOutput\x12,\n" +
 	"\x05audio\x18\x01 \x01(\v2\x16.cyberverse.AudioChunkR\x05audio\x12\x1e\n" +
@@ -639,24 +656,26 @@ var file_voice_llm_proto_goTypes = []any{
 	(*InterruptRequest)(nil),          // 6: cyberverse.InterruptRequest
 	(*InterruptResponse)(nil),         // 7: cyberverse.InterruptResponse
 	(*AudioChunk)(nil),                // 8: cyberverse.AudioChunk
+	(*ImageFrame)(nil),                // 9: cyberverse.ImageFrame
 }
 var file_voice_llm_proto_depIdxs = []int32{
 	8, // 0: cyberverse.VoiceLLMInput.audio:type_name -> cyberverse.AudioChunk
 	2, // 1: cyberverse.VoiceLLMInput.config:type_name -> cyberverse.VoiceLLMConfig
-	8, // 2: cyberverse.VoiceLLMOutput.audio:type_name -> cyberverse.AudioChunk
-	3, // 3: cyberverse.VoiceLLMConfig.dialog_context:type_name -> cyberverse.VoiceLLMDialogContextItem
-	2, // 4: cyberverse.CheckVoiceRequest.config:type_name -> cyberverse.VoiceLLMConfig
-	0, // 5: cyberverse.VoiceLLMService.Converse:input_type -> cyberverse.VoiceLLMInput
-	4, // 6: cyberverse.VoiceLLMService.CheckVoice:input_type -> cyberverse.CheckVoiceRequest
-	6, // 7: cyberverse.VoiceLLMService.Interrupt:input_type -> cyberverse.InterruptRequest
-	1, // 8: cyberverse.VoiceLLMService.Converse:output_type -> cyberverse.VoiceLLMOutput
-	5, // 9: cyberverse.VoiceLLMService.CheckVoice:output_type -> cyberverse.CheckVoiceResponse
-	7, // 10: cyberverse.VoiceLLMService.Interrupt:output_type -> cyberverse.InterruptResponse
-	8, // [8:11] is the sub-list for method output_type
-	5, // [5:8] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	9, // 2: cyberverse.VoiceLLMInput.image:type_name -> cyberverse.ImageFrame
+	8, // 3: cyberverse.VoiceLLMOutput.audio:type_name -> cyberverse.AudioChunk
+	3, // 4: cyberverse.VoiceLLMConfig.dialog_context:type_name -> cyberverse.VoiceLLMDialogContextItem
+	2, // 5: cyberverse.CheckVoiceRequest.config:type_name -> cyberverse.VoiceLLMConfig
+	0, // 6: cyberverse.VoiceLLMService.Converse:input_type -> cyberverse.VoiceLLMInput
+	4, // 7: cyberverse.VoiceLLMService.CheckVoice:input_type -> cyberverse.CheckVoiceRequest
+	6, // 8: cyberverse.VoiceLLMService.Interrupt:input_type -> cyberverse.InterruptRequest
+	1, // 9: cyberverse.VoiceLLMService.Converse:output_type -> cyberverse.VoiceLLMOutput
+	5, // 10: cyberverse.VoiceLLMService.CheckVoice:output_type -> cyberverse.CheckVoiceResponse
+	7, // 11: cyberverse.VoiceLLMService.Interrupt:output_type -> cyberverse.InterruptResponse
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_voice_llm_proto_init() }
@@ -669,6 +688,7 @@ func file_voice_llm_proto_init() {
 		(*VoiceLLMInput_Audio)(nil),
 		(*VoiceLLMInput_Text)(nil),
 		(*VoiceLLMInput_Config)(nil),
+		(*VoiceLLMInput_Image)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

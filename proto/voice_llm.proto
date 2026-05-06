@@ -16,6 +16,7 @@ message VoiceLLMInput {
     AudioChunk audio = 1;
     string text = 2;
     VoiceLLMConfig config = 3;
+    ImageFrame image = 4;
   }
 }
 

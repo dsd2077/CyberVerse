@@ -29,10 +29,6 @@ const showDiag = ref(false)
 const isChatCollapsed = ref(false)
 
 const streamingMode = (route.query.streaming_mode as string) || 'direct'
-const sessionMode = computed<'voice_llm' | 'standard'>(() =>
-  route.query.mode === 'standard' ? 'standard' : 'voice_llm'
-)
-const isStandardMode = computed(() => sessionMode.value === 'standard')
 
 function parseVisualInputConfig(): Partial<VisualInputConfig> | undefined {
   const raw = route.query.visual_input
@@ -45,6 +41,7 @@ function parseVisualInputConfig(): Partial<VisualInputConfig> | undefined {
 }
 
 const visualInputConfig = computed(() => parseVisualInputConfig())
+const hasVisualInputCapability = computed(() => !!visualInputConfig.value)
 
 // Both composables are called unconditionally (Vue requirement),
 // but only the active one is wired up.
@@ -92,7 +89,7 @@ const visualInput = useVisualInput(
   () => visualInputConfig.value,
 )
 const canUseVisualInput = computed(() =>
-  isStandardMode.value && chatConnected.value && (visualInputConfig.value?.enabled ?? true)
+  hasVisualInputCapability.value && chatConnected.value && (visualInputConfig.value?.enabled ?? false)
 )
 const visualPreviewStyle = computed(() => {
   const pos = visualPreviewPosition.value
@@ -465,7 +462,7 @@ function formatTime(s: number): string {
       </div>
 
       <div
-        v-if="isStandardMode && visualInput.error.value"
+        v-if="hasVisualInputCapability && visualInput.error.value"
         class="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 max-w-[min(90vw,28rem)] px-3 py-2 bg-black/80 border border-red-400/30 text-red-100 text-xs rounded-cv-md"
       >
         {{ visualInput.error.value }}
@@ -503,9 +500,9 @@ function formatTime(s: number): string {
 
       <!-- Control bar (bottom center, floating) -->
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-2.5 bg-black/70 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.3)] z-10">
-        <!-- User video input (standard mode only) -->
+        <!-- User video input (standard and qwen_omni voice sessions) -->
         <button
-          v-if="isStandardMode"
+          v-if="hasVisualInputCapability"
           type="button"
           :disabled="!canUseVisualInput || visualInput.isStarting.value"
           :title="visualInput.isCameraActive.value ? t('session.cameraOff') : t('session.cameraOn')"

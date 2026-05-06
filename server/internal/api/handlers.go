@@ -98,6 +98,29 @@ func normalizedVisualInputResponse(cfg config.VisualInputConfig) VisualInputResp
 	}
 }
 
+func (r *Router) visualInputResponseForSession(session *orchestrator.Session) *VisualInputResponse {
+	if session == nil {
+		return nil
+	}
+	if r.orch != nil {
+		cfg, supported := r.orch.VisualInputConfigForSession(session)
+		if !supported {
+			return nil
+		}
+		resp := normalizedVisualInputResponse(cfg)
+		return &resp
+	}
+	if session.Mode == orchestrator.ModeStandard {
+		visualCfg := config.VisualInputConfig{}
+		if r.cfg != nil {
+			visualCfg = r.cfg.Pipeline.VisualInput
+		}
+		resp := normalizedVisualInputResponse(visualCfg)
+		return &resp
+	}
+	return nil
+}
+
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
 	inferenceErr := r.inferenceHealthError(req.Context())
 	connected := inferenceErr == nil
@@ -177,14 +200,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		SessionID: sessionID,
 		Mode:      modeString(mode),
 	}
-	if mode == orchestrator.ModeStandard {
-		visualCfg := config.VisualInputConfig{}
-		if r.cfg != nil {
-			visualCfg = r.cfg.Pipeline.VisualInput
-		}
-		visualResp := normalizedVisualInputResponse(visualCfg)
-		resp.VisualInput = &visualResp
-	}
+	resp.VisualInput = r.visualInputResponseForSession(session)
 
 	if r.orch != nil && body.CharacterID != "" {
 		target := r.currentIdleVideoTarget(req.Context())

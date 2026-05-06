@@ -55,6 +55,7 @@ const avatarImageMaxUploadHint = "角色头像图片超过当前 10MB 上传限�
 const (
 	doubaoDialogContextMaxPairs  = 20
 	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
+	qwenOmniMaxVisualFrameBytes  = 500 * 1024
 )
 
 const standardGlobalSystemPrompt = `你需要遵守以下通用回复规范，这些规范优先于角色设定。
@@ -77,7 +78,7 @@ const standardGlobalSystemPrompt = `你需要遵守以下通用回复规范，�
 - 需要澄清时，只问一个最关键的问题。`
 
 var (
-	ErrVisualInputUnsupported = errors.New("visual input is only supported in standard sessions")
+	ErrVisualInputUnsupported = errors.New("visual input is only supported in standard sessions or qwen_omni voice sessions")
 	ErrVisualInputDisabled    = errors.New("visual input is disabled")
 )
 
@@ -639,6 +640,53 @@ func (o *Orchestrator) visualInputConfig() config.VisualInputConfig {
 	return normalizedVisualInputConfig(o.pipelineCfg.VisualInput)
 }
 
+func qwenOmniVisualInputConfig(cfg config.VisualInputConfig) config.VisualInputConfig {
+	cfg = normalizedVisualInputConfig(cfg)
+	if cfg.FrameIntervalMS < 1000 {
+		cfg.FrameIntervalMS = 1000
+	}
+	if cfg.MaxFrameBytes <= 0 || cfg.MaxFrameBytes > qwenOmniMaxVisualFrameBytes {
+		cfg.MaxFrameBytes = qwenOmniMaxVisualFrameBytes
+	}
+	return cfg
+}
+
+func (o *Orchestrator) voiceLLMProviderForSession(session *Session) string {
+	if session == nil || session.Mode != ModeVoiceLLM {
+		return ""
+	}
+	if session.CharacterID == "" || o == nil || o.charStore == nil {
+		return voiceLLMProviderOrDefault("")
+	}
+	char, err := o.charStore.Get(session.CharacterID)
+	if err != nil {
+		log.Printf("voiceLLMProviderForSession: could not fetch character %s: %v", session.CharacterID, err)
+		return voiceLLMProviderOrDefault("")
+	}
+	return voiceLLMProviderOrDefault(char.VoiceProvider)
+}
+
+func (o *Orchestrator) sessionSupportsVisualInput(session *Session) bool {
+	if session == nil {
+		return false
+	}
+	if session.Mode == ModeStandard {
+		return true
+	}
+	return session.Mode == ModeVoiceLLM && o.voiceLLMProviderForSession(session) == "qwen_omni"
+}
+
+func (o *Orchestrator) VisualInputConfigForSession(session *Session) (config.VisualInputConfig, bool) {
+	if !o.sessionSupportsVisualInput(session) {
+		return config.VisualInputConfig{}, false
+	}
+	cfg := o.visualInputConfig()
+	if session.Mode == ModeVoiceLLM {
+		cfg = qwenOmniVisualInputConfig(cfg)
+	}
+	return cfg, true
+}
+
 func (o *Orchestrator) globalSystemPrompt() string {
 	return strings.TrimSpace(standardGlobalSystemPrompt)
 }
@@ -657,10 +705,10 @@ func (o *Orchestrator) visualSession(sessionID string) (*Session, config.VisualI
 	if err != nil {
 		return nil, config.VisualInputConfig{}, err
 	}
-	if session.Mode != ModeStandard {
+	cfg, supported := o.VisualInputConfigForSession(session)
+	if !supported {
 		return nil, config.VisualInputConfig{}, ErrVisualInputUnsupported
 	}
-	cfg := o.visualInputConfig()
 	if !cfg.IsEnabled() {
 		return nil, cfg, ErrVisualInputDisabled
 	}
@@ -1384,6 +1432,78 @@ func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan infe
 	return inputCh
 }
 
+func wrapVoiceMultimodalInput(
+	ctx context.Context,
+	audioCh <-chan []byte,
+	frameCh <-chan VisualFrame,
+	unsubscribe func(),
+	initialFrames []VisualFrame,
+) <-chan inference.VoiceLLMInputEvent {
+	inputCh := make(chan inference.VoiceLLMInputEvent, 64)
+	go func() {
+		defer close(inputCh)
+		if unsubscribe != nil {
+			defer unsubscribe()
+		}
+		for _, frame := range initialFrames {
+			select {
+			case inputCh <- inference.VoiceLLMInputEvent{
+				Image: &inference.ImageFrame{
+					Data:        frame.Data,
+					MimeType:    frame.MimeType,
+					Width:       frame.Width,
+					Height:      frame.Height,
+					Source:      frame.Source,
+					TimestampMS: frame.TimestampMS,
+					FrameSeq:    frame.FrameSeq,
+				},
+			}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data, ok := <-audioCh:
+				if !ok {
+					return
+				}
+				if len(data) == 0 {
+					continue
+				}
+				select {
+				case inputCh <- inference.VoiceLLMInputEvent{Audio: data}:
+				case <-ctx.Done():
+					return
+				}
+			case frame, ok := <-frameCh:
+				if !ok {
+					frameCh = nil
+					continue
+				}
+				select {
+				case inputCh <- inference.VoiceLLMInputEvent{
+					Image: &inference.ImageFrame{
+						Data:        frame.Data,
+						MimeType:    frame.MimeType,
+						Width:       frame.Width,
+						Height:      frame.Height,
+						Source:      frame.Source,
+						TimestampMS: frame.TimestampMS,
+						FrameSeq:    frame.FrameSeq,
+					},
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return inputCh
+}
+
 func singleVoiceTextInput(text string) <-chan inference.VoiceLLMInputEvent {
 	inputCh := make(chan inference.VoiceLLMInputEvent, 1)
 	inputCh <- inference.VoiceLLMInputEvent{Text: text}
@@ -1911,7 +2031,15 @@ func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, 
 	session.mu.Unlock()
 
 	pipelineSeq := session.MarkPipelineRunning()
-	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq, 0)
+	var inputCh <-chan inference.VoiceLLMInputEvent
+	if visualCfg, ok := o.VisualInputConfigForSession(session); ok {
+		frameCh, unsubscribe := session.SubscribeVisualFrames(2)
+		initialFrames := session.LatestVisualFrames(time.Now(), time.Duration(visualCfg.FrameTTLMS)*time.Millisecond)
+		inputCh = wrapVoiceMultimodalInput(pipeCtx, audioCh, frameCh, unsubscribe, initialFrames)
+	} else {
+		inputCh = wrapVoiceAudioInput(pipeCtx, audioCh)
+	}
+	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, inputCh, pipelineSeq, 0)
 	return nil
 }
 

@@ -93,6 +93,70 @@ func TestCreateSession(t *testing.T) {
 	}
 }
 
+func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T) {
+	r := newTestRouter()
+
+	qwenChar, err := r.charStore.Create(&character.Character{
+		Name:          "Qwen Visual",
+		Mode:          "voice_llm",
+		VoiceProvider: "qwen_omni",
+		VoiceType:     "Tina",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doubaoChar, err := r.charStore.Create(&character.Character{
+		Name:          "Doubao Voice",
+		Mode:          "voice_llm",
+		VoiceProvider: "doubao",
+		VoiceType:     "zh_female_default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		body       string
+		wantVisual bool
+	}{
+		{
+			name:       "standard",
+			body:       `{"mode":"standard"}`,
+			wantVisual: true,
+		},
+		{
+			name:       "qwen_omni voice_llm",
+			body:       `{"mode":"voice_llm","character_id":"` + qwenChar.ID + `"}`,
+			wantVisual: true,
+		},
+		{
+			name:       "doubao voice_llm",
+			body:       `{"mode":"voice_llm","character_id":"` + doubaoChar.ID + `"}`,
+			wantVisual: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+			var resp CreateSessionResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			if got := resp.VisualInput != nil; got != tt.wantVisual {
+				t.Fatalf("expected visual_input presence %v, got %v", tt.wantVisual, got)
+			}
+		})
+	}
+}
+
 func TestCreateSessionLoadsVoiceDialogContext(t *testing.T) {
 	inf := &fakeInferenceService{
 		avatarInfo:   &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},

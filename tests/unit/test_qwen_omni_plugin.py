@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -5,7 +6,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from inference.core.types import PluginConfig, VoiceLLMInputEvent, VoiceLLMSessionConfig
+from inference.core.types import (
+    ImageFrame,
+    PluginConfig,
+    VoiceLLMInputEvent,
+    VoiceLLMSessionConfig,
+)
 from inference.plugins.voice_llm.qwen_omni_realtime import QwenOmniRealtimePlugin
 
 
@@ -155,3 +161,53 @@ async def test_converse_stream_emits_audio_transcripts_and_final():
     assert outputs[4].transcript == "收到"
     assert outputs[4].audio is not None
     assert outputs[4].audio.is_final is True
+
+
+@pytest.mark.asyncio
+async def test_send_inputs_sends_image_after_audio():
+    plugin = QwenOmniRealtimePlugin()
+    ws = FakeQwenWS([])
+    image_bytes = b"\xff\xd8\xff\x00"
+
+    async def inputs():
+        yield VoiceLLMInputEvent(audio=b"\x03\x00")
+        yield VoiceLLMInputEvent(
+            image=ImageFrame(
+                data=image_bytes,
+                mime_type="image/jpeg",
+                width=640,
+                height=360,
+                source="camera",
+                frame_seq=1,
+            )
+        )
+
+    await plugin._send_inputs(ws, inputs(), "session-1", asyncio.Queue())
+
+    sent_types = [event["type"] for event in ws.sent]
+    assert sent_types == ["input_audio_buffer.append", "input_image_buffer.append"]
+    assert base64.b64decode(ws.sent[0]["audio"]) == b"\x03\x00"
+    assert base64.b64decode(ws.sent[1]["image"]) == image_bytes
+
+
+@pytest.mark.asyncio
+async def test_send_inputs_buffers_latest_image_until_first_audio():
+    plugin = QwenOmniRealtimePlugin()
+    ws = FakeQwenWS([])
+    old_image = b"\xff\xd8\xffold"
+    latest_image = b"\xff\xd8\xfflatest"
+
+    async def inputs():
+        yield VoiceLLMInputEvent(
+            image=ImageFrame(data=old_image, mime_type="image/jpeg", frame_seq=1)
+        )
+        yield VoiceLLMInputEvent(
+            image=ImageFrame(data=latest_image, mime_type="image/jpeg", frame_seq=2)
+        )
+        yield VoiceLLMInputEvent(audio=b"\x03\x00")
+
+    await plugin._send_inputs(ws, inputs(), "session-1", asyncio.Queue())
+
+    sent_types = [event["type"] for event in ws.sent]
+    assert sent_types == ["input_audio_buffer.append", "input_image_buffer.append"]
+    assert base64.b64decode(ws.sent[1]["image"]) == latest_image

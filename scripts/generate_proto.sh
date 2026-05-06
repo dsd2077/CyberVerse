@@ -5,10 +5,23 @@ set -e
 
 PROTO_DIR="proto"
 OUT_DIR="inference/generated"
+PYTHON_BIN="${PYTHON:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+    for candidate in python python3; do
+        if command -v "$candidate" &> /dev/null && "$candidate" -c 'import grpc_tools.protoc' &> /dev/null; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+    echo "grpc_tools is required: install grpcio-tools or set PYTHON=/path/to/python"
+    exit 1
+fi
 
 mkdir -p "$OUT_DIR"
 
-python3 -m grpc_tools.protoc \
+"$PYTHON_BIN" -m grpc_tools.protoc \
     -I "$PROTO_DIR" \
     --python_out="$OUT_DIR" \
     --grpc_python_out="$OUT_DIR" \

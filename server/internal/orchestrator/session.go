@@ -96,6 +96,7 @@ type Session struct {
 	// Set by the orchestrator when the first recording turn begins.
 	RecordingDir string      `json:"-"`
 	Visual       VisualState `json:"-"`
+	visualSubs   map[chan VisualFrame]struct{}
 	mu           sync.RWMutex
 }
 
@@ -268,6 +269,30 @@ func copyVisualFrame(frame VisualFrame) VisualFrame {
 	return copied
 }
 
+func (s *Session) SubscribeVisualFrames(buffer int) (<-chan VisualFrame, func()) {
+	if buffer <= 0 {
+		buffer = 1
+	}
+	ch := make(chan VisualFrame, buffer)
+	s.mu.Lock()
+	if s.visualSubs == nil {
+		s.visualSubs = make(map[chan VisualFrame]struct{})
+	}
+	s.visualSubs[ch] = struct{}{}
+	s.mu.Unlock()
+
+	unsubscribe := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if _, ok := s.visualSubs[ch]; !ok {
+			return
+		}
+		delete(s.visualSubs, ch)
+		close(ch)
+	}
+	return ch, unsubscribe
+}
+
 func (s *Session) StartVisualInput(source string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -302,12 +327,19 @@ func (s *Session) StoreVisualFrame(frame VisualFrame, maxRecent int, minInterval
 		s.Visual.Frames = nil
 	}
 	frame.ReceivedAt = now
-	s.Visual.Frames = append(s.Visual.Frames, copyVisualFrame(frame))
+	copied := copyVisualFrame(frame)
+	s.Visual.Frames = append(s.Visual.Frames, copied)
 	if len(s.Visual.Frames) > maxRecent {
 		s.Visual.Frames = append([]VisualFrame(nil), s.Visual.Frames[len(s.Visual.Frames)-maxRecent:]...)
 	}
 	s.Visual.LastAcceptedAt = now
 	s.LastActiveAt = now
+	for sub := range s.visualSubs {
+		select {
+		case sub <- copyVisualFrame(copied):
+		default:
+		}
+	}
 	return true
 }
 

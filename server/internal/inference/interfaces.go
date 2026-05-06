@@ -64,10 +64,11 @@ type VoiceLLMSessionConfig struct {
 }
 
 // VoiceLLMInputEvent is one input item for a VoiceLLM conversation stream.
-// Exactly one of Audio or Text should be set.
+// Exactly one of Audio, Text, or Image should be set.
 type VoiceLLMInputEvent struct {
 	Audio []byte
 	Text  string
+	Image *ImageFrame
 }
 
 // InferenceService defines the interface for communicating with the Python

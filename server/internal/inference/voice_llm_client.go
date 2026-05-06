@@ -40,6 +40,44 @@ func unwrapGRPCError(err error) error {
 	return err
 }
 
+func voiceLLMInputPB(input VoiceLLMInputEvent) *pb.VoiceLLMInput {
+	switch {
+	case len(input.Audio) > 0:
+		return &pb.VoiceLLMInput{
+			Input: &pb.VoiceLLMInput_Audio{
+				Audio: &pb.AudioChunk{
+					Data:       input.Audio,
+					SampleRate: 16000,
+					Channels:   1,
+					Format:     "float32",
+				},
+			},
+		}
+	case input.Text != "":
+		return &pb.VoiceLLMInput{
+			Input: &pb.VoiceLLMInput_Text{
+				Text: input.Text,
+			},
+		}
+	case input.Image != nil:
+		return &pb.VoiceLLMInput{
+			Input: &pb.VoiceLLMInput_Image{
+				Image: &pb.ImageFrame{
+					Data:        input.Image.Data,
+					MimeType:    input.Image.MimeType,
+					Width:       input.Image.Width,
+					Height:      input.Image.Height,
+					Source:      input.Image.Source,
+					TimestampMs: input.Image.TimestampMS,
+					FrameSeq:    input.Image.FrameSeq,
+				},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
 func (c *Client) CheckVoice(ctx context.Context, config VoiceLLMSessionConfig) (string, error) {
 	resp, err := c.voiceLLM.CheckVoice(ctx, &pb.CheckVoiceRequest{
 		Config: voiceLLMConfigPB(config),
@@ -91,26 +129,8 @@ func (c *Client) ConverseStream(ctx context.Context, inputCh <-chan VoiceLLMInpu
 						sendDone <- nil
 						return
 					}
-					var req *pb.VoiceLLMInput
-					switch {
-					case len(input.Audio) > 0:
-						req = &pb.VoiceLLMInput{
-							Input: &pb.VoiceLLMInput_Audio{
-								Audio: &pb.AudioChunk{
-									Data:       input.Audio,
-									SampleRate: 16000,
-									Channels:   1,
-									Format:     "float32",
-								},
-							},
-						}
-					case input.Text != "":
-						req = &pb.VoiceLLMInput{
-							Input: &pb.VoiceLLMInput_Text{
-								Text: input.Text,
-							},
-						}
-					default:
+					req := voiceLLMInputPB(input)
+					if req == nil {
 						continue
 					}
 					err := stream.Send(req)

@@ -82,6 +82,37 @@ async def test_converse_copies_turn_metadata():
     assert outs[0].barge_in is True
 
 
+def test_input_event_from_pb_maps_image_frame():
+    reg = MagicMock()
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import common_pb2, voice_llm_pb2
+
+    event = svc._input_event_from_pb(
+        voice_llm_pb2.VoiceLLMInput(
+            image=common_pb2.ImageFrame(
+                data=b"\xff\xd8\xff\x00",
+                mime_type="image/jpeg",
+                width=640,
+                height=360,
+                source="screen",
+                timestamp_ms=123,
+                frame_seq=7,
+            )
+        )
+    )
+
+    assert event is not None
+    assert event.image is not None
+    assert event.image.data == b"\xff\xd8\xff\x00"
+    assert event.image.mime_type == "image/jpeg"
+    assert event.image.width == 640
+    assert event.image.height == 360
+    assert event.image.source == "screen"
+    assert event.image.timestamp_ms == 123
+    assert event.image.frame_seq == 7
+
+
 @pytest.mark.asyncio
 async def test_converse_without_voice_llm_plugin_raises():
     reg = MagicMock()

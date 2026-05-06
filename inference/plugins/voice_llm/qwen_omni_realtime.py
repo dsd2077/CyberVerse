@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator
 
 from inference.core.types import (
     AudioChunk,
+    ImageFrame,
     PluginConfig,
     VoiceLLMInputEvent,
     VoiceLLMOutputEvent,
@@ -16,6 +17,7 @@ from inference.plugins.qwen_endpoint import dashscope_realtime_ws_url
 from inference.plugins.voice_llm.base import VoiceCheckError, VoiceLLMPlugin
 
 logger = logging.getLogger(__name__)
+_MAX_IMAGE_BYTES = 500 * 1024
 
 
 class QwenOmniRealtimePlugin(VoiceLLMPlugin):
@@ -191,6 +193,8 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         output_queue: asyncio.Queue[VoiceLLMOutputEvent | Exception | None],
     ) -> None:
         try:
+            sent_audio = False
+            pending_image: ImageFrame | None = None
             async for event in input_stream:
                 if event.text:
                     raise RuntimeError(
@@ -198,16 +202,27 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                         "audio input only in DashScope client events; text input is "
                         "not exposed."
                     )
-                if not event.audio:
-                    continue
-                await self._send_json(
-                    ws,
-                    {
-                        "type": "input_audio_buffer.append",
-                        "event_id": self._event_id(session_id, "audio"),
-                        "audio": base64.b64encode(event.audio).decode("ascii"),
-                    },
-                )
+                if event.audio:
+                    await self._send_json(
+                        ws,
+                        {
+                            "type": "input_audio_buffer.append",
+                            "event_id": self._event_id(session_id, "audio"),
+                            "audio": base64.b64encode(event.audio).decode("ascii"),
+                        },
+                    )
+                    if not sent_audio:
+                        sent_audio = True
+                        if pending_image is not None:
+                            await self._send_image(ws, session_id, pending_image)
+                            pending_image = None
+                if event.image is not None:
+                    if not self._valid_image(event.image):
+                        continue
+                    if sent_audio:
+                        await self._send_image(ws, session_id, event.image)
+                    else:
+                        pending_image = event.image
         except Exception as exc:
             await output_queue.put(exc)
         finally:
@@ -215,6 +230,26 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                 await ws.close()
             except Exception:
                 pass
+
+    async def _send_image(self, ws: Any, session_id: str, image: ImageFrame) -> None:
+        await self._send_json(
+            ws,
+            {
+                "type": "input_image_buffer.append",
+                "event_id": self._event_id(session_id, "image"),
+                "image": base64.b64encode(image.data).decode("ascii"),
+            },
+        )
+
+    @staticmethod
+    def _valid_image(image: ImageFrame) -> bool:
+        mime_type = (image.mime_type or "").lower()
+        if mime_type and mime_type not in {"image/jpeg", "image/jpg"}:
+            return False
+        data = image.data or b""
+        if len(data) == 0 or len(data) > _MAX_IMAGE_BYTES:
+            return False
+        return len(data) >= 3 and data[0] == 0xFF and data[1] == 0xD8 and data[2] == 0xFF
 
     async def _receive_events(
         self,

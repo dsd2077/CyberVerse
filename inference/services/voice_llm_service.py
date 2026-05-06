@@ -6,6 +6,7 @@ import grpc
 from inference.core.registry import PluginRegistry
 from inference.core.types import (
     AudioChunk,
+    ImageFrame,
     VoiceLLMDialogContextItem,
     VoiceLLMInputEvent,
     VoiceLLMSessionConfig,
@@ -75,6 +76,18 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             return VoiceLLMInputEvent(audio=msg.audio.data)
         if which == "text":
             return VoiceLLMInputEvent(text=msg.text)
+        if which == "image":
+            return VoiceLLMInputEvent(
+                image=ImageFrame(
+                    data=msg.image.data,
+                    mime_type=msg.image.mime_type,
+                    width=msg.image.width,
+                    height=msg.image.height,
+                    source=msg.image.source,
+                    timestamp_ms=msg.image.timestamp_ms,
+                    frame_seq=msg.image.frame_seq,
+                )
+            )
         return None
 
     async def Converse(self, request_iterator, context):

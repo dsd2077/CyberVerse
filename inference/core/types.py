@@ -86,6 +86,7 @@ class VoiceLLMOutputEvent:
 class VoiceLLMInputEvent:
     audio: bytes = b""
     text: str = ""
+    image: ImageFrame | None = None
 
 
 @dataclass
