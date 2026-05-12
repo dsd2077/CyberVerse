@@ -111,6 +111,37 @@ git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
+### 任意: Pixi で再現可能な開発環境を作成する
+
+CyberVerse には、Python / Go / フロントエンドの開発チェックを再現するための Pixi 環境が 2 つ用意されています。
+
+- `macos-arm`: Apple Silicon Mac（`osx-arm64`）
+- `linux-x86`: x86_64 Linux（`linux-64`）
+
+Pixi が未インストールの場合は、先に実行します。
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+Apple Silicon Mac:
+
+```bash
+pixi install -e macos-arm
+pixi run -e macos-arm python-test
+pixi run -e macos-arm go-test
+```
+
+x86_64 Linux:
+
+```bash
+pixi install -e linux-x86
+pixi run -e linux-x86 python-test
+pixi run -e linux-x86 go-test
+```
+
+Pixi 環境には、Python 3.10、Go 1.25、Node 22、FFmpeg、`soxr`、`libopus`、`opusfile` などの開発・テスト依存関係が含まれます。GPU アバター推論には、引き続き下記の CUDA / PyTorch とモデル重みの設定が必要です。
+
 ### ステップ 2: Python 環境を作成する
 
 ```bash

@@ -76,7 +76,7 @@ export async function getComponents(): Promise<ComponentsResponse> {
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' })
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/close`, { method: 'POST' })
   if (!res.ok && res.status !== 404) throw new Error(`Failed to delete session: ${res.status}`)
 }
 

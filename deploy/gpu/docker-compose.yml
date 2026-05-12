@@ -1,0 +1,82 @@
+services:
+  weights:
+    image: python:3.11-slim
+    profiles: ["weights"]
+    working_dir: /workspace
+    volumes:
+      - ../../checkpoints:/workspace/checkpoints
+    environment:
+      - HF_ENDPOINT=${HF_ENDPOINT:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -eu
+        python -m pip install --no-cache-dir -U "huggingface_hub[cli]"
+        hf download Soul-AILab/SoulX-FlashHead-1_3B --local-dir /workspace/checkpoints/SoulX-FlashHead-1_3B
+        hf download facebook/wav2vec2-base-960h --local-dir /workspace/checkpoints/wav2vec2-base-960h
+
+  cyberverse-inference:
+    build:
+      context: ../..
+      dockerfile: deploy/gpu/Dockerfile.inference
+      network: host
+    image: cyberverse-inference-rtx5090:cuda12.8
+    container_name: cyberverse-inference-gpu1
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    gpus:
+      - driver: nvidia
+        device_ids: ["1"]
+        capabilities: ["gpu"]
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - CYBERVERSE_CONFIG_DIR=/workspace
+      - CYBERVERSE_SERVER_URL=http://cyberverse-server:8080/api/v1
+      - AGENT_WORKER_HOST=0.0.0.0
+      - AGENT_WORKER_PORT=8090
+      - LANGGRAPH_CHECKPOINT_DB=/workspace/data/tasks/langgraph_checkpoints.db
+      - HF_HOME=/workspace/.hf-cache
+      - HF_HUB_ENABLE_HF_TRANSFER=0
+      - PYTHONPATH=/workspace:/workspace/inference/generated
+    volumes:
+      - ./cyberverse_config.gpu.yaml:/workspace/deploy/gpu/cyberverse_config.gpu.yaml:ro
+      - ../../checkpoints:/workspace/checkpoints
+      - ../../data:/workspace/data
+      - ../../.hf-cache:/workspace/.hf-cache
+    expose:
+      - "50051"
+      - "8090"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+  cyberverse-server:
+    build:
+      context: ../..
+      dockerfile: deploy/gpu/Dockerfile.server
+      network: host
+    image: cyberverse-server:gpu-remote
+    container_name: cyberverse-server-remote
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - GRPC_INFERENCE_ADDR=cyberverse-inference:50051
+      - AGENT_WORKER_URL=http://cyberverse-inference:8090
+    volumes:
+      - ./cyberverse_config.gpu.yaml:/app/cyberverse_config.yaml:ro
+      - ../../data:/app/data
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    depends_on:
+      cyberverse-inference:
+        condition: service_healthy

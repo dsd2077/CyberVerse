@@ -304,7 +304,14 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
+	r.closeSession(w, req.PathValue("id"))
+}
+
+func (r *Router) handleCloseSession(w http.ResponseWriter, req *http.Request) {
+	r.closeSession(w, req.PathValue("id"))
+}
+
+func (r *Router) closeSession(w http.ResponseWriter, id string) {
 	if _, err := r.sessionMgr.Get(id); err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return

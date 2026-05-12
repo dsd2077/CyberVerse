@@ -282,6 +282,25 @@ func TestDeleteSession(t *testing.T) {
 	}
 }
 
+func TestCloseSessionViaPost(t *testing.T) {
+	r := newTestRouter()
+
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	var resp CreateSessionResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	req2 := httptest.NewRequest("POST", "/api/v1/sessions/"+resp.SessionID+"/close", nil)
+	w2 := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w2.Code)
+	}
+}
+
 func TestDeleteSessionNotFound(t *testing.T) {
 	r := newTestRouter()
 	req := httptest.NewRequest("DELETE", "/api/v1/sessions/nonexistent", nil)

@@ -113,6 +113,37 @@ git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
+### 可选：使用 Pixi 创建可复现开发环境
+
+CyberVerse 提供两个 Pixi 环境，用于复现 Python / Go / 前端开发检查：
+
+- `macos-arm`：Apple Silicon Mac（`osx-arm64`）
+- `linux-x86`：x86_64 Linux（`linux-64`）
+
+如未安装 Pixi，先执行：
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+Apple Silicon Mac：
+
+```bash
+pixi install -e macos-arm
+pixi run -e macos-arm python-test
+pixi run -e macos-arm go-test
+```
+
+x86_64 Linux：
+
+```bash
+pixi install -e linux-x86
+pixi run -e linux-x86 python-test
+pixi run -e linux-x86 go-test
+```
+
+Pixi 环境会安装 Python 3.10、Go 1.25、Node 22、FFmpeg、`soxr`、`libopus`、`opusfile` 等开发和测试依赖。GPU 数字人推理仍需按下方步骤配置 CUDA / PyTorch 与模型权重。
+
 ### 第 2 步：创建 Python 环境
 
 ```bash

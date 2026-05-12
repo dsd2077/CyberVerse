@@ -112,6 +112,37 @@ git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
+### Optional: Pixi reproducible development environments
+
+CyberVerse provides two Pixi environments for reproducible Python / Go / frontend development checks:
+
+- `macos-arm`: macOS on Apple Silicon (`osx-arm64`)
+- `linux-x86`: Linux on x86_64 (`linux-64`)
+
+Install Pixi if needed:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+On macOS Apple Silicon:
+
+```bash
+pixi install -e macos-arm
+pixi run -e macos-arm python-test
+pixi run -e macos-arm go-test
+```
+
+On Linux x86_64:
+
+```bash
+pixi install -e linux-x86
+pixi run -e linux-x86 python-test
+pixi run -e linux-x86 go-test
+```
+
+The Pixi environments cover development and test dependencies such as Python 3.10, Go 1.25, Node 22, FFmpeg, `soxr`, `libopus`, and `opusfile`. GPU avatar inference still requires the CUDA / PyTorch and model-weight setup below.
+
 ### Step 2: Create Python environment
 
 ```bash
