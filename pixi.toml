@@ -48,11 +48,10 @@ cyberverse = { path = ".", editable = true, extras = ["dev", "inference", "agent
 [feature.common.tasks]
 proto = "./scripts/generate_proto.sh"
 python-test = { cmd = "python -m pytest tests/unit -v", depends-on = ["proto"] }
-python-agent-test = "python -m pytest tests/unit/test_agent_runtime_llm.py tests/unit/test_persona_agent_plugin.py -q"
+python-agent-test = "python -m pytest tests/unit/test_hindsight_memory.py tests/unit/test_persona_agent_plugin.py tests/unit/test_persona_subagent_tools.py -q"
 frontend-install = "npm install --prefix frontend"
 frontend-build = "npm run --prefix frontend build"
 frontend-dev = "npm run --prefix frontend dev"
-agent-worker = "uvicorn agent_runtime.server:app --host 127.0.0.1 --port 8090"
 go-test = { cmd = "go test ./... -v", cwd = "server", env = { CGO_ENABLED = "1", GOPROXY = "https://goproxy.cn,direct", GOSUMDB = "sum.golang.google.cn", PKG_CONFIG_PATH = "$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH", DYLD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$DYLD_LIBRARY_PATH", LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH" } }
 go-build = { cmd = "go build -tags livekit -o ../bin/cyberverse-server ./cmd/cyberverse-server/", cwd = "server", env = { CGO_ENABLED = "1", GOPROXY = "https://goproxy.cn,direct", GOSUMDB = "sum.golang.google.cn", PKG_CONFIG_PATH = "$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH", DYLD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$DYLD_LIBRARY_PATH", LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH" } }
 server = { cmd = "go run -tags livekit ./cmd/cyberverse-server/ --config ../cyberverse_config.yaml", cwd = "server", env = { CGO_ENABLED = "1", GOPROXY = "https://goproxy.cn,direct", GOSUMDB = "sum.golang.google.cn", PKG_CONFIG_PATH = "$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH", DYLD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$DYLD_LIBRARY_PATH", LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH" } }

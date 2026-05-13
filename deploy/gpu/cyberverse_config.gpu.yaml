@@ -62,13 +62,26 @@ inference:
             plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
             model_provider: "qwen_omni"
             checkpoint_db_path: "/workspace/data/tasks/langgraph_checkpoints.db"
-
-    agent_worker:
-        enabled: true
-        host: "0.0.0.0"
-        port: 8090
-        llm:
-            provider: "qwen"
+            llm:
+                provider: "qwen"
+            memory:
+                hindsight:
+                    enabled: "${HINDSIGHT_ENABLED}"
+                    base_url: "${HINDSIGHT_BASE_URL}"
+                    api_key: "${HINDSIGHT_API_KEY}"
+                    bank_id: "${HINDSIGHT_BANK_ID}"
+                    user_tag: "${HINDSIGHT_USER_TAG}"
+                    timeout_seconds: "${HINDSIGHT_TIMEOUT_SECONDS}"
+                    recall_max_results: "${HINDSIGHT_RECALL_MAX_RESULTS}"
+                    recall_max_tokens: "${HINDSIGHT_RECALL_MAX_TOKENS}"
+                    retain_max_chars: "${HINDSIGHT_RETAIN_MAX_CHARS}"
+            tools:
+                zhihu:
+                    access_secret: "${ZHIHU_ACCESS_SECRET}"
+                    api_base: "https://developer.zhihu.com"
+                    timeout_seconds: 30
+                    zhida_model: "zhida-fast-1p5"
+            max_agent_iterations: 100
 
     llm:
         default: "qwen"

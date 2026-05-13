@@ -134,6 +134,14 @@ pixi run -e macos-arm python-test
 pixi run -e macos-arm go-test
 ```
 
+复制 `infra/cyberverse_config.example.yaml` 为 `cyberverse_config.yaml` 并配置 `.env` 后，可以用一个前台进程启动本地 Mac 侧服务：
+
+```bash
+pixi run -e macos-arm dev
+```
+
+按 `Ctrl+C` 会停止 inference、Go server 和前端 dev server。Mac 性能较弱时，把 GPU/avatar 推理留在远程 Ubuntu 部署上，本地配置或前端环境指向远程 API 即可。
+
 x86_64 Linux：
 
 ```bash
@@ -174,9 +182,15 @@ cp infra/.env.example .env
 ```
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao 语音 LLM
 DOUBAO_APP_ID=your_doubao_app_id
+HINDSIGHT_API_KEY=your_hindsight_api_key       # 可选：PersonaAgent 长期记忆
+HINDSIGHT_USER_TAG=openclaw                    # 跨会话稳定记忆 tag
 ```
 
 豆包语音：按 [火山引擎快速入门](https://www.volcengine.com/docs/6561/2119699?lang=zh) 获取 **App ID** / **API Key**，填入 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。
+
+PersonaAgent 在本地 `.env` 配置 `HINDSIGHT_API_KEY` 和 `HINDSIGHT_USER_TAG` 后，会使用 Hindsight 做跨会话长期记忆。默认端点是 `https://hindsight.lucky.jmsu.top`，默认 bank 是 `openclaw`；如需调整，可设置 `HINDSIGHT_BASE_URL` 与 `HINDSIGHT_BANK_ID`。真实 Hindsight key 只放本地 `.env`，不要提交到代码仓库。
+
+PersonaAgent 数字人链路需要的外部接口包括：实时 omni 模型凭证、本地 subagent 使用的文本 LLM 凭证、可选的 `ZHIHU_ACCESS_SECRET` 调研工具凭证、可选的 Hindsight 记忆凭证，以及本地或远程 Go/API + avatar inference endpoint。
 
 服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改这些值（以及其他 API Key / 服务端点），而不必只依赖编辑 `.env`。
 

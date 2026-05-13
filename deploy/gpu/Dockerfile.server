@@ -37,6 +37,7 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    ffmpeg \
     libopus0 \
     libopusfile0 \
     libsoxr0 \

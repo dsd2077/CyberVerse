@@ -582,18 +582,20 @@ type Orchestrator struct {
 	taskService   *agenttask.Service
 	avatarMu      sync.Mutex
 	mu            sync.RWMutex
+	memoryClient  conversationMemoryClient
 }
 
 // New creates a new Orchestrator.
 func New(inferenceClient inference.InferenceService, hub *ws.Hub, sessionMgr *SessionManager, recorder *recording.VideoRecorder, charStore *character.Store, pipelineCfg ...config.PipelineConfig) *Orchestrator {
 	o := &Orchestrator{
-		inference:   inferenceClient,
-		wsHub:       hub,
-		sessionMgr:  sessionMgr,
-		charStore:   charStore,
-		peers:       make(map[string]mediapeer.MediaPeer),
-		directPeers: make(map[string]*direct.DirectPeer),
-		recorder:    recorder,
+		inference:    inferenceClient,
+		wsHub:        hub,
+		sessionMgr:   sessionMgr,
+		charStore:    charStore,
+		peers:        make(map[string]mediapeer.MediaPeer),
+		directPeers:  make(map[string]*direct.DirectPeer),
+		recorder:     recorder,
+		memoryClient: newHindsightConversationMemoryFromEnv(),
 	}
 	if len(pipelineCfg) > 0 {
 		o.pipelineCfg = pipelineCfg[0]
@@ -1555,6 +1557,38 @@ func (o *Orchestrator) standardSystemPrompt(session *Session) string {
 	return composeSystemPrompt(o.globalSystemPrompt(), characterSystemPrompt(char, true, true))
 }
 
+func (o *Orchestrator) recallConversationMemory(ctx context.Context, query string) []string {
+	if o == nil || o.memoryClient == nil || strings.TrimSpace(query) == "" {
+		return nil
+	}
+	memCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	memories, err := o.memoryClient.Recall(memCtx, query)
+	if err != nil {
+		log.Printf("conversation memory recall failed: %v", err)
+	}
+	return memories
+}
+
+func (o *Orchestrator) retainConversationMemory(userText string, assistantText string) {
+	if o == nil || o.memoryClient == nil {
+		return
+	}
+	userText = strings.TrimSpace(userText)
+	assistantText = strings.TrimSpace(assistantText)
+	if userText == "" || assistantText == "" {
+		return
+	}
+	content := "用户: " + userText + "\n助手: " + assistantText
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := o.memoryClient.Retain(ctx, content, "conversation"); err != nil {
+			log.Printf("conversation memory retain failed: %v", err)
+		}
+	}()
+}
+
 func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan inference.VoiceLLMInputEvent {
 	inputCh := make(chan inference.VoiceLLMInputEvent, 64)
 	go func() {
@@ -1972,6 +2006,7 @@ func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, te
 // runStandardPipeline executes: LLM → sentence detection → TTS → Avatar.
 func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string, pipelineSeq uint64, turnSeq uint64) {
 	var fullResponseCh chan string // set below; read in defer to store assistant message
+	memoryUserText := ""
 	recSessionDir := ""
 	recTurnID := "turn" + strconv.FormatUint(turnSeq, 10)
 	var recMu sync.Mutex
@@ -2056,6 +2091,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 			if resp, ok := <-fullResponseCh; ok && resp != "" {
 				assistantResp = resp
 				session.AddMessage(ChatMessage{Role: "assistant", Content: resp, TurnSeq: turnSeq})
+				o.retainConversationMemory(memoryUserText, resp)
 				if _, err := o.persistSessionConversation(session); err != nil {
 					log.Printf("conversation: SaveConversation error session=%s: %v", sessionID, err)
 				}
@@ -2094,6 +2130,15 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 	messages := make([]inference.ChatMessage, 0, len(history)+1)
 	if systemPrompt := o.standardSystemPrompt(session); systemPrompt != "" {
 		messages = append(messages, inference.ChatMessage{Role: "system", Content: systemPrompt})
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" && (turnSeq == 0 || history[i].TurnSeq == turnSeq) {
+			memoryUserText = history[i].Content
+			break
+		}
+	}
+	if memoryPrompt := formatConversationMemory(o.recallConversationMemory(ctx, memoryUserText)); memoryPrompt != "" {
+		messages = append(messages, inference.ChatMessage{Role: "system", Content: memoryPrompt})
 	}
 	for _, m := range history {
 		messages = append(messages, inference.ChatMessage{Role: m.Role, Content: m.Content})
@@ -2912,6 +2957,93 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		}
 	}
 
+	synthesizeTextOnlyTurn := func(turn *voicePipelineTurn, text string) {
+		if turn == nil || turn.avatarStarted || strings.TrimSpace(text) == "" || o.inference == nil {
+			return
+		}
+		startAvatarWorker(turn)
+		components, voice, speakingStyle, language := o.standardCharacterConfig(session)
+		textCh := make(chan string, 1)
+		textCh <- text
+		close(textCh)
+		ttsAudioCh, ttsErrCh := o.inference.SynthesizeSpeechStream(ctx, textCh, inference.TTSConfig{
+			Provider:      components.TTS,
+			Voice:         voice,
+			SpeakingStyle: speakingStyle,
+			Language:      language,
+			SessionID:     sessionID,
+		})
+		for ttsAudioCh != nil || ttsErrCh != nil {
+			select {
+			case <-ctx.Done():
+				closeTurnInput(turn)
+				return
+			case chunk, ok := <-ttsAudioCh:
+				if !ok {
+					ttsAudioCh = nil
+					continue
+				}
+				if chunk == nil {
+					continue
+				}
+				if len(chunk.GetData()) > 0 {
+					if turn.firstAudioAt.IsZero() {
+						turn.firstAudioAt = time.Now()
+						logVoiceTrace(
+							"go_first_voice_audio_received",
+							sessionID,
+							turn.seq,
+							turn.replyID,
+							turn.questionID,
+							turn.userFinalAt,
+						)
+					}
+					pcm, sampleRate := audioChunkToPCM16(chunk)
+					if len(pcm) > 0 {
+						if dropped := turn.syncBuf.appendPCM(pcm, sampleRate); dropped > 0 {
+							bufferedSamples, _, _, _ := turn.syncBuf.snapshot()
+							log.Printf("voice sync buffer overflow for text-only session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+						}
+						turn.recAudioBuf = append(turn.recAudioBuf, pcm...)
+						if sampleRate > 0 {
+							turn.recAudioSR = sampleRate
+						}
+					}
+				}
+				audioClone := proto.Clone(chunk).(*pb.AudioChunk)
+				if turn.firstAvatarAudioAt.IsZero() {
+					turn.firstAvatarAudioAt = time.Now()
+					logVoiceTrace(
+						"go_avatar_first_audio_enqueued",
+						sessionID,
+						turn.seq,
+						turn.replyID,
+						turn.questionID,
+						turn.userFinalAt,
+					)
+				}
+				select {
+				case turn.avatarAudioCh <- audioClone:
+				case <-turn.avatarCtx.Done():
+					closeTurnInput(turn)
+					return
+				}
+			case err, ok := <-ttsErrCh:
+				if !ok {
+					ttsErrCh = nil
+					continue
+				}
+				if err != nil {
+					log.Printf("text-only PersonaAgent TTS error for session %s: %v", sessionID, err)
+					o.broadcastError(sessionID, "Speech synthesis failed")
+					closeTurnInput(turn)
+					return
+				}
+			}
+		}
+		closeTurnInput(turn)
+	}
+
 	currentStatusTurnSeq := func() uint64 {
 		if currentTurn != nil {
 			return currentTurn.seq
@@ -3185,6 +3317,9 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			saveTurnTranscript(currentTurn)
 			saveTurnConversation(currentTurn)
 
+			if !currentTurn.avatarStarted && strings.TrimSpace(currentTurn.assistantText) != "" {
+				synthesizeTextOnlyTurn(currentTurn, currentTurn.assistantText)
+			}
 			if currentTurn.avatarStarted {
 				closeTurnInput(currentTurn)
 				continue

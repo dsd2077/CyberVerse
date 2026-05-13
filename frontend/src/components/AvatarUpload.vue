@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ImageInfo } from '../types'
+import { resolveApiUrl } from '../services/api'
 
 interface DisplayImage {
   key: string        // unique key for v-for
@@ -109,9 +110,9 @@ const displayImages = computed<DisplayImage[]>(() => {
     for (const img of orderedImages) {
       list.push({
         key: 'srv-' + img.filename,
-        src: img.url || (props.characterId
+        src: resolveApiUrl(img.url || (props.characterId
           ? `/api/v1/characters/${props.characterId}/images/${img.filename}`
-          : ''),
+          : '')),
         filename: img.filename,
       })
     }

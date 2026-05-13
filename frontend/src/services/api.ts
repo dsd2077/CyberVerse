@@ -1,8 +1,22 @@
 import type { AvatarModelInfo, Character, CharacterForm, ComponentsResponse, ImageInfo, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
+const API_ORIGIN = (() => {
+  try {
+    return /^https?:\/\//i.test(API_BASE) ? new URL(API_BASE).origin : ''
+  } catch {
+    return ''
+  }
+})()
 
 // ── Helpers ──
+
+export function resolveApiUrl(url?: string): string {
+  if (!url) return ''
+  if (/^(blob:|data:|https?:\/\/)/i.test(url)) return url
+  if (!API_ORIGIN) return url
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : `${API_ORIGIN}/${url}`
+}
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

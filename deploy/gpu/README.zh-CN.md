@@ -8,11 +8,11 @@
 flowchart LR
     Mac["macOS Frontend / Browser"] -->|"HTTP / WebSocket / WebRTC"| API["Remote Go Server :8080"]
     API -->|"gRPC"| INF["Python Inference :50051"]
-    API -->|"HTTP task callbacks"| AGENT["Embedded LangGraph Agent Worker :8090"]
-    INF --> AGENT
+    INF --> PERSONA["PersonaAgent + LocalTaskRuntime + LangGraph subagent"]
     INF -->|"CUDA logical cuda:0"| GPU["Host RTX 5090 physical GPU 1"]
     INF -->|"DashScope realtime/text/TTS/ASR"| QWEN["Qwen / DashScope APIs"]
-    AGENT -. "future memory" .-> HINDSIGHT["Hindsight API"]
+    PERSONA -->|"recall / retain"| HINDSIGHT["Hindsight API"]
+    PERSONA -->|"optional tools"| ZHIHU["Zhihu API"]
 ```
 
 ## GPU 选择
@@ -44,7 +44,11 @@ cp deploy/gpu/.env.example .env
 ```bash
 DASHSCOPE_API_KEY=...
 TURN_PASSWORD=...
+HINDSIGHT_API_KEY=...
+HINDSIGHT_USER_TAG=openclaw
 ```
+
+如果需要知乎任务工具，再填 `ZHIHU_ACCESS_SECRET`。真实 Hindsight / Zhihu key 只放远程 `.env`，不要提交。
 
 下载 FlashHead 权重：
 
@@ -79,7 +83,7 @@ VITE_API_BASE=http://122.205.95.186:8080/api/v1
 VITE_WS_BASE=ws://122.205.95.186:8080
 ```
 
-远程机器需要开放 TCP `8080` 和 `8443`。`50051` 和 `8090` 只在 docker compose 内部网络使用，不需要对公网开放。
+远程机器需要开放 TCP `8080` 和 `8443`。`50051` 只在 docker compose 内部网络使用，不需要对公网开放。
 
 连通性检查：
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import pytest
@@ -57,6 +58,28 @@ class FakeOmniPlugin(VoiceLLMPlugin):
             yield VoiceLLMOutputEvent(
                 transcript="你好，我在。",
                 audio=AudioChunk(data=b"audio", sample_rate=16000, is_final=True),
+                is_final=True,
+            )
+            return
+
+        if self.scenario == "memory_chat":
+            assert "recall_memory" in [tool.name for tool in session_config.tools]
+            yield VoiceLLMOutputEvent(user_transcript="记住我喜欢用 Pixi 管理环境")
+            yield VoiceLLMOutputEvent(
+                tool_calls=[
+                    ToolCall(
+                        id="memory-1",
+                        name="recall_memory",
+                        arguments={"query": "记住我喜欢用 Pixi 管理环境"},
+                    )
+                ]
+            )
+            memory_result = await self._next_tool_result(input_stream)
+            assert memory_result.name == "recall_memory"
+            assert "Pixi" in memory_result.result["memories_text"]
+            yield VoiceLLMOutputEvent(
+                transcript="我记住了，你喜欢用 Pixi 管理环境。",
+                audio=AudioChunk(data=b"memory", sample_rate=16000, is_final=True),
                 is_final=True,
             )
             return
@@ -250,11 +273,44 @@ class FakeRuntimeLLM:
         )
 
 
+class FakeRuntimeLLMNoTerminal(FakeRuntimeLLM):
+    async def ainvoke(self, messages):
+        return AIMessage(content="我没有调用报告工具。", tool_calls=[])
+
+
+class FakeTextRuntimeLLM:
+    provider = "fake"
+    model = "fake-text-llm"
+
+    def __init__(self):
+        self.messages = []
+
+    async def ainvoke(self, messages):
+        self.messages = messages
+        return AIMessage(content="暗号是紫藤-7391。")
+
+
 class FakeRuntimeToolExecutor:
     client = None
 
     async def execute(self, name, arguments):
         return {"ok": True, "tool": name}
+
+
+class FakeMemoryClient:
+    enabled = True
+
+    def __init__(self):
+        self.recalls = []
+        self.retains = []
+
+    async def recall(self, query):
+        self.recalls.append(query)
+        return [{"text": "用户喜欢用 Pixi 管理环境。"}]
+
+    async def retain(self, content, context="conversation"):
+        self.retains.append({"content": content, "context": context})
+        return {"ok": True}
 
 
 async def make_persona(scenario, checkpoint_db_path):
@@ -274,7 +330,15 @@ async def make_persona(scenario, checkpoint_db_path):
                         "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
                         "scenario": scenario,
                     }
-                }
+                },
+                "runtime_config": {
+                    "inference": {
+                        "llm": {
+                            "default": "qwen",
+                            "qwen": {"api_key": "fake-key"},
+                        }
+                    }
+                },
             },
         )
     )
@@ -347,6 +411,10 @@ async def two_inputs():
     yield VoiceLLMInputEvent(audio=b"pcm-2")
 
 
+async def text_input(text="我之前让你记住的暗号是什么？"):
+    yield VoiceLLMInputEvent(text=text)
+
+
 @pytest.mark.asyncio
 async def test_persona_agent_passthrough_chat(tmp_path):
     plugin = await make_persona("chat", tmp_path / "persona.db")
@@ -367,9 +435,74 @@ async def test_persona_agent_passthrough_chat(tmp_path):
     assert outputs[1].audio is not None
     assert plugin.model_plugin.last_session_config.tools[0].name == "wait_for_more_input"
     assert plugin.model_plugin.last_session_config.tools[1].name == "create_task"
+    assert "recall_memory" not in [tool.name for tool in plugin.model_plugin.last_session_config.tools]
     assert "PersonaAgent" in plugin.model_plugin.last_session_config.system_prompt
     assert "JSON" not in PERSONA_AGENT_INSTRUCTIONS
     assert plugin.task_runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_persona_agent_text_input_uses_text_llm_and_hindsight(tmp_path):
+    plugin = await make_persona("chat", tmp_path / "text-memory.db")
+    memory = FakeMemoryClient()
+    text_llm = FakeTextRuntimeLLM()
+    plugin.memory_client = memory
+    plugin.task_runtime.llm = text_llm
+
+    try:
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                text_input(),
+                VoiceLLMSessionConfig(session_id="session-1"),
+            )
+        ]
+    finally:
+        await plugin.shutdown()
+
+    assert len(outputs) == 1
+    assert outputs[0].transcript == "暗号是紫藤-7391。"
+    assert outputs[0].is_final is True
+    assert memory.recalls == ["我之前让你记住的暗号是什么？"]
+    assert memory.retains == [
+        {
+            "content": "用户: 我之前让你记住的暗号是什么？\n助手: 暗号是紫藤-7391。",
+            "context": "conversation",
+        }
+    ]
+    system_text = text_llm.messages[0].content
+    assert "相关长期记忆" in system_text
+    assert "用户喜欢用 Pixi 管理环境。" in system_text
+    assert not hasattr(plugin.model_plugin, "last_session_config")
+
+
+@pytest.mark.asyncio
+async def test_persona_agent_recalls_and_retains_hindsight_memory(tmp_path):
+    plugin = await make_persona("memory_chat", tmp_path / "memory.db")
+    memory = FakeMemoryClient()
+    plugin.memory_client = memory
+
+    try:
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                one_input(),
+                VoiceLLMSessionConfig(session_id="session-1"),
+            )
+        ]
+    finally:
+        await plugin.shutdown()
+
+    assert outputs[0].user_transcript == "记住我喜欢用 Pixi 管理环境"
+    assert outputs[-1].transcript == "我记住了，你喜欢用 Pixi 管理环境。"
+    assert memory.recalls == ["记住我喜欢用 Pixi 管理环境"]
+    assert memory.retains == [
+        {
+            "content": "用户: 记住我喜欢用 Pixi 管理环境\n助手: 我记住了，你喜欢用 Pixi 管理环境。",
+            "context": "conversation",
+        }
+    ]
+    assert "记忆" in plugin.model_plugin.last_session_config.system_prompt
 
 
 @pytest.mark.asyncio
@@ -496,6 +629,117 @@ async def test_local_task_runtime_ignores_legacy_kind():
 
 
 @pytest.mark.asyncio
+async def test_local_task_runtime_defers_background_start_until_explicit_start(monkeypatch):
+    started = asyncio.Event()
+
+    async def fake_run_task_with_langgraph(task, _search_tool, callbacks, **_kwargs):
+        started.set()
+        await callbacks.event(
+            task.id,
+            TaskEvent(
+                event_type="task.completed",
+                status="completed",
+                message="已整理好资料。",
+                progress=100,
+            ),
+        )
+
+    monkeypatch.setattr(runtime_module, "run_task_with_langgraph", fake_run_task_with_langgraph)
+    runtime = LocalTaskRuntime(llm=FakeRuntimeLLM(), tool_executor=FakeRuntimeToolExecutor())
+
+    try:
+        task = await runtime.create_task("session-1", {"description": "今天知乎有哪些热门信息"})
+        await asyncio.sleep(0)
+        events = await runtime.get_task_events(task["id"])
+
+        assert [event["event_type"] for event in events] == ["task.queued"]
+        assert not started.is_set()
+
+        await runtime.start_task(task["id"])
+        await asyncio.wait_for(started.wait(), timeout=1)
+        events = await runtime.get_task_events(task["id"])
+    finally:
+        await runtime.shutdown()
+
+    assert [event["event_type"] for event in events] == [
+        "task.queued",
+        "task.started",
+        "task.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_task_runtime_records_failed_terminal_event(monkeypatch):
+    async def fake_run_task_with_langgraph(task, _search_tool, callbacks, **_kwargs):
+        raise RuntimeError("missing search credentials")
+
+    monkeypatch.setattr(runtime_module, "run_task_with_langgraph", fake_run_task_with_langgraph)
+    runtime = LocalTaskRuntime(llm=FakeRuntimeLLM(), tool_executor=FakeRuntimeToolExecutor())
+
+    try:
+        task = await runtime.create_task("session-1", {"description": "今天知乎有哪些热门信息"})
+        await runtime.start_task(task["id"])
+        for _ in range(20):
+            task = await runtime.get_task(task["id"])
+            if task["status"] == "failed":
+                break
+            await asyncio.sleep(0.01)
+        events = await runtime.get_task_events(task["id"])
+    finally:
+        await runtime.shutdown()
+
+    assert task["status"] == "failed"
+    assert events[-1]["event_type"] == "task.failed"
+    assert "missing search credentials" in events[-1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_local_task_runtime_cancels_active_task(monkeypatch):
+    started = asyncio.Event()
+
+    async def fake_run_task_with_langgraph(task, _search_tool, callbacks, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runtime_module, "run_task_with_langgraph", fake_run_task_with_langgraph)
+    runtime = LocalTaskRuntime(llm=FakeRuntimeLLM(), tool_executor=FakeRuntimeToolExecutor())
+
+    try:
+        task = await runtime.create_task("session-1", {"description": "今天知乎有哪些热门信息"})
+        await runtime.start_task(task["id"])
+        await asyncio.wait_for(started.wait(), timeout=1)
+        result = await runtime.cancel_task("session-1")
+        events = await runtime.get_task_events(task["id"])
+    finally:
+        await runtime.shutdown()
+
+    assert result["cancelled"] is True
+    assert result["task"]["status"] == "cancelled"
+    assert events[-1]["event_type"] == "task.cancelled"
+
+
+@pytest.mark.asyncio
+async def test_local_task_runtime_marks_missing_terminal_report_as_failed():
+    runtime = LocalTaskRuntime(llm=FakeRuntimeLLMNoTerminal(), tool_executor=FakeRuntimeToolExecutor())
+
+    try:
+        task = await runtime.create_task("session-1", {"description": "今天知乎有哪些热门信息"})
+        await runtime.start_task(task["id"])
+        for _ in range(20):
+            task = await runtime.get_task(task["id"])
+            if task["status"] == "failed":
+                break
+            await asyncio.sleep(0.01)
+        events = await runtime.get_task_events(task["id"])
+    finally:
+        await runtime.shutdown()
+
+    assert task["status"] == "failed"
+    assert events[-1]["event_type"] == "task.failed"
+    assert "terminal tool" in events[-1]["message"]
+
+
+@pytest.mark.asyncio
 async def test_persona_agent_projects_local_task_events(tmp_path, monkeypatch):
     plugin = await make_persona_with_local_runtime(
         "create_task",
@@ -526,6 +770,15 @@ async def test_persona_agent_projects_local_task_events(tmp_path, monkeypatch):
     assert all(event["type"] == "task_event" for event in task_events)
     assert all(event["session_id"] == "session-1" for event in task_events)
     assert any((event.get("payload") or {}).get("artifact_id") for event in task_events)
+    ack_index = next(
+        i for i, event in enumerate(outputs) if event.transcript == "好的，请稍等。"
+    )
+    started_index = next(
+        i
+        for i, event in enumerate(outputs)
+        if event.task_event and event.task_event["event_type"] == "task.started"
+    )
+    assert ack_index < started_index
     completed_index = next(
         i
         for i, event in enumerate(outputs)

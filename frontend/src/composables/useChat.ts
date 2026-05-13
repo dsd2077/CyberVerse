@@ -183,36 +183,41 @@ export function useChat(sessionId: () => string) {
     return Number.isFinite(timestamp) ? timestamp : 0
   }
 
+  function taskText(key: string, named?: Record<string, unknown>): string {
+    return translate(`task.${key}`, named)
+  }
+
   function agentNameForKind(kind: string): string {
-    if (kind === 'research') return 'Research SubAgent'
-    if (!kind) return 'SubAgent'
-    return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} SubAgent`
+    if (kind === 'research') return taskText('agent.research')
+    if (!kind) return taskText('agent.generic')
+    const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
+    return taskText('agent.typed', { kind: label })
   }
 
   function taskCardTitle(task: Record<string, unknown>, fallbackTitle: string): string {
-    return readString(task.user_request) || readString(task.title) || fallbackTitle || '后台任务'
+    return readString(task.user_request) || readString(task.title) || fallbackTitle || taskText('defaultTitle')
   }
 
   function eventTitle(eventType: string, message: string): string {
     switch (eventType) {
       case 'task.queued':
-        return '任务已加入队列'
+        return taskText('event.queued')
       case 'task.started':
-        return '启动任务'
+        return taskText('event.started')
       case 'plan.created':
-        return '拆解任务步骤'
+        return taskText('event.planCreated')
       case 'research.blocked':
-        return '检索候选信息源'
+        return taskText('event.researchBlocked')
       case 'artifact.created':
-        return '生成产物'
+        return taskText('event.artifactCreated')
       case 'task.completed':
-        return '完成任务'
+        return taskText('event.completed')
       case 'task.failed':
-        return '任务失败'
+        return taskText('event.failed')
       case 'task.cancelled':
-        return '任务已取消'
+        return taskText('event.cancelled')
       default:
-        return message || eventType || '任务状态更新'
+        return message || eventType || taskText('event.statusUpdate')
     }
   }
 
@@ -226,13 +231,13 @@ export function useChat(sessionId: () => string) {
   function eventDescription(eventType: string, message: string, payload: Record<string, unknown>): string {
     if (eventType === 'plan.created') {
       const steps = Array.isArray(payload.steps) ? payload.steps.map(readString).filter(Boolean) : []
-      if (steps.length > 0) return `生成计划：${steps.join('、')}`
+      if (steps.length > 0) return taskText('event.planDescription', { steps: steps.join(taskText('listJoiner')) })
     }
     if (eventType === 'artifact.created') {
-      return `${artifactTypeLabel(readString(payload.type) || 'html')} 页面已写入 artifact`
+      return taskText('event.artifactDescription', { type: artifactTypeLabel(readString(payload.type) || 'html') })
     }
     if (eventType === 'task.completed') {
-      return message || '任务已完成'
+      return message || taskText('event.completedDescription')
     }
     return message || eventTitle(eventType, message)
   }
@@ -251,7 +256,7 @@ export function useChat(sessionId: () => string) {
     const mimeType = readString(payload.mime_type)
       || existing?.mimeType
       || (type.includes('html') ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8')
-    const title = readString(payload.title) || existing?.title || fallbackTitle || '任务产物'
+    const title = readString(payload.title) || existing?.title || fallbackTitle || taskText('defaultArtifactTitle')
     const content = readString(payload.content)
     const projectedUrl = readString(payload.url)
     const nextArtifact: ChatTaskArtifact = {
@@ -287,11 +292,11 @@ export function useChat(sessionId: () => string) {
     const previous = previousMessage?.task
     const payload = asRecord(data.payload)
     const eventType = readString(data.event_type)
-    const message = readString(data.message) || '任务状态已更新。'
+    const message = readString(data.message) || taskText('event.statusUpdated')
     const status = readTaskStatus(data.status || task.status, previous?.status || 'running')
     const progress = normalizeProgress(data.progress ?? task.progress, previous?.progress || 0)
     const kind = readString(task.kind) || 'research'
-    const title = taskCardTitle(task, previous?.title || '后台任务')
+    const title = taskCardTitle(task, previous?.title || taskText('defaultTitle'))
     const seq = normalizeSeq(data.seq)
 
     const nextEvent: ChatTaskTimelineItem | null = eventType
@@ -324,11 +329,11 @@ export function useChat(sessionId: () => string) {
 
     const latestEvent = events[events.length - 1]
     const currentStep = status === 'completed' && artifacts.length > 0
-      ? '已完成：资料已生成'
+      ? taskText('current.completedWithArtifact')
       : status === 'failed'
-        ? message || '任务失败'
+        ? message || taskText('event.failed')
         : status === 'cancelled'
-          ? '任务已取消'
+          ? taskText('event.cancelled')
           : latestEvent?.title || message
 
     return {
@@ -426,7 +431,8 @@ export function useChat(sessionId: () => string) {
       }
 
       ws.value.onerror = (e) => {
-        reject(e)
+        console.error('[useChat] WebSocket connection failed:', e)
+        reject(new Error('WebSocket connection failed'))
       }
 
     ws.value.onmessage = (event: MessageEvent) => {

@@ -18,8 +18,14 @@ from inference.core.types import (
     VoiceLLMSessionConfig,
 )
 from inference.plugins.voice_llm.base import VoiceLLMPlugin
+from inference.plugins.voice_llm.persona.memory import (
+    HindsightMemoryClient,
+    format_memories,
+    hindsight_config_from_runtime_config,
+)
 from inference.plugins.voice_llm.persona.runtime import LocalTaskRuntime
 from inference.plugins.voice_llm.persona.supervisor import PendingSubAgentTask, PersonaSupervisor, SupervisorToolResult
+from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,21 @@ PERSONA_TOOL_DEFINITIONS = [
     ),
 ]
 
+MEMORY_TOOL_DEFINITION = ToolDefinition(
+    name="recall_memory",
+    description="在回答用户完整问题前检索与本轮用户请求相关的长期记忆。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "用于检索长期记忆的本轮用户请求或问题。",
+            },
+        },
+        "required": ["query"],
+    },
+)
+
 PERSONA_AGENT_INSTRUCTIONS = """你是 CyberVerse 数字人 PersonaAgent，直接通过语音和用户对话。
 你需要先判断用户当前表达是否已经构成完整意图。
 普通寒暄、问答和闲聊：直接自然回答。
@@ -81,6 +102,13 @@ PERSONA_AGENT_INSTRUCTIONS = """你是 CyberVerse 数字人 PersonaAgent，直�
 询问后台任务进度：调用 get_task_status。
 要求取消、停止、不用继续当前后台任务：调用 cancel_task。
 
+"""
+
+PERSONA_MEMORY_INSTRUCTIONS = """你具备长期记忆能力。
+当用户当前话语已经构成完整意图时，回答前先调用 recall_memory 检索相关记忆。
+如果相关记忆能帮助回答，请自然融合到回复中，不要机械复述记忆列表。
+如果用户问到之前讨论过的内容，优先参考相关记忆。
+不要主动透露用户明确要求保密的信息。
 """
 
 
@@ -98,6 +126,8 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self.model_plugin: VoiceLLMPlugin | None = None
         self.task_runtime: LocalTaskRuntime | None = None
         self.supervisor: PersonaSupervisor | None = None
+        self.memory_client: HindsightMemoryClient | None = None
+        self._memory_tasks: set[asyncio.Task[None]] = set()
         self.checkpoint_db_path = ""
         self.task_poll_interval_seconds = 1.0
         self.task_monitor_timeout_seconds = 1800.0
@@ -158,6 +188,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     "persona_agent": config.params,
                 }
             }
+        self.memory_client = HindsightMemoryClient(hindsight_config_from_runtime_config(runtime_config))
         self.task_runtime = LocalTaskRuntime(
             runtime_config=runtime_config,
             max_active_tasks_per_session=int(config.params.get("max_active_tasks_per_session") or 3),
@@ -171,6 +202,18 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         await self.supervisor.initialize()
 
     async def shutdown(self) -> None:
+        if self._memory_tasks:
+            done, pending = await asyncio.wait(self._memory_tasks, timeout=2.0)
+            for task in done:
+                try:
+                    task.result()
+                except Exception:
+                    logger.debug("persona memory task failed during shutdown", exc_info=True)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            self._memory_tasks.clear()
         if self.model_plugin is not None:
             await self.model_plugin.shutdown()
         if self.supervisor is not None:
@@ -187,6 +230,8 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             await self.model_plugin.interrupt()
 
     async def _execute_tool(self, call: ToolCall, session_id: str) -> SupervisorToolResult:
+        if call.name.strip() == "recall_memory":
+            return await self._recall_memory(call)
         if self.supervisor is None:
             raise RuntimeError("persona supervisor is not initialized")
         return await self.supervisor.handle_tool_call(call, session_id)
@@ -357,17 +402,139 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         prompt = await self.supervisor.run_pending_task(pending)
         await injected.put(VoiceLLMInputEvent(text=prompt))
 
-    @staticmethod
-    def _persona_system_prompt(session_config: VoiceLLMSessionConfig) -> str:
+    def _memory_enabled(self) -> bool:
+        return bool(self.memory_client is not None and self.memory_client.enabled)
+
+    async def _recall_memory(self, call: ToolCall) -> SupervisorToolResult:
+        args = call.arguments or {}
+        query = self._clean_text(args.get("query") or args.get("text") or args.get("user_request"))
+        if not self._memory_enabled() or not query or self.memory_client is None:
+            return SupervisorToolResult(
+                result={
+                    "ok": False,
+                    "memories": [],
+                    "memories_text": "暂无相关记忆",
+                }
+            )
+        memories = await self.memory_client.recall(query)
+        memories_text = format_memories(memories) or "暂无相关记忆"
+        return SupervisorToolResult(
+            result={
+                "ok": True,
+                "memories": memories,
+                "memories_text": memories_text,
+            }
+        )
+
+    def _tool_definitions(self) -> list[ToolDefinition]:
+        tools = list(PERSONA_TOOL_DEFINITIONS)
+        if self._memory_enabled():
+            return [MEMORY_TOOL_DEFINITION, *tools]
+        return tools
+
+    def _persona_system_prompt(self, session_config: VoiceLLMSessionConfig) -> str:
         prompt = (session_config.system_prompt or "").strip()
+        base_prompt = PERSONA_AGENT_INSTRUCTIONS
+        if self._memory_enabled():
+            base_prompt = f"{base_prompt}\n{PERSONA_MEMORY_INSTRUCTIONS}"
         if not prompt:
-            return PERSONA_AGENT_INSTRUCTIONS
-        return f"{PERSONA_AGENT_INSTRUCTIONS}\n\n角色设定：\n{prompt}"
+            return base_prompt
+        return f"{base_prompt}\n\n角色设定：\n{prompt}"
+
+    def _text_system_prompt(self, session_config: VoiceLLMSessionConfig) -> str:
+        prompt = (session_config.system_prompt or "").strip()
+        parts = [
+            "你是 CyberVerse 数字人 PersonaAgent。当前输入来自文字聊天框，请直接以自然中文回答用户。",
+            "如果相关长期记忆能帮助回答，请自然融合到回复中；如果用户请求不完整，可以简短追问。",
+            "不要输出 wait_for_more_input、create_task、recall_memory 等工具名，也不要声称自己调用了语音实时模型。",
+        ]
+        if prompt:
+            parts.append(f"角色设定：\n{prompt}")
+        return "\n".join(parts)
+
+    def _schedule_memory_retain(self, user_text: str, assistant_text: str) -> None:
+        user_text = self._clean_text(user_text)
+        assistant_text = self._clean_text(assistant_text)
+        if not self._memory_enabled() or not user_text or not assistant_text or self.memory_client is None:
+            return
+        content = f"用户: {user_text}\n助手: {assistant_text}"
+        task = asyncio.create_task(self._retain_memory(content))
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
+
+    async def _retain_memory(self, content: str) -> None:
+        if self.memory_client is None:
+            return
+        try:
+            await self.memory_client.retain(content, context="conversation")
+        except Exception as exc:
+            logger.warning("persona memory retain task failed: %s", exc)
+
+    @staticmethod
+    def _message_text(message: Any) -> str:
+        content = getattr(message, "content", message)
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if text:
+                        parts.append(str(text))
+            return "".join(parts).strip()
+        return str(content or "").strip()
+
+    def _text_turn_messages(
+        self,
+        user_text: str,
+        session_config: VoiceLLMSessionConfig,
+        memories_text: str,
+    ) -> list[Any]:
+        system_parts = [self._text_system_prompt(session_config)]
+        if memories_text:
+            system_parts.append(f"相关长期记忆：\n{memories_text}")
+
+        messages: list[Any] = [SystemMessage(content="\n\n".join(part for part in system_parts if part.strip()))]
+        for item in session_config.dialog_context:
+            text = self._clean_text(item.text)
+            if not text:
+                continue
+            if item.role == "assistant":
+                messages.append(AIMessage(content=text))
+            else:
+                messages.append(HumanMessage(content=text))
+        messages.append(HumanMessage(content=user_text))
+        return messages
+
+    async def _converse_text_turn(
+        self,
+        user_text: str,
+        session_config: VoiceLLMSessionConfig,
+    ) -> AsyncIterator[VoiceLLMOutputEvent]:
+        user_text = self._clean_text(user_text)
+        if not user_text:
+            return
+        memories_text = ""
+        if self._memory_enabled() and self.memory_client is not None:
+            memories_text = format_memories(await self.memory_client.recall(user_text))
+
+        llm = self.task_runtime.llm if self.task_runtime is not None else None
+        if llm is None:
+            raise RuntimeError("persona text LLM is not initialized")
+
+        response = await llm.ainvoke(self._text_turn_messages(user_text, session_config, memories_text))
+        assistant_text = self._message_text(response) or "我暂时没有生成有效回复。"
+        self._schedule_memory_retain(user_text, assistant_text)
+        yield VoiceLLMOutputEvent(transcript=assistant_text, is_final=True)
 
     async def _merged_input_stream(
         self,
         input_stream: AsyncIterator[VoiceLLMInputEvent],
         injected: asyncio.Queue[VoiceLLMInputEvent],
+        on_source_text: Any | None = None,
     ) -> AsyncIterator[VoiceLLMInputEvent]:
         source = input_stream.__aiter__()
         source_done = False
@@ -386,9 +553,13 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     return
 
             try:
-                yield await source.__anext__()
+                event = await source.__anext__()
             except StopAsyncIteration:
                 source_done = True
+                continue
+            if on_source_text is not None and event.text:
+                on_source_text(event.text)
+            yield event
 
     async def converse_stream(
         self,
@@ -398,14 +569,30 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         if self.model_plugin is None:
             raise RuntimeError("persona model plugin is not initialized")
         session_config = session_config or VoiceLLMSessionConfig()
+        source = input_stream.__aiter__()
+        try:
+            first_event = await source.__anext__()
+        except StopAsyncIteration:
+            return
+        if first_event.text and not first_event.audio and first_event.image is None and first_event.tool_result is None:
+            async for event in self._converse_text_turn(first_event.text, session_config):
+                yield event
+            return
+
+        async def source_with_first() -> AsyncIterator[VoiceLLMInputEvent]:
+            yield first_event
+            async for event in source:
+                yield event
+
         model_session_config = replace(
             session_config,
             system_prompt=self._persona_system_prompt(session_config),
-            tools=PERSONA_TOOL_DEFINITIONS,
+            tools=self._tool_definitions(),
         )
         injected: asyncio.Queue[VoiceLLMInputEvent] = asyncio.Queue()
         pending_partials: list[str] = []
         turn_transcripts: list[str] = []
+        memory_user_text = ""
         pending_task_starts: list[PendingSubAgentTask] = []
         background_tasks: set[asyncio.Task[None]] = set()
         task_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -424,11 +611,15 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
 
+        def remember_source_text(text: str) -> None:
+            nonlocal memory_user_text
+            memory_user_text = self._merge_text_segments([memory_user_text, text])
+
         model_event_task: asyncio.Task[VoiceLLMOutputEvent] | None = None
         task_event_task: asyncio.Task[dict[str, Any]] | None = None
         try:
             model_events = self.model_plugin.converse_stream(
-                self._merged_input_stream(input_stream, injected),
+                self._merged_input_stream(source_with_first(), injected, remember_source_text),
                 session_config=model_session_config,
             ).__aiter__()
             model_event_task = asyncio.create_task(model_events.__anext__())
@@ -460,6 +651,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                 self._log_model_event(session_config.session_id, event)
                 if event.user_transcript:
                     turn_transcripts.append(event.user_transcript)
+                    memory_user_text = self._merge_text_segments([memory_user_text, event.user_transcript])
                     yield VoiceLLMOutputEvent(
                         user_transcript=event.user_transcript,
                         question_id=event.question_id,
@@ -530,6 +722,9 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                 if self._has_assistant_output(event) and (pending_partials or turn_transcripts):
                     pending_partials.clear()
                     turn_transcripts.clear()
+                if event.is_final and event.transcript:
+                    self._schedule_memory_retain(memory_user_text, event.transcript)
+                    memory_user_text = ""
                 yield event
 
                 if event.is_final and pending_task_starts:

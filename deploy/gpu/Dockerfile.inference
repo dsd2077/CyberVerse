@@ -47,6 +47,6 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 HEALTHCHECK --interval=30s --timeout=5s --retries=20 --start-period=600s \
     CMD python -c "import grpc; ch = grpc.insecure_channel('127.0.0.1:50051'); grpc.channel_ready_future(ch).result(timeout=3)" || exit 1
 
-EXPOSE 50051 8090
+EXPOSE 50051
 
 CMD ["python", "-m", "inference.server", "--config", "/workspace/deploy/gpu/cyberverse_config.gpu.yaml"]

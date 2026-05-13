@@ -81,6 +81,8 @@ def _default_system_prompt(task: Task, localizer: Localizer, tools: list[BaseToo
             "你必须根据用户任务和可用工具自行决定执行过程，不要按固定工作流机械执行。",
             f"可用工具包括：{tool_names}。",
             "需要获取外部信息时调用合适的查询工具；需要生成最终交付物时调用报告或产物生成工具。",
+            "如果查询工具返回空结果或工具错误，也必须调用最终产物工具，清楚说明未找到可靠来源、失败原因和后续建议，不要无限重试。",
+            "不要把无来源内容伪装成事实；来源不足时在 caveats 中说明。",
             "如果用户请求是中文，最终内容应优先使用简洁中文。",
             f"任务语言环境：{localizer.locale}。",
             f"任务标题：{task.title}。",
@@ -228,4 +230,3 @@ async def run_subagent(
     )
     if terminal_tool_names and not final_state.get("completed"):
         raise TimeoutError(f"subagent did not call a terminal tool within {max_agent_iterations} LLM calls")
-

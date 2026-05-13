@@ -133,6 +133,14 @@ pixi run -e macos-arm python-test
 pixi run -e macos-arm go-test
 ```
 
+After copying `infra/cyberverse_config.example.yaml` to `cyberverse_config.yaml` and configuring `.env`, you can start the local Mac-side services in one foreground process:
+
+```bash
+pixi run -e macos-arm dev
+```
+
+`Ctrl+C` stops the inference process, Go server, and frontend dev server. For weak Mac hardware, keep GPU/avatar inference on the remote Ubuntu deployment and point the local config or frontend environment at that remote API.
+
 On Linux x86_64:
 
 ```bash
@@ -172,9 +180,15 @@ Edit `.env`, fill in your API keys:
 ```
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao omni model
 DOUBAO_APP_ID=your_doubao_app_id
+HINDSIGHT_API_KEY=your_hindsight_api_key       # Optional PersonaAgent long-term memory
+HINDSIGHT_USER_TAG=openclaw                    # Stable cross-session memory tag
 ```
 
 Doubao Voice: get **App ID** / **API Key** per [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) → `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
+
+PersonaAgent can use Hindsight for cross-session memory when `HINDSIGHT_API_KEY` and `HINDSIGHT_USER_TAG` are set in your local `.env`. The default endpoint is `https://hindsight.lucky.jmsu.top` and the default bank is `openclaw`; override them with `HINDSIGHT_BASE_URL` and `HINDSIGHT_BANK_ID` if needed. Keep real Hindsight keys only in `.env`; do not commit them.
+
+For the PersonaAgent digital-human path, the required external interfaces are the realtime omni model credentials, the text LLM credentials used by local subagents, optional `ZHIHU_ACCESS_SECRET` for research tools, optional Hindsight memory credentials, and the local or remote Go/API + avatar inference endpoints.
 
 After the stack is running, you can change these values (and other API keys / service endpoints) from the web UI at **`/settings`** instead of editing `.env` only.
 
