@@ -6,6 +6,7 @@ import {
   listSessionTasks,
   sendMessage,
   type AgentTask,
+  type AgentTaskEvent,
 } from '../services/api'
 import { translate } from '../i18n'
 
@@ -176,6 +177,12 @@ export function useChat(sessionId: () => string) {
     return Math.trunc(seq)
   }
 
+  function readTimestamp(value: unknown): number {
+    if (typeof value !== 'string' || !value.trim()) return 0
+    const timestamp = new Date(value).getTime()
+    return Number.isFinite(timestamp) ? timestamp : 0
+  }
+
   function agentNameForKind(kind: string): string {
     if (kind === 'research') return 'Research SubAgent'
     if (!kind) return 'SubAgent'
@@ -264,7 +271,11 @@ export function useChat(sessionId: () => string) {
     return [...artifacts, nextArtifact]
   }
 
-  function buildTaskMessage(data: any, fallbackTask?: Partial<AgentTask>): ChatMessage | null {
+  function buildTaskMessage(
+    data: any,
+    fallbackTask?: Partial<AgentTask>,
+    options: { isHistory?: boolean; sessionId?: string } = {},
+  ): ChatMessage | null {
     const task = {
       ...asRecord(fallbackTask),
       ...asRecord(data.task),
@@ -272,7 +283,8 @@ export function useChat(sessionId: () => string) {
     const taskId = readString(data.task_id) || readString(task.id)
     if (!taskId) return null
 
-    const previous = messages.value.find(m => m.id === `task-${taskId}`)?.task
+    const previousMessage = messages.value.find(m => m.id === `task-${taskId}`)
+    const previous = previousMessage?.task
     const payload = asRecord(data.payload)
     const eventType = readString(data.event_type)
     const message = readString(data.message) || '任务状态已更新。'
@@ -324,7 +336,9 @@ export function useChat(sessionId: () => string) {
       kind: 'task',
       role: 'system',
       content: title,
-      timestamp: Date.now(),
+      timestamp: readTimestamp(data.created_at) || readTimestamp(task.updated_at) || previousMessage?.timestamp || Date.now(),
+      isHistory: options.isHistory ?? previousMessage?.isHistory,
+      sessionId: options.sessionId || readString(data.session_id) || readString(task.session_id) || previousMessage?.sessionId,
       task: {
         id: taskId,
         agentName: agentNameForKind(kind),
@@ -339,7 +353,11 @@ export function useChat(sessionId: () => string) {
     }
   }
 
-  function handleTaskEvent(data: any, fallbackTask?: any) {
+  function handleTaskEvent(
+    data: AgentTaskEvent | any,
+    fallbackTask?: Partial<AgentTask>,
+    options: { isHistory?: boolean; orderByTimestamp?: boolean; sessionId?: string } = {},
+  ) {
     const task = data.task || fallbackTask || {}
     const taskId = data.task_id || task.id || ''
     const seq = Number(data.seq ?? 0)
@@ -348,14 +366,19 @@ export function useChat(sessionId: () => string) {
       if (seq <= previousSeq) return
       lastTaskSeqByTaskId.set(taskId, seq)
     }
-    const taskMessage = buildTaskMessage(data, fallbackTask)
+    const taskMessage = buildTaskMessage(data, fallbackTask, options)
     if (taskMessage) {
       upsertMessage(taskMessage)
+      if (options.orderByTimestamp) {
+        messages.value = [...messages.value].sort((a, b) => a.timestamp - b.timestamp)
+      }
     }
   }
 
-  async function recoverTaskEvents() {
-    const sid = sessionId()
+  async function recoverTaskEventsForSession(
+    sid: string,
+    options: { isHistory?: boolean; orderByTimestamp?: boolean } = {},
+  ) {
     if (!sid) return
     try {
       const resp = await listSessionTasks(sid)
@@ -363,12 +386,16 @@ export function useChat(sessionId: () => string) {
         const afterSeq = lastTaskSeqByTaskId.get(task.id) || 0
         const eventsResp = await getTaskEvents(task.id, afterSeq)
         for (const event of eventsResp.events || []) {
-          handleTaskEvent(event, task)
+          handleTaskEvent(event, task, { ...options, sessionId: task.session_id || sid })
         }
       }))
     } catch (err) {
-      console.warn('[useChat] Failed to recover task events:', err)
+      console.warn(`[useChat] Failed to recover task events for session ${sid}:`, err)
     }
+  }
+
+  async function recoverTaskEvents() {
+    await recoverTaskEventsForSession(sessionId())
   }
 
   function sendSignaling(msg: any) {
@@ -635,10 +662,18 @@ export function useChat(sessionId: () => string) {
         isHistory: true,
         sessionId: m.session_id,
       }))
+      const historySessionIds = Array.from(new Set(
+        historyMessages
+          .map(message => message.sessionId || '')
+          .filter(Boolean),
+      ))
       // Prepend history before current messages
       messages.value = [...historyMessages, ...messages.value]
       historyNextCursor.value = resp.next_cursor
       historyHasMore.value = resp.has_more
+      await Promise.all(historySessionIds.map(sid =>
+        recoverTaskEventsForSession(sid, { isHistory: true, orderByTimestamp: true }),
+      ))
     } catch (e) {
       console.error('[useChat] Failed to load history:', e)
     } finally {
@@ -652,6 +687,7 @@ export function useChat(sessionId: () => string) {
     isConnected.value = false
     latestTurnSeq.value = 0
     voiceDrafts.clear()
+    lastTaskSeqByTaskId.clear()
     resetTransientState()
   }
 

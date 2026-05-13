@@ -407,6 +407,15 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 						log.Printf("Failed to interrupt session %s: %v", sessionID, err)
 					}
 				}
+			case "client_media_ready":
+				if r.orch != nil {
+					go func() {
+						log.Printf("client_media_ready received for session %s", sessionID)
+						if err := r.orch.HandleClientMediaReady(context.Background(), sessionID); err != nil {
+							log.Printf("Failed to start proactive greeting for session %s: %v", sessionID, err)
+						}
+					}()
+				}
 			case "webrtc_ready", "webrtc_answer", "ice_candidate":
 				if r.orch != nil {
 					r.orch.HandleSignaling(sessionID, msg)

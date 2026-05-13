@@ -114,6 +114,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                     config.session_id,
                     output_queue,
                     response_coordinator,
+                    drain_responses_on_close=True,
                 )
             )
             receiver_task = asyncio.create_task(
@@ -202,6 +203,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         session_id: str,
         output_queue: asyncio.Queue[VoiceLLMOutputEvent | Exception | None],
         response_coordinator: "_QwenResponseCoordinator | None" = None,
+        drain_responses_on_close: bool = False,
     ) -> None:
         response_coordinator = response_coordinator or _QwenResponseCoordinator()
         response_sender_task = asyncio.create_task(
@@ -210,6 +212,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         try:
             pending_image: ImageFrame | None = None
             has_sent_audio = False
+            expects_deferred_response = False
             async for event in input_stream:
                 if event.tool_result:
                     await self._send_tool_result(
@@ -218,8 +221,11 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                         event.tool_result,
                         response_coordinator,
                     )
+                    if not event.tool_result.suppress_response:
+                        expects_deferred_response = True
                     continue
                 if event.text:
+                    expects_deferred_response = True
                     await self._send_text(ws, session_id, event.text, response_coordinator)
                     continue
                 if event.audio:
@@ -247,6 +253,8 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                 # If stream ends after image input, flush once to avoid dropping
                 # the latest frame while still guaranteeing audio-first ordering.
                 await self._send_image(ws, session_id, pending_image)
+            if drain_responses_on_close and expects_deferred_response:
+                await response_coordinator.wait_all_responses_done(timeout=60.0)
         except Exception as exc:
             await output_queue.put(exc)
         finally:
@@ -838,6 +846,8 @@ class _QwenResponseCoordinator:
             self._idle = True
             self._current_response = None
             self._state_condition.notify_all()
+        async with self._pending_condition:
+            self._pending_condition.notify_all()
 
     async def mark_active_response_error(self) -> None:
         retry: _QwenDeferredResponse | None = None
@@ -858,6 +868,23 @@ class _QwenResponseCoordinator:
         async with self._state_condition:
             self._idle = True
             self._state_condition.notify_all()
+
+    async def wait_all_responses_done(self, timeout: float) -> None:
+        async def _wait() -> None:
+            while True:
+                async with self._pending_condition:
+                    has_pending = bool(self._pending)
+                    closed = self._closed
+                async with self._state_condition:
+                    idle = self._idle and self._current_response is None
+                if closed or (not has_pending and idle):
+                    return
+                await asyncio.sleep(0.01)
+
+        try:
+            await asyncio.wait_for(_wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("qwen_omni timed out waiting for deferred response completion")
 
 
 class _QwenTurnState:

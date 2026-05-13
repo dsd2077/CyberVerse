@@ -88,6 +88,7 @@ const visualInput = useVisualInput(
   (msg) => sendWSMessage(msg),
   () => visualInputConfig.value,
 )
+const startupGreetingReadySent = ref(false)
 const canUseVisualInput = computed(() =>
   hasVisualInputCapability.value && chatConnected.value && (visualInputConfig.value?.enabled ?? false)
 )
@@ -112,6 +113,14 @@ type VisualPreviewDragState = {
 }
 
 let visualPreviewDragState: VisualPreviewDragState | null = null
+
+watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
+  if (startupGreetingReadySent.value) return
+  if (!chatReady || mediaState !== 'connected') return
+  if (sendWSMessage({ type: 'client_media_ready' })) {
+    startupGreetingReadySent.value = true
+  }
+})
 
 function clampValue(value: number, min: number, max: number): number {
   if (max < min) return min

@@ -154,7 +154,13 @@ conda activate cyberverse
 在当前环境中安装 PyTorch（CUDA 12.8）：
 
 ```bash
-pip3 install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+pip3 install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+安装 vllm：
+
+```bash
+pip install vllm==0.11.0
 ```
 
 ### 第 3 步：配置环境变量

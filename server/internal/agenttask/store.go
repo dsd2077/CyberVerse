@@ -18,6 +18,13 @@ import (
 var ErrNotFound = errors.New("task not found")
 var ErrTerminal = errors.New("task is already terminal")
 
+func validateStorageID(kind, id string) error {
+	if id == "." || id == ".." || strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("%s id must not contain path separators or traversal segments", kind)
+	}
+	return nil
+}
+
 type Store struct {
 	db          *sql.DB
 	artifactDir string
@@ -187,9 +194,15 @@ func (s *Store) CreateTask(ctx context.Context, in CreateTaskInput) (*Task, erro
 	if title == "" {
 		title = defaultTitle(kind, in.UserRequest)
 	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		id = uuid.NewString()
+	} else if err := validateStorageID("task", id); err != nil {
+		return nil, err
+	}
 	now := nowString()
 	task := &Task{
-		ID:          uuid.NewString(),
+		ID:          id,
 		SessionID:   strings.TrimSpace(in.SessionID),
 		CharacterID: strings.TrimSpace(in.CharacterID),
 		Kind:        kind,
@@ -428,7 +441,12 @@ func (s *Store) CreateArtifact(ctx context.Context, taskID string, in CreateArti
 	if title == "" {
 		title = "任务资料"
 	}
-	id := uuid.NewString()
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		id = uuid.NewString()
+	} else if err := validateStorageID("artifact", id); err != nil {
+		return nil, err
+	}
 	taskDir := filepath.Join(s.artifactDir, taskID)
 	if err := os.MkdirAll(taskDir, 0755); err != nil {
 		return nil, err

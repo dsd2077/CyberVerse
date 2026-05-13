@@ -34,8 +34,8 @@ func (r *Router) handleListSessionTasks(w http.ResponseWriter, req *http.Request
 		return
 	}
 	sessionID := req.PathValue("id")
-	if _, err := r.sessionMgr.Get(sessionID); err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+	if strings.TrimSpace(sessionID) == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "session id is required"})
 		return
 	}
 	limit := parsePositiveInt(req.URL.Query().Get("limit"), 50, 200)

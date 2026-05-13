@@ -173,3 +173,86 @@ func TestStoreLatestActiveTask(t *testing.T) {
 		t.Fatalf("expected second active task, got %+v", active)
 	}
 }
+
+func TestStoreAcceptsExternalTaskAndArtifactIDs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := OpenStore(filepath.Join(root, "tasks.db"), filepath.Join(root, "artifacts"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer store.Close()
+
+	task, err := store.CreateTask(ctx, CreateTaskInput{
+		ID:          "persona-task-1",
+		SessionID:   "session-1",
+		UserRequest: "查看知乎热榜",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if task.ID != "persona-task-1" {
+		t.Fatalf("expected external task id, got %q", task.ID)
+	}
+	tasks, err := store.ListSessionTasks(ctx, "session-1", 10)
+	if err != nil {
+		t.Fatalf("ListSessionTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "persona-task-1" {
+		t.Fatalf("expected external task in list, got %+v", tasks)
+	}
+
+	artifact, err := store.CreateArtifact(ctx, task.ID, CreateArtifactInput{
+		ID:       "persona-artifact-1",
+		Type:     "html",
+		Title:    "知乎热榜",
+		MimeType: "text/html; charset=utf-8",
+		Content:  "<!doctype html><html><body>ok</body></html>",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+	if artifact.ID != "persona-artifact-1" {
+		t.Fatalf("expected external artifact id, got %q", artifact.ID)
+	}
+	gotArtifact, content, err := store.GetArtifact(ctx, task.ID, "persona-artifact-1")
+	if err != nil {
+		t.Fatalf("GetArtifact: %v", err)
+	}
+	if gotArtifact.MimeType != "text/html; charset=utf-8" || string(content) != "<!doctype html><html><body>ok</body></html>" {
+		t.Fatalf("unexpected artifact: artifact=%+v content=%q", gotArtifact, content)
+	}
+}
+
+func TestStoreRejectsExternalIDsWithPathSegments(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := OpenStore(filepath.Join(root, "tasks.db"), filepath.Join(root, "artifacts"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.CreateTask(ctx, CreateTaskInput{
+		ID:          "../persona-task",
+		SessionID:   "session-1",
+		UserRequest: "非法 task id",
+	}); err == nil {
+		t.Fatal("expected external task id with path segment to be rejected")
+	}
+
+	task, err := store.CreateTask(ctx, CreateTaskInput{
+		ID:          "persona-task-safe",
+		SessionID:   "session-1",
+		UserRequest: "安全 task id",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := store.CreateArtifact(ctx, task.ID, CreateArtifactInput{
+		ID:      `..\persona-artifact`,
+		Content: "bad",
+	}); err == nil {
+		t.Fatal("expected external artifact id with path segment to be rejected")
+	}
+}

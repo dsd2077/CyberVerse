@@ -56,6 +56,7 @@ const avatarImageMaxUploadHint = "角色头像图片超过当前 10MB 上传限�
 const (
 	doubaoDialogContextMaxPairs  = 20
 	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
+	startupGreetingHistoryItems  = 6
 	qwenOmniMaxVisualFrameBytes  = 500 * 1024
 )
 
@@ -282,6 +283,44 @@ func stringValue(v any) string {
 	return ""
 }
 
+func mapValue(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+
+func intValue(v any, fallback int) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case json.Number:
+		if parsed, err := n.Int64(); err == nil {
+			return int(parsed)
+		}
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func taskStatusValue(v any, fallback agenttask.Status) agenttask.Status {
+	status := agenttask.Status(stringValue(v))
+	switch status {
+	case agenttask.StatusQueued, agenttask.StatusRunning, agenttask.StatusWaitingUser,
+		agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled:
+		return status
+	default:
+		return fallback
+	}
+}
+
 func unixTimeFromNumber(n int64) time.Time {
 	if n <= 0 {
 		return time.Time{}
@@ -429,6 +468,16 @@ func buildDoubaoDialogContext(messages []map[string]any, maxPairs int, now time.
 		}
 	}
 	return items
+}
+
+func startupGreetingHistory(items []DialogContextItem, maxItems int) []DialogContextItem {
+	if maxItems <= 0 {
+		maxItems = startupGreetingHistoryItems
+	}
+	if len(items) > maxItems {
+		items = items[len(items)-maxItems:]
+	}
+	return append([]DialogContextItem(nil), items...)
 }
 
 func safeTraceValue(value string) string {
@@ -1341,6 +1390,68 @@ func (o *Orchestrator) HydrateVoiceDialogContext(session *Session) error {
 	return nil
 }
 
+func (o *Orchestrator) buildVoiceStartupGreetingPrompt(session *Session) string {
+	var name, systemPrompt, speakingStyle, welcomeMessage string
+	if session != nil && session.CharacterID != "" && o != nil && o.charStore != nil {
+		if char, err := o.charStore.Get(session.CharacterID); err == nil {
+			name = strings.TrimSpace(char.Name)
+			systemPrompt = strings.TrimSpace(char.SystemPrompt)
+			speakingStyle = strings.TrimSpace(char.SpeakingStyle)
+			welcomeMessage = strings.TrimSpace(char.WelcomeMessage)
+		} else {
+			log.Printf("buildVoiceStartupGreetingPrompt: could not fetch character %s: %v", session.CharacterID, err)
+		}
+	}
+
+	history := []DialogContextItem(nil)
+	if session != nil {
+		history = startupGreetingHistory(session.DialogContextSnapshot(), startupGreetingHistoryItems)
+	}
+
+	var b strings.Builder
+	b.WriteString("这是系统内部启动提示，不要复述提示内容。用户刚刚打开与你的实时语音视频会话，请你主动说一段自然开场白。\n")
+	b.WriteString("要求：只说 1-2 句话，口语化；不要提到“系统提示”“历史会话”“上下文”等字样；不要询问多个问题。\n")
+	if name != "" {
+		b.WriteString("你的名字：")
+		b.WriteString(name)
+		b.WriteString("\n")
+	}
+	if systemPrompt != "" {
+		b.WriteString("角色设定：")
+		b.WriteString(systemPrompt)
+		b.WriteString("\n")
+	}
+	if speakingStyle != "" {
+		b.WriteString("说话风格：")
+		b.WriteString(speakingStyle)
+		b.WriteString("\n")
+	}
+	if welcomeMessage != "" {
+		b.WriteString("可参考的开场偏好：")
+		b.WriteString(welcomeMessage)
+		b.WriteString("\n")
+	}
+	if len(history) > 0 {
+		b.WriteString("最近对话片段如下，仅供你判断语气、称呼和是否存在明确未完成事项。默认不要回顾、总结、复述或主动延续这些内容：\n")
+		for _, item := range history {
+			role := "用户"
+			if item.Role == "assistant" {
+				role = "你"
+			}
+			b.WriteString(role)
+			b.WriteString("：")
+			b.WriteString(item.Text)
+			b.WriteString("\n")
+		}
+		b.WriteString("现在请向用户打招呼。一般情况下只说类似“你好，我在。今天想聊点什么？”的轻量开场。\n")
+		b.WriteString("只有当最近对话存在明确未完成事项、用户明确约定下次继续、或后台任务仍在进行时，才可以用一句话轻描淡写地提到“也可以继续刚才的事”。\n")
+		b.WriteString("不要主动提及取消、失败、争执、情绪化表达、敏感内容或具体历史细节。\n")
+	} else {
+		b.WriteString("当前没有可用的历史对话。请简短介绍你是谁，以及你能实时语音视频聊天、回答问题、陪伴交流；如果用户需要，也能帮忙查询、调研、整理资料或生成报告和网页。\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID string) inference.VoiceLLMSessionConfig {
 	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
 	if session.CharacterID != "" && o.charStore != nil {
@@ -1353,7 +1464,6 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 			voiceConfig.Voice = char.VoiceType
 			voiceConfig.BotName = char.Name
 			voiceConfig.SpeakingStyle = char.SpeakingStyle
-			voiceConfig.WelcomeMessage = session.ConsumeVoiceWelcomeMessage(char.WelcomeMessage)
 		} else {
 			log.Printf("buildVoiceLLMSessionConfig: could not fetch character %s: %v", session.CharacterID, err)
 		}
@@ -1371,6 +1481,13 @@ func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID st
 	return voiceConfig
 }
 
+func (o *Orchestrator) buildVoiceStartupGreetingSessionConfig(session *Session, sessionID string) inference.VoiceLLMSessionConfig {
+	voiceConfig := o.buildVoiceLLMSessionConfig(session, sessionID)
+	voiceConfig.Provider = o.characterVoiceLLMProviderForSession(session)
+	voiceConfig.WelcomeMessage = ""
+	return voiceConfig
+}
+
 func voiceLLMProviderOrDefault(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
@@ -1381,6 +1498,13 @@ func voiceLLMProviderOrDefault(provider string) string {
 	default:
 		return "doubao"
 	}
+}
+
+func modeStringForLog(mode PipelineMode) string {
+	if mode == ModeStandard {
+		return "standard"
+	}
+	return "omni"
 }
 
 func (o *Orchestrator) standardComponentDefaults() character.Components {
@@ -1640,6 +1764,191 @@ func (o *Orchestrator) HandleTaskEvent(task *agenttask.Task, event *agenttask.Ev
 		}
 		_ = o.SpeakAssistantText(context.Background(), task.SessionID, msg, true)
 	}
+}
+
+func taskEventBroadcastPayload(task *agenttask.Task, event *agenttask.Event) map[string]any {
+	payload := map[string]any{
+		"type":       "task_event",
+		"task_id":    task.ID,
+		"session_id": task.SessionID,
+		"seq":        event.Seq,
+		"event_type": event.EventType,
+		"status":     event.Status,
+		"message":    event.Message,
+		"progress":   event.Progress,
+		"created_at": event.CreatedAt,
+		"task":       task,
+	}
+	if strings.TrimSpace(string(event.Payload)) != "" {
+		var decoded any
+		if err := json.Unmarshal(event.Payload, &decoded); err == nil && decoded != nil {
+			payload["payload"] = decoded
+		}
+	}
+	return payload
+}
+
+func fallbackPersonaTaskEventPayload(sessionID string, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["type"] = "task_event"
+	if stringValue(payload["session_id"]) == "" {
+		payload["session_id"] = sessionID
+	}
+	return payload
+}
+
+func sanitizePersonaArtifactPayload(payload map[string]any) map[string]any {
+	sanitized := make(map[string]any, len(payload))
+	for key, value := range payload {
+		if key == "content" {
+			continue
+		}
+		sanitized[key] = value
+	}
+	return sanitized
+}
+
+func (o *Orchestrator) persistPersonaArtifactEvent(ctx context.Context, store *agenttask.Store, taskID string, eventPayload map[string]any) map[string]any {
+	if eventPayload == nil {
+		return nil
+	}
+	sanitized := sanitizePersonaArtifactPayload(eventPayload)
+	content := stringValue(eventPayload["content"])
+	if content == "" {
+		return sanitized
+	}
+
+	artifactID := stringValue(eventPayload["artifact_id"])
+	if artifactID == "" {
+		artifactID = stringValue(eventPayload["id"])
+	}
+	if artifactID != "" {
+		if artifact, _, err := store.GetArtifact(ctx, taskID, artifactID); err == nil {
+			sanitized["artifact_id"] = artifact.ID
+			sanitized["title"] = artifact.Title
+			sanitized["type"] = artifact.Type
+			sanitized["mime_type"] = artifact.MimeType
+			return sanitized
+		} else if !errors.Is(err, agenttask.ErrNotFound) {
+			log.Printf("persona task artifact lookup failed task=%s artifact=%s: %v", taskID, artifactID, err)
+		}
+	}
+
+	artifactType := stringValue(eventPayload["type"])
+	if artifactType == "" {
+		artifactType = "html"
+	}
+	mimeType := stringValue(eventPayload["mime_type"])
+	if mimeType == "" && strings.Contains(strings.ToLower(artifactType), "html") {
+		mimeType = "text/html; charset=utf-8"
+	}
+	title := stringValue(eventPayload["title"])
+	if title == "" {
+		title = "任务产物"
+	}
+	metadata, _ := json.Marshal(mapValue(eventPayload["metadata"]))
+	artifact, err := store.CreateArtifact(ctx, taskID, agenttask.CreateArtifactInput{
+		ID:       artifactID,
+		Type:     artifactType,
+		Title:    title,
+		MimeType: mimeType,
+		Content:  content,
+		Metadata: metadata,
+	})
+	if err != nil {
+		log.Printf("persona task artifact persist failed task=%s artifact=%s: %v", taskID, artifactID, err)
+		return sanitized
+	}
+	sanitized["artifact_id"] = artifact.ID
+	sanitized["title"] = artifact.Title
+	sanitized["type"] = artifact.Type
+	sanitized["mime_type"] = artifact.MimeType
+	return sanitized
+}
+
+func (o *Orchestrator) persistPersonaTaskEvent(ctx context.Context, session *Session, sessionID string, payload map[string]any) map[string]any {
+	fallback := fallbackPersonaTaskEventPayload(sessionID, payload)
+	if o == nil || o.taskService == nil || o.taskService.Store() == nil {
+		return fallback
+	}
+
+	taskPayload := mapValue(payload["task"])
+	taskID := stringValue(payload["task_id"])
+	if taskID == "" {
+		taskID = stringValue(taskPayload["id"])
+	}
+	if taskID == "" {
+		return fallback
+	}
+
+	store := o.taskService.Store()
+	task, err := store.GetTask(ctx, taskID)
+	if errors.Is(err, agenttask.ErrNotFound) {
+		taskSessionID := stringValue(payload["session_id"])
+		if taskSessionID == "" {
+			taskSessionID = stringValue(taskPayload["session_id"])
+		}
+		if taskSessionID == "" {
+			taskSessionID = sessionID
+		}
+		characterID := stringValue(taskPayload["character_id"])
+		if characterID == "" && session != nil {
+			characterID = session.CharacterID
+		}
+		title := stringValue(taskPayload["title"])
+		userRequest := stringValue(taskPayload["user_request"])
+		if userRequest == "" {
+			userRequest = title
+		}
+		if userRequest == "" {
+			userRequest = stringValue(payload["message"])
+		}
+		if userRequest == "" {
+			userRequest = "后台任务"
+		}
+		kind := stringValue(taskPayload["kind"])
+		if kind == "" {
+			kind = "research"
+		}
+		task, err = store.CreateTask(ctx, agenttask.CreateTaskInput{
+			ID:          taskID,
+			SessionID:   taskSessionID,
+			CharacterID: characterID,
+			Kind:        kind,
+			Title:       title,
+			UserRequest: userRequest,
+		})
+	}
+	if err != nil {
+		log.Printf("persona task persist failed task=%s: %v", taskID, err)
+		return fallback
+	}
+
+	eventType := stringValue(payload["event_type"])
+	eventPayload := mapValue(payload["payload"])
+	if eventType == "artifact.created" {
+		eventPayload = o.persistPersonaArtifactEvent(ctx, store, task.ID, eventPayload)
+	}
+	var rawPayload json.RawMessage
+	if len(eventPayload) > 0 {
+		if raw, err := json.Marshal(eventPayload); err == nil {
+			rawPayload = raw
+		}
+	}
+	event, updated, err := store.AppendEvent(ctx, task.ID, agenttask.AppendEventInput{
+		EventType: eventType,
+		Status:    taskStatusValue(payload["status"], task.Status),
+		Message:   stringValue(payload["message"]),
+		Progress:  intValue(payload["progress"], intValue(taskPayload["progress"], task.Progress)),
+		Payload:   rawPayload,
+	})
+	if err != nil {
+		log.Printf("persona task event persist failed task=%s event=%s: %v", task.ID, eventType, err)
+		return fallback
+	}
+	return taskEventBroadcastPayload(updated, event)
 }
 
 // HandleTextInput processes a text message through either the standard
@@ -2172,6 +2481,28 @@ func (o *Orchestrator) runStandardASRLoop(ctx context.Context, session *Session,
 
 // runVoiceLLMPipeline executes an omni turn source -> omni model -> Avatar (video).
 func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64, initialTurnSeq uint64) {
+	o.runVoiceLLMPipelineWithConfig(
+		ctx,
+		session,
+		sessionID,
+		inputCh,
+		pipelineSeq,
+		initialTurnSeq,
+		o.buildVoiceLLMSessionConfig(session, sessionID),
+		false,
+	)
+}
+
+func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
+	ctx context.Context,
+	session *Session,
+	sessionID string,
+	inputCh <-chan inference.VoiceLLMInputEvent,
+	pipelineSeq uint64,
+	initialTurnSeq uint64,
+	voiceConfig inference.VoiceLLMSessionConfig,
+	suppressUserTranscript bool,
+) {
 	sessionDir := ""
 	if o.recorder != nil {
 		sessionDir = o.sessionRecordingDir(session)
@@ -2180,7 +2511,6 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	voiceConfig := o.buildVoiceLLMSessionConfig(session, sessionID)
 	outputCh, errCh := o.inference.ConverseStream(ctx, inputCh, voiceConfig)
 
 	pendingTurnSeq := initialTurnSeq
@@ -2639,11 +2969,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 				if err := json.Unmarshal([]byte(rawTaskEvent), &payload); err != nil {
 					log.Printf("invalid persona task event json session=%s: %v", sessionID, err)
 				} else {
-					payload["type"] = "task_event"
-					if _, ok := payload["session_id"]; !ok {
-						payload["session_id"] = sessionID
-					}
-					o.broadcastJSON(sessionID, payload)
+					o.broadcastJSON(sessionID, o.persistPersonaTaskEvent(ctx, session, sessionID, payload))
 				}
 				if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) && strings.TrimSpace(output.GetUserTranscript()) == "" && !output.GetBargeIn() {
 					continue
@@ -2691,38 +3017,54 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			}
 
 			if userText := strings.TrimSpace(output.GetUserTranscript()); userText != "" {
-				if currentTurn != nil {
-					abortTurn(currentTurn, true)
-					currentTurn = nil
-					currentTurnDone = nil
-					pendingAssistantMustMatchKey = true
+				if suppressUserTranscript {
+					if pendingUserFinalAt.IsZero() {
+						pendingUserFinalAt = time.Now()
+					}
+					pendingTurnAssistantReady = true
+					if outputQuestionID != "" {
+						pendingQuestionID = outputQuestionID
+					}
+					if outputReplyID != "" {
+						pendingReplyID = outputReplyID
+					}
+					if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) {
+						continue
+					}
+				} else {
+					if currentTurn != nil {
+						abortTurn(currentTurn, true)
+						currentTurn = nil
+						currentTurnDone = nil
+						pendingAssistantMustMatchKey = true
+					}
+					if outputQuestionID != "" {
+						pendingQuestionID = outputQuestionID
+					}
+					if outputReplyID != "" {
+						pendingReplyID = outputReplyID
+					}
+					seq := reservePendingTurn()
+					pendingTurnAssistantReady = true
+					pendingUserFinalAt = time.Now()
+					logVoiceTrace(
+						"go_user_transcript_received",
+						sessionID,
+						seq,
+						pendingReplyID,
+						pendingQuestionID,
+						pendingUserFinalAt,
+					)
+					session.AddMessage(ChatMessage{Role: "user", Content: userText, TurnSeq: seq})
+					o.broadcastJSON(sessionID, map[string]any{
+						"type":     "transcript",
+						"text":     userText,
+						"is_final": true,
+						"speaker":  "user",
+						"turn_seq": seq,
+					})
+					broadcastProcessing(seq)
 				}
-				if outputQuestionID != "" {
-					pendingQuestionID = outputQuestionID
-				}
-				if outputReplyID != "" {
-					pendingReplyID = outputReplyID
-				}
-				seq := reservePendingTurn()
-				pendingTurnAssistantReady = true
-				pendingUserFinalAt = time.Now()
-				logVoiceTrace(
-					"go_user_transcript_received",
-					sessionID,
-					seq,
-					pendingReplyID,
-					pendingQuestionID,
-					pendingUserFinalAt,
-				)
-				session.AddMessage(ChatMessage{Role: "user", Content: userText, TurnSeq: seq})
-				o.broadcastJSON(sessionID, map[string]any{
-					"type":     "transcript",
-					"text":     userText,
-					"is_final": true,
-					"speaker":  "user",
-					"turn_seq": seq,
-				})
-				broadcastProcessing(seq)
 			}
 
 			turnKey := voiceOutputTurnKey(output)
@@ -2871,6 +3213,71 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			o.broadcastError(sessionID, "Voice conversation failed")
 		}
 	}
+}
+
+// HandleClientMediaReady starts the one-time proactive greeting for omni sessions
+// after the browser confirms that realtime media is connected.
+func (o *Orchestrator) HandleClientMediaReady(ctx context.Context, sessionID string) error {
+	if o == nil || o.sessionMgr == nil {
+		return errors.New("orchestrator is not configured")
+	}
+	if o.inference == nil {
+		return errors.New("inference service is not configured")
+	}
+	session, err := o.sessionMgr.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	if session.Mode != ModeOmni {
+		log.Printf("startup greeting ignored for non-omni session %s mode=%s", sessionID, modeStringForLog(session.Mode))
+		return nil
+	}
+	if !session.TryStartVoiceStartupGreeting() {
+		log.Printf("startup greeting already started for session %s", sessionID)
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	prompt := o.buildVoiceStartupGreetingPrompt(session)
+	voiceConfig := o.buildVoiceStartupGreetingSessionConfig(session, sessionID)
+	log.Printf("startup greeting starting for session %s provider=%s history_items=%d", sessionID, voiceConfig.Provider, len(session.DialogContextSnapshot()))
+
+	o.stopPipelineAndWait(session, sessionID, true)
+
+	pipeCtx, cancel := context.WithCancel(ctx)
+	session.mu.Lock()
+	session.PipelineCancel = cancel
+	session.mu.Unlock()
+
+	turnSeq := session.MarkTurnStarted()
+	o.advancePlaybackEpoch(sessionID, turnSeq)
+	session.SetState(StateProcessing)
+	o.broadcastStatusTurn(sessionID, "processing", turnSeq)
+	pipelineSeq := session.MarkPipelineRunning()
+	inputCh := singleVoiceTextInput(prompt)
+
+	go func(seq uint64) {
+		o.runVoiceLLMPipelineWithConfig(
+			pipeCtx,
+			session,
+			sessionID,
+			inputCh,
+			seq,
+			turnSeq,
+			voiceConfig,
+			true,
+		)
+		if pipeCtx.Err() != nil || !session.IsCurrentPipeline(seq) {
+			return
+		}
+		if err := o.resumeVoiceAudioStream(sessionID); err != nil {
+			log.Printf("Failed to resume omni audio stream after startup greeting for session %s: %v", sessionID, err)
+		}
+	}(pipelineSeq)
+
+	return nil
 }
 
 // Interrupt cancels the current pipeline for a session.

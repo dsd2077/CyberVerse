@@ -178,6 +178,53 @@ async def test_converse_stream_emits_audio_transcripts_and_final():
 
 
 @pytest.mark.asyncio
+async def test_converse_stream_text_waits_for_response_before_closing_ws():
+    plugin = QwenOmniRealtimePlugin()
+    await plugin.initialize(
+        PluginConfig(
+            plugin_name="omni.qwen_omni",
+            params={"api_key": "dashscope-key"},
+        )
+    )
+    audio_bytes = b"\x01\x00\x02\x00"
+    ws = FakeQwenWS(
+        [
+            {"type": "session.updated"},
+            {"type": "response.created", "response": {"id": "resp-1"}},
+            {"type": "response.audio_transcript.delta", "delta": "欢迎回来"},
+            {
+                "type": "response.audio.delta",
+                "delta": base64.b64encode(audio_bytes).decode("ascii"),
+            },
+            {"type": "response.audio_transcript.done", "transcript": "欢迎回来"},
+            {"type": "response.done"},
+        ]
+    )
+    websockets = SimpleNamespace(connect=AsyncMock(return_value=ws))
+
+    async def inputs():
+        yield VoiceLLMInputEvent(text="请主动打招呼。")
+
+    with patch.dict("sys.modules", {"websockets": websockets}):
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                inputs(),
+                VoiceLLMSessionConfig(session_id="session-1", voice="Tina"),
+            )
+        ]
+
+    sent_types = [event["type"] for event in ws.sent]
+    assert sent_types == ["session.update", "conversation.item.create", "response.create"]
+    assert ws.closed is True
+    assert outputs[0].transcript == "欢迎回来"
+    assert outputs[1].audio is not None
+    assert outputs[1].audio.data == audio_bytes
+    assert outputs[2].is_final is True
+    assert outputs[2].transcript == "欢迎回来"
+
+
+@pytest.mark.asyncio
 async def test_send_inputs_sends_image_after_audio():
     plugin = QwenOmniRealtimePlugin()
     ws = FakeQwenWS([])

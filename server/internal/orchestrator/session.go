@@ -92,8 +92,8 @@ type Session struct {
 	PipelineSeq uint64 `json:"-"`
 	// TurnSeq increments each time a new conversational turn preempts playback.
 	TurnSeq uint64 `json:"-"`
-	// VoiceWelcomeSent prevents replaying the greeting when omni pipelines restart.
-	VoiceWelcomeSent bool `json:"-"`
+	// VoiceStartupGreetingStarted prevents replaying the proactive startup greeting.
+	VoiceStartupGreetingStarted bool `json:"-"`
 	// RecordingDir is the absolute path where recordings for this session are saved.
 	// Set by the orchestrator when the first recording turn begins.
 	RecordingDir string      `json:"-"`
@@ -191,14 +191,15 @@ func (s *Session) IsCurrentTurn(seq uint64) bool {
 	return s.TurnSeq == seq
 }
 
-func (s *Session) ConsumeVoiceWelcomeMessage(message string) string {
+func (s *Session) TryStartVoiceStartupGreeting() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.VoiceWelcomeSent {
-		return ""
+	if s.VoiceStartupGreetingStarted {
+		return false
 	}
-	s.VoiceWelcomeSent = true
-	return message
+	s.VoiceStartupGreetingStarted = true
+	s.LastActiveAt = time.Now()
+	return true
 }
 
 // WaitPipelineDone blocks until the pipeline goroutine finishes (with timeout).

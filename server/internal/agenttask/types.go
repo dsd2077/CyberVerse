@@ -63,6 +63,7 @@ type Artifact struct {
 }
 
 type CreateTaskInput struct {
+	ID          string
 	SessionID   string
 	CharacterID string
 	Kind        string
@@ -79,6 +80,7 @@ type AppendEventInput struct {
 }
 
 type CreateArtifactInput struct {
+	ID       string          `json:"id"`
 	Type     string          `json:"type"`
 	Title    string          `json:"title"`
 	MimeType string          `json:"mime_type"`

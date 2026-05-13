@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cyberverse/server/internal/agenttask"
 	"github.com/cyberverse/server/internal/character"
 	"github.com/cyberverse/server/internal/config"
 	"github.com/cyberverse/server/internal/inference"
@@ -227,6 +228,17 @@ func TestVoiceTurnSavesTranscriptAndRawAudioOnFinalBeforeAvatarDone(t *testing.T
 func TestVoicePipelineBroadcastsPersonaTaskEvent(t *testing.T) {
 	orch, session, _, inf := newVoiceRecordingHarness(t)
 	orch.wsHub = ws.NewHub()
+	taskStore, err := agenttask.OpenStore(filepath.Join(t.TempDir(), "tasks.db"), filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer taskStore.Close()
+	taskSvc := agenttask.NewService(taskStore, nil)
+	taskHandlerCalled := make(chan struct{}, 1)
+	taskSvc.SetEventHandler(func(*agenttask.Task, *agenttask.Event) {
+		taskHandlerCalled <- struct{}{}
+	})
+	orch.SetTaskService(taskSvc)
 	client := &ws.Client{SessionID: session.ID, Send: make(chan []byte, 16)}
 	orch.wsHub.Register(client)
 
@@ -236,14 +248,23 @@ func TestVoicePipelineBroadcastsPersonaTaskEvent(t *testing.T) {
 	<-inf.started
 
 	inf.outputs <- &pb.VoiceLLMOutput{
-		TaskEventJson: `{"task_id":"task-1","seq":1,"event_type":"task.queued","status":"queued","message":"任务已加入队列。","progress":0,"task":{"id":"task-1","session_id":"session-recording","title":"知乎热榜","status":"queued","progress":0}}`,
+		TaskEventJson: `{"task_id":"task-1","seq":1,"event_type":"task.queued","status":"queued","message":"任务已加入队列。","progress":0,"task":{"id":"task-1","session_id":"session-recording","title":"知乎热榜","user_request":"知乎热榜","status":"queued","progress":0}}`,
+	}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		TaskEventJson: `{"task_id":"task-1","seq":2,"event_type":"task.started","status":"running","message":"后台任务已启动。","progress":5,"task":{"id":"task-1","session_id":"session-recording","title":"知乎热榜","user_request":"知乎热榜","status":"running","progress":5}}`,
+	}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		TaskEventJson: `{"task_id":"task-1","seq":3,"event_type":"artifact.created","status":"running","message":"已生成一份资料：知乎热榜","progress":90,"task":{"id":"task-1","session_id":"session-recording","title":"知乎热榜","user_request":"知乎热榜","status":"running","progress":90},"payload":{"artifact_id":"artifact-1","title":"知乎热榜","type":"html","mime_type":"text/html; charset=utf-8","content":"<!doctype html><html><body>ok</body></html>"}}`,
+	}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		TaskEventJson: `{"task_id":"task-1","seq":4,"event_type":"task.completed","status":"completed","message":"资料已生成。","progress":100,"task":{"id":"task-1","session_id":"session-recording","title":"知乎热榜","user_request":"知乎热榜","status":"completed","progress":100},"payload":{"artifact_id":"artifact-1"}}`,
 	}
 	close(inf.outputs)
 	close(inf.errs)
 
-	var taskEvent map[string]any
+	var taskEvents []map[string]any
 	deadline := time.After(2 * time.Second)
-	for taskEvent == nil {
+	for len(taskEvents) < 4 {
 		select {
 		case data := <-client.Send:
 			var msg map[string]any
@@ -251,18 +272,50 @@ func TestVoicePipelineBroadcastsPersonaTaskEvent(t *testing.T) {
 				t.Fatalf("unmarshal websocket message: %v", err)
 			}
 			if msg["type"] == "task_event" {
-				taskEvent = msg
+				taskEvents = append(taskEvents, msg)
 			}
 		case <-deadline:
 			t.Fatal("timed out waiting for task_event websocket message")
 		}
 	}
 
-	if taskEvent["session_id"] != session.ID {
-		t.Fatalf("unexpected session_id: %+v", taskEvent)
+	completed := taskEvents[len(taskEvents)-1]
+	if completed["session_id"] != session.ID {
+		t.Fatalf("unexpected session_id: %+v", completed)
 	}
-	if taskEvent["task_id"] != "task-1" || taskEvent["event_type"] != "task.queued" {
-		t.Fatalf("unexpected task event payload: %+v", taskEvent)
+	if completed["task_id"] != "task-1" || completed["event_type"] != "task.completed" {
+		t.Fatalf("unexpected task event payload: %+v", completed)
+	}
+	artifactPayload, ok := taskEvents[2]["payload"].(map[string]any)
+	if !ok || artifactPayload["content"] != nil || artifactPayload["artifact_id"] != "artifact-1" {
+		t.Fatalf("artifact event should broadcast persisted artifact metadata without content: %+v", taskEvents[2])
+	}
+
+	tasks, err := taskStore.ListSessionTasks(context.Background(), session.ID, 10)
+	if err != nil {
+		t.Fatalf("ListSessionTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "task-1" || tasks[0].Status != agenttask.StatusCompleted {
+		t.Fatalf("unexpected persisted task: %+v", tasks)
+	}
+	events, err := taskStore.ListEventsAfter(context.Background(), "task-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListEventsAfter: %v", err)
+	}
+	if len(events) != 4 || events[0].Seq != 1 || events[3].EventType != "task.completed" {
+		t.Fatalf("unexpected persisted events: %+v", events)
+	}
+	artifact, content, err := taskStore.GetArtifact(context.Background(), "task-1", "artifact-1")
+	if err != nil {
+		t.Fatalf("GetArtifact: %v", err)
+	}
+	if artifact.MimeType != "text/html; charset=utf-8" || string(content) != "<!doctype html><html><body>ok</body></html>" {
+		t.Fatalf("unexpected persisted artifact: artifact=%+v content=%q", artifact, content)
+	}
+	select {
+	case <-taskHandlerCalled:
+		t.Fatal("persona task projection should not invoke task service event handler")
+	default:
 	}
 
 	session.WaitPipelineDone(2 * time.Second)

@@ -66,6 +66,7 @@ func (s *Service) CreateArtifact(ctx context.Context, taskID string, in CreateAr
 		"artifact_id": artifact.ID,
 		"title":       artifact.Title,
 		"type":        artifact.Type,
+		"mime_type":   artifact.MimeType,
 	})
 	_, _, _ = s.AppendEvent(ctx, taskID, AppendEventInput{
 		EventType: "artifact.created",
