@@ -77,7 +77,6 @@ type PipelineConfig struct {
 
 type RAGConfig struct {
 	Enabled         *bool   `yaml:"enabled,omitempty"`
-	MaxFileBytes    int64   `yaml:"max_file_bytes,omitempty"`
 	TopK            int     `yaml:"top_k,omitempty"`
 	MinScore        float32 `yaml:"min_score,omitempty"`
 	MaxContextChars int     `yaml:"max_context_chars,omitempty"`
@@ -171,9 +170,6 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Pipeline.VisualInput.FrameTTLMS == 0 {
 		cfg.Pipeline.VisualInput.FrameTTLMS = 10000
-	}
-	if cfg.Pipeline.RAG.MaxFileBytes == 0 {
-		cfg.Pipeline.RAG.MaxFileBytes = 20 * 1024 * 1024
 	}
 	if cfg.Pipeline.RAG.TopK == 0 {
 		cfg.Pipeline.RAG.TopK = 5

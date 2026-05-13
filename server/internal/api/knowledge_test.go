@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,11 @@ func waitForKnowledgeSourceStatus(t *testing.T, r *Router, characterID, sourceID
 
 func addMultipartFile(t *testing.T, writer *multipart.Writer, fieldName, relativePath, content string) {
 	t.Helper()
+	addMultipartBytes(t, writer, fieldName, relativePath, []byte(content))
+}
+
+func addMultipartBytes(t *testing.T, writer *multipart.Writer, fieldName, relativePath string, content []byte) {
+	t.Helper()
 	filename := relativePath
 	if idx := strings.LastIndex(relativePath, "/"); idx >= 0 {
 		filename = relativePath[idx+1:]
@@ -62,7 +68,7 @@ func addMultipartFile(t *testing.T, writer *multipart.Writer, fieldName, relativ
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write([]byte(content)); err != nil {
+	if _, err := part.Write(content); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.WriteField("relative_paths", relativePath); err != nil {
@@ -175,6 +181,69 @@ func TestKnowledgeFolderUploadPreservesStructureAndIndexesOnlyIndexable(t *testi
 	case extra := <-inf.ragIndexRequests:
 		t.Fatalf("expected image to skip RAG indexing, got %+v", extra)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestKnowledgeUploadDoesNotEnforceOldFileSizeLimit(t *testing.T) {
+	r := newTestRouter()
+	char := createKnowledgeTestCharacter(t, r)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	content := bytes.Repeat([]byte("x"), 21*1024*1024)
+	addMultipartBytes(t, writer, "files", "large/blob.bin", content)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/characters/"+char.ID+"/knowledge/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeKnowledgeUploadResponse(t, w)
+	if len(resp.Sources) != 1 || resp.Sources[0].Status != ragstore.SourceStatusReady || resp.Sources[0].Indexable {
+		t.Fatalf("expected one stored-only ready source, got %+v", resp.Sources)
+	}
+	path, err := r.ragStore.SourcePath(char.ID, &resp.Sources[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != int64(len(content)) {
+		t.Fatalf("expected saved file size %d, got %d", len(content), info.Size())
+	}
+}
+
+func TestKnowledgeUploadDoesNotUseParseMultipartFormPartLimit(t *testing.T) {
+	r := newTestRouter()
+	char := createKnowledgeTestCharacter(t, r)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	const fileCount = 505
+	for i := 0; i < fileCount; i++ {
+		addMultipartFile(t, writer, "files", fmt.Sprintf("folder/file-%03d.bin", i), "x")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/characters/"+char.ID+"/knowledge/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeKnowledgeUploadResponse(t, w)
+	if len(resp.Sources) != fileCount || len(resp.Skipped) != 0 {
+		t.Fatalf("expected %d uploaded sources without skipped files, got sources=%d skipped=%+v", fileCount, len(resp.Sources), resp.Skipped)
 	}
 }
 

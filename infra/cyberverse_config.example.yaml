@@ -187,7 +187,6 @@ pipeline:
     streaming_mode: "direct" # "direct" = P2P WebRTC, "livekit" = LiveKit SFU.
     rag:
         enabled: true
-        max_file_bytes: 20971520
         top_k: 5
         min_score: 0.25
         max_context_chars: 4500

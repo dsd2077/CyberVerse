@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -28,16 +29,10 @@ type uploadKnowledgeFilesResponse struct {
 	Skipped []skippedKnowledgeFile `json:"skipped,omitempty"`
 }
 
-func (r *Router) ragMaxFileBytes() int64 {
-	if r == nil || r.cfg == nil || r.cfg.Pipeline.RAG.MaxFileBytes <= 0 {
-		return 20 * 1024 * 1024
-	}
-	return r.cfg.Pipeline.RAG.MaxFileBytes
-}
-
-func (r *Router) ragMaxRequestBytes() int64 {
-	maxFileBytes := r.ragMaxFileBytes()
-	return maxFileBytes*100 + 1024*1024
+type uploadedKnowledgeFile struct {
+	Filename string
+	MimeType string
+	TempPath string
 }
 
 func (r *Router) handleListKnowledgeSources(w http.ResponseWriter, req *http.Request) {
@@ -58,45 +53,43 @@ func (r *Router) handleUploadKnowledgeFiles(w http.ResponseWriter, req *http.Req
 		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "knowledge store is disabled"})
 		return
 	}
-	req.Body = http.MaxBytesReader(w, req.Body, r.ragMaxRequestBytes())
-	if err := req.ParseMultipartForm(32 * 1024 * 1024); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "file too large"})
+	reader, err := req.MultipartReader()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid multipart form: " + err.Error()})
 		return
 	}
 
 	characterID := req.PathValue("id")
-	headers := append([]*multipart.FileHeader{}, req.MultipartForm.File["file"]...)
-	headers = append(headers, req.MultipartForm.File["files"]...)
-	if len(headers) == 0 {
+	files, relativePaths, skipped, err := readKnowledgeMultipart(reader)
+	defer cleanupUploadedKnowledgeFiles(files)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid multipart form: " + err.Error()})
+		return
+	}
+	if len(files) == 0 {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "file is required"})
 		return
 	}
 
-	sources := make([]ragstore.Source, 0, len(headers))
-	skipped := make([]skippedKnowledgeFile, 0)
-	relativePaths := req.MultipartForm.Value["relative_paths"]
-	for i, header := range headers {
-		if header.Size > r.ragMaxFileBytes() {
-			skipped = append(skipped, skippedKnowledgeFile{Filename: header.Filename, Reason: "file too large"})
-			continue
-		}
-		file, err := header.Open()
+	sources := make([]ragstore.Source, 0, len(files))
+	for i, upload := range files {
+		file, err := os.Open(upload.TempPath)
 		if err != nil {
-			skipped = append(skipped, skippedKnowledgeFile{Filename: header.Filename, Reason: err.Error()})
+			skipped = append(skipped, skippedKnowledgeFile{Filename: upload.Filename, Reason: err.Error()})
 			continue
 		}
-		relativePath := header.Filename
+		relativePath := upload.Filename
 		if i < len(relativePaths) && strings.TrimSpace(relativePaths[i]) != "" {
 			relativePath = relativePaths[i]
 		}
-		result, createErr := r.ragStore.SaveFile(characterID, relativePath, header.Header.Get("Content-Type"), file)
+		result, createErr := r.ragStore.SaveFile(characterID, relativePath, upload.MimeType, file)
 		closeErr := file.Close()
 		if createErr != nil {
-			skipped = append(skipped, skippedKnowledgeFile{Filename: header.Filename, Reason: createErr.Error()})
+			skipped = append(skipped, skippedKnowledgeFile{Filename: upload.Filename, Reason: createErr.Error()})
 			continue
 		}
 		if closeErr != nil {
-			skipped = append(skipped, skippedKnowledgeFile{Filename: header.Filename, Reason: closeErr.Error()})
+			skipped = append(skipped, skippedKnowledgeFile{Filename: upload.Filename, Reason: closeErr.Error()})
 			continue
 		}
 		if result.Source.Indexable {
@@ -122,6 +115,76 @@ func (r *Router) handleUploadKnowledgeFiles(w http.ResponseWriter, req *http.Req
 		return
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func readKnowledgeMultipart(reader *multipart.Reader) ([]uploadedKnowledgeFile, []string, []skippedKnowledgeFile, error) {
+	files := make([]uploadedKnowledgeFile, 0)
+	relativePaths := make([]string, 0)
+	skipped := make([]skippedKnowledgeFile, 0)
+
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return files, relativePaths, skipped, err
+		}
+
+		switch part.FormName() {
+		case "file", "files":
+			filename := part.FileName()
+			if strings.TrimSpace(filename) == "" {
+				skipped = append(skipped, skippedKnowledgeFile{Filename: "", Reason: "filename is required"})
+				_ = part.Close()
+				continue
+			}
+			tmp, err := os.CreateTemp("", "cyberverse-knowledge-upload-*")
+			if err != nil {
+				_ = part.Close()
+				return files, relativePaths, skipped, err
+			}
+			tempPath := tmp.Name()
+			_, copyErr := io.Copy(tmp, part)
+			closeErr := tmp.Close()
+			_ = part.Close()
+			if copyErr != nil {
+				_ = os.Remove(tempPath)
+				skipped = append(skipped, skippedKnowledgeFile{Filename: filename, Reason: copyErr.Error()})
+				continue
+			}
+			if closeErr != nil {
+				_ = os.Remove(tempPath)
+				skipped = append(skipped, skippedKnowledgeFile{Filename: filename, Reason: closeErr.Error()})
+				continue
+			}
+			files = append(files, uploadedKnowledgeFile{
+				Filename: filename,
+				MimeType: part.Header.Get("Content-Type"),
+				TempPath: tempPath,
+			})
+		case "relative_paths":
+			data, err := io.ReadAll(io.LimitReader(part, 64*1024))
+			_ = part.Close()
+			if err != nil {
+				return files, relativePaths, skipped, err
+			}
+			relativePaths = append(relativePaths, strings.TrimSpace(string(data)))
+		default:
+			_, _ = io.Copy(io.Discard, part)
+			_ = part.Close()
+		}
+	}
+
+	return files, relativePaths, skipped, nil
+}
+
+func cleanupUploadedKnowledgeFiles(files []uploadedKnowledgeFile) {
+	for _, file := range files {
+		if file.TempPath != "" {
+			_ = os.Remove(file.TempPath)
+		}
+	}
 }
 
 func (r *Router) handleDeleteKnowledgeSource(w http.ResponseWriter, req *http.Request) {
