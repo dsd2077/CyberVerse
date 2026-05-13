@@ -367,6 +367,7 @@ async def test_persona_agent_passthrough_chat(tmp_path):
     assert outputs[1].audio is not None
     assert plugin.model_plugin.last_session_config.tools[0].name == "wait_for_more_input"
     assert plugin.model_plugin.last_session_config.tools[1].name == "create_task"
+    assert plugin.model_plugin.last_session_config.defer_response is True
     assert "PersonaAgent" in plugin.model_plugin.last_session_config.system_prompt
     assert "JSON" not in PERSONA_AGENT_INSTRUCTIONS
     assert plugin.task_runtime.calls == []

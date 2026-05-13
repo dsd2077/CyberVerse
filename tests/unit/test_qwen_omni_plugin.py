@@ -295,6 +295,43 @@ async def test_send_inputs_sends_text_message_and_response_create():
 
 
 @pytest.mark.asyncio
+async def test_send_inputs_sends_response_instructions_create():
+    plugin = QwenOmniRealtimePlugin()
+    ws = FakeQwenWS([])
+
+    async def inputs():
+        yield VoiceLLMInputEvent(response_instructions="依据角色素材回答。")
+
+    await plugin._send_inputs(ws, inputs(), "session-1", asyncio.Queue())
+
+    assert [event["type"] for event in ws.sent] == ["response.create"]
+    assert ws.sent[0]["response"] == {
+        "modalities": ["text", "audio"],
+        "instructions": "依据角色素材回答。",
+    }
+
+
+@pytest.mark.asyncio
+async def test_deferred_response_speech_start_keeps_response_coordinator_idle():
+    plugin = QwenOmniRealtimePlugin()
+    ws = FakeQwenWS([{"type": "input_audio_buffer.speech_started"}])
+    output_queue = asyncio.Queue()
+    coordinator = _QwenResponseCoordinator()
+
+    await plugin._receive_events(
+        ws,
+        "session-1",
+        output_queue,
+        coordinator,
+        defer_response=True,
+    )
+
+    first = await output_queue.get()
+    assert first.barge_in is True
+    assert await asyncio.wait_for(coordinator.wait_idle(), timeout=0.1)
+
+
+@pytest.mark.asyncio
 async def test_send_inputs_defers_text_response_until_active_response_done():
     plugin = QwenOmniRealtimePlugin()
     ws = FakeQwenWS([])
@@ -360,6 +397,14 @@ def test_session_payload_includes_hidden_tools():
     assert create_task_tool["function"]["parameters"]["required"] == ["description"]
     assert set(create_task_tool["function"]["parameters"]["properties"]) == {"description"}
     assert create_task_tool["function"]["parameters"]["properties"]["description"]["type"] == "string"
+
+
+def test_session_payload_can_defer_automatic_response():
+    plugin = QwenOmniRealtimePlugin()
+
+    payload = plugin._session_payload(VoiceLLMSessionConfig(defer_response=True))
+
+    assert payload["turn_detection"]["create_response"] is False
 
 
 def test_session_payload_keeps_search_when_tools_absent():

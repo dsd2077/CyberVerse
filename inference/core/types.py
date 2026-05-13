@@ -112,6 +112,7 @@ class VoiceLLMInputEvent:
     text: str = ""
     image: ImageFrame | None = None
     tool_result: ToolResult | None = None
+    response_instructions: str | None = None
 
 
 @dataclass
@@ -136,6 +137,7 @@ class VoiceLLMSessionConfig:
     input_mode: str = ""
     dialog_context: list[VoiceLLMDialogContextItem] = field(default_factory=list)
     tools: list[ToolDefinition] = field(default_factory=list)
+    defer_response: bool = False
 
 
 @dataclass

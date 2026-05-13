@@ -1,6 +1,14 @@
 import numpy as np
 
-from inference.core.types import AudioChunk, VideoChunk, TranscriptEvent, LLMResponseChunk, PluginConfig
+from inference.core.types import (
+    AudioChunk,
+    LLMResponseChunk,
+    PluginConfig,
+    TranscriptEvent,
+    VideoChunk,
+    VoiceLLMInputEvent,
+    VoiceLLMSessionConfig,
+)
 
 
 def test_audio_chunk_defaults():
@@ -50,3 +58,13 @@ def test_plugin_config_shared():
         shared={"warmup": {"enabled": True}},
     )
     assert config.shared["warmup"]["enabled"] is True
+
+
+def test_voice_llm_input_response_instructions_default():
+    event = VoiceLLMInputEvent()
+    assert event.response_instructions is None
+
+
+def test_voice_llm_session_can_defer_response():
+    config = VoiceLLMSessionConfig(defer_response=True)
+    assert config.defer_response is True

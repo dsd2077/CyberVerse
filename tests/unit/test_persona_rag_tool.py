@@ -63,3 +63,23 @@ async def test_persona_rag_tool_searches_with_character_context():
     assert "source_type" not in result.result["results"][0]
     assert plugin.rag_engine.requests[0].character_id == "c1"
     assert plugin.rag_engine.requests[0].character_dir == "/tmp/character"
+
+
+@pytest.mark.asyncio
+async def test_persona_rag_pre_response_returns_instructions_for_hits():
+    plugin = PersonaAgentPlugin()
+    plugin.rag_engine = FakeRAGEngine()
+
+    instructions = await plugin._rag_response_instructions(
+        "看山呀，你为什么姓刘？",
+        VoiceLLMSessionConfig(
+            session_id="s1",
+            character_id="c1",
+            character_dir="/tmp/character",
+            bot_name="刘看山",
+        ),
+    )
+
+    assert "【角色素材检索结果】" in instructions
+    assert "晴天出生在海边。" in instructions
+    assert plugin.rag_engine.requests[0].query == "看山呀，你为什么姓刘？"

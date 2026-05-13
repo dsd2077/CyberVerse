@@ -243,6 +243,51 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             }
         )
 
+    @staticmethod
+    def _format_rag_response_instructions(query: str, results: list[dict[str, Any]]) -> str:
+        lines = [
+            "请回答用户刚才的问题。下列内容来自当前角色素材库；如果与问题相关，必须优先依据这些素材回答；如果无关，请忽略它们。",
+            f"用户问题：{query}",
+            "【角色素材检索结果】",
+        ]
+        for idx, item in enumerate(results, 1):
+            title = str(item.get("title") or item.get("filename") or f"素材{idx}").strip()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            lines.append(f"[{idx}] {title}\n{content}")
+        lines.append("不要提到内部检索过程。不要编造素材中没有的事实。")
+        return "\n\n".join(lines)
+
+    async def _rag_response_instructions(
+        self,
+        text: str,
+        session_config: VoiceLLMSessionConfig,
+    ) -> str:
+        result = await self._retrieve_character_knowledge(
+            ToolCall(
+                id="persona_rag_pre_response",
+                name="retrieve_character_knowledge",
+                arguments={"query": text},
+            ),
+            session_config,
+        )
+        results = result.result.get("results")
+        if not isinstance(results, list) or not results:
+            logger.info(
+                "persona RAG pre-response no results session=%s query=%s",
+                session_config.session_id or "",
+                self._clip_text(text),
+            )
+            return ""
+        logger.info(
+            "persona RAG pre-response hit session=%s query=%s results=%d",
+            session_config.session_id or "",
+            self._clip_text(text),
+            len(results),
+        )
+        return self._format_rag_response_instructions(text, results)
+
     async def _execute_tool(
         self,
         call: ToolCall,
@@ -465,6 +510,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             session_config,
             system_prompt=self._persona_system_prompt(session_config),
             tools=PERSONA_TOOL_DEFINITIONS,
+            defer_response=True,
         )
         injected: asyncio.Queue[VoiceLLMInputEvent] = asyncio.Queue()
         pending_partials: list[str] = []
@@ -522,12 +568,19 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
 
                 self._log_model_event(session_config.session_id, event)
                 if event.user_transcript:
-                    turn_transcripts.append(event.user_transcript)
+                    user_text = event.user_transcript
+                    turn_transcripts.append(user_text)
                     yield VoiceLLMOutputEvent(
-                        user_transcript=event.user_transcript,
+                        user_transcript=user_text,
                         question_id=event.question_id,
                         reply_id=event.reply_id,
                     )
+                    try:
+                        response_instructions = await self._rag_response_instructions(user_text, session_config)
+                    except Exception:
+                        logger.exception("persona RAG pre-response failed")
+                        response_instructions = ""
+                    await injected.put(VoiceLLMInputEvent(response_instructions=response_instructions))
                     event = replace(event, user_transcript="")
                     if not event.tool_calls and not event.barge_in and not self._has_assistant_output(event):
                         model_event_task = asyncio.create_task(model_events.__anext__())
