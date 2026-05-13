@@ -342,11 +342,12 @@ async function handleDisconnect() {
   visualInput.stop(undefined, true)
   webrtcDisconnect()
   chatDisconnect()
+  const returnPath = launchState.value?.return_path || '/characters'
   if (sessionId.value) {
     await deleteSession(sessionId.value).catch(() => {})
     clearSessionLaunchState(sessionId.value)
   }
-  router.push('/characters')
+  router.push(returnPath)
 }
 
 function handleLoadMore() {

@@ -7,7 +7,8 @@ import { buildSessionLaunchState, saveSessionLaunchState } from '../utils/sessio
 
 const router = useRouter()
 
-const KANSHAN_CHARACTER_ID = '刘看山_b3bf8345'
+const KANSHAN_CHARACTER_ID = 'b3bf8345-21c9-463a-bf0c-dac7a034476c'
+const KANSHAN_RETURN_PATH = '/kanshan'
 const GITHUB_URL = 'https://github.com/dsd2077/CyberVerse'
 const DEMO_VIDEO_URL = ''
 const idleVideoSrc = '/liukanshan/idle-preview.mp4'
@@ -63,7 +64,7 @@ async function enterKanshanVoiceCall() {
     response.warnings?.forEach((warning) => {
       console.warn('[CyberVerse]', warning)
     })
-    saveSessionLaunchState(buildSessionLaunchState(response, KANSHAN_CHARACTER_ID, launchMode))
+    saveSessionLaunchState(buildSessionLaunchState(response, KANSHAN_CHARACTER_ID, launchMode, KANSHAN_RETURN_PATH))
     router.push(`/session/${response.session_id}`)
   } catch (error) {
     launchError.value = error instanceof Error ? error.message : '语音通话启动失败，请检查服务状态。'

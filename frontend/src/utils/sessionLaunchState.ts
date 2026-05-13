@@ -8,6 +8,7 @@ export interface SessionLaunchState {
   character_id: string
   mode: PipelineMode
   streaming_mode: string
+  return_path?: string
   avatar_enabled?: boolean
   livekit_url?: string
   livekit_token?: string
@@ -50,16 +51,26 @@ function normalizeMode(mode: string, fallback: PipelineMode): PipelineMode {
   return mode === 'omni' || mode === 'standard' ? mode : fallback
 }
 
+function normalizeReturnPath(path: string): string | undefined {
+  const trimmed = path.trim()
+  if (!trimmed || !trimmed.startsWith('/') || trimmed.startsWith('//')) {
+    return undefined
+  }
+  return trimmed
+}
+
 export function buildSessionLaunchState(
   response: CreateSessionResponse,
   characterId: string,
   fallbackMode: PipelineMode,
+  returnPath?: string,
 ): SessionLaunchState {
   return {
     session_id: response.session_id,
     character_id: characterId,
     mode: normalizeMode(response.mode, fallbackMode),
     streaming_mode: response.streaming_mode || 'direct',
+    return_path: returnPath ? normalizeReturnPath(returnPath) : undefined,
     avatar_enabled: response.avatar_enabled,
     livekit_url: response.livekit_url,
     livekit_token: response.livekit_token,
@@ -89,6 +100,7 @@ export function loadSessionLaunchState(sessionId: string): SessionLaunchState | 
     character_id: parsed.character_id || '',
     mode: normalizeMode(parsed.mode || '', 'standard'),
     streaming_mode: parsed.streaming_mode || 'direct',
+    return_path: normalizeReturnPath(parsed.return_path || ''),
     avatar_enabled: parsed.avatar_enabled,
     livekit_url: parsed.livekit_url,
     livekit_token: parsed.livekit_token,
@@ -117,8 +129,9 @@ export function sessionLaunchStateFromQuery(
   const idleVideoUrl = firstQueryValue(query.idle_video_url)
   const idleVideoUrls = parseJSON<string[]>(firstQueryValue(query.idle_video_urls))
   const visualInput = parseJSON<SessionVisualInputConfig>(firstQueryValue(query.visual_input))
+  const returnPath = normalizeReturnPath(firstQueryValue(query.return_path))
 
-  if (!streamingMode && !mode && !avatarEnabled && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !visualInput) {
+  if (!streamingMode && !mode && !avatarEnabled && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !visualInput && !returnPath) {
     return null
   }
 
@@ -127,6 +140,7 @@ export function sessionLaunchStateFromQuery(
     character_id: characterId,
     mode: normalizeMode(mode, 'standard'),
     streaming_mode: streamingMode || 'direct',
+    return_path: returnPath,
     avatar_enabled: avatarEnabled ? avatarEnabled === 'true' : undefined,
     livekit_url: livekitUrl || undefined,
     livekit_token: livekitToken || undefined,
