@@ -182,7 +182,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		if err == orchestrator.ErrMaxSessions {
-			status = http.StatusServiceUnavailable
+			status = http.StatusTooManyRequests
 		}
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
 		return
@@ -306,10 +306,25 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
-	if _, err := r.sessionMgr.Get(id); err != nil {
+	r.closeSession(w, req.PathValue("id"))
+}
+
+func (r *Router) handleCloseSession(w http.ResponseWriter, req *http.Request) {
+	r.closeSession(w, req.PathValue("id"))
+}
+
+func (r *Router) closeSession(w http.ResponseWriter, id string) {
+	if err := r.teardownSession(id); err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (r *Router) teardownSession(id string) error {
+	if _, err := r.sessionMgr.Get(id); err != nil {
+		return err
 	}
 
 	// Teardown orchestrator resources
@@ -320,7 +335,7 @@ func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
 	}
 
 	r.sessionMgr.Delete(id)
-	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (r *Router) handleSendMessage(w http.ResponseWriter, req *http.Request) {
@@ -381,7 +396,7 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		maxMessageSize = visualCfg.WSMaxMessageBytes
 	}
 
-	handler := ws.HandleWebSocketWithReadLimit(
+	handler := ws.HandleWebSocketWithReadLimitAndDisconnect(
 		r.wsHub,
 		id,
 		maxMessageSize,
@@ -431,6 +446,12 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		},
 		func(sessionID string) {
 			_ = r.sessionMgr.Touch(sessionID)
+		},
+		func(sessionID string) {
+			go func() {
+				log.Printf("WebSocket disconnected for session %s; cleaning up session", sessionID)
+				_ = r.teardownSession(sessionID)
+			}()
 		},
 	)
 	handler(w, req)

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ChatTaskArtifact, ChatTaskTimelineItem, ChatTaskState, TaskStatus } from '../composables/useChat'
 
 const props = defineProps<{
   task: ChatTaskState
 }>()
 
+const { t } = useI18n()
 const expanded = ref(false)
 
 const progressStyle = computed(() => ({
@@ -14,19 +16,19 @@ const progressStyle = computed(() => ({
 
 const statusLabel = computed(() => {
   const labels: Record<TaskStatus, string> = {
-    queued: '排队中',
-    running: '运行中',
-    waiting_user: '等待中',
-    completed: '完成',
-    failed: '失败',
-    cancelled: '已取消',
+    queued: t('task.status.queued'),
+    running: t('task.status.running'),
+    waiting_user: t('task.status.waitingUser'),
+    completed: t('task.status.completed'),
+    failed: t('task.status.failed'),
+    cancelled: t('task.status.cancelled'),
   }
-  return labels[props.task.status] || '运行中'
+  return labels[props.task.status] || t('task.status.running')
 })
 
 const taskMeta = computed(() => {
   const shortId = props.task.id.length > 14 ? `${props.task.id.slice(0, 8)}...` : props.task.id
-  return `task_id: ${shortId} · ${props.task.eventCount} 个事件`
+  return t('task.meta', { id: shortId, count: props.task.eventCount })
 })
 
 function toggleExpanded() {
@@ -47,7 +49,7 @@ function artifactTypeLabel(artifact: ChatTaskArtifact): string {
 }
 
 function artifactHint(artifact: ChatTaskArtifact): string {
-  return artifactTypeLabel(artifact) === 'HTML' ? '可预览页面' : '可打开资料'
+  return artifactTypeLabel(artifact) === 'HTML' ? t('task.artifactPreviewHint') : t('task.artifactOpenHint')
 }
 
 function isDoneEvent(event: ChatTaskTimelineItem): boolean {
@@ -89,7 +91,7 @@ function isDoneEvent(event: ChatTaskTimelineItem): boolean {
       <div class="current-step">{{ task.currentStep }}</div>
 
       <div v-if="expanded" class="task-timeline">
-        <div class="timeline-title">执行过程</div>
+        <div class="timeline-title">{{ t('task.timelineTitle') }}</div>
         <div v-if="task.events.length" class="timeline-list">
           <div
             v-for="event in task.events"
@@ -104,7 +106,7 @@ function isDoneEvent(event: ChatTaskTimelineItem): boolean {
             </div>
           </div>
         </div>
-        <div v-else class="timeline-empty">等待任务事件...</div>
+        <div v-else class="timeline-empty">{{ t('task.timelineEmpty') }}</div>
       </div>
     </article>
 
@@ -114,7 +116,7 @@ function isDoneEvent(event: ChatTaskTimelineItem): boolean {
       class="artifact-card"
     >
       <div class="artifact-main">
-        <div class="artifact-label">产物</div>
+        <div class="artifact-label">{{ t('task.artifactLabel') }}</div>
         <div class="artifact-title">{{ artifact.title }}</div>
         <div class="artifact-meta">
           <span class="artifact-type">{{ artifactTypeLabel(artifact) }}</span>
@@ -122,8 +124,8 @@ function isDoneEvent(event: ChatTaskTimelineItem): boolean {
         </div>
       </div>
       <div class="artifact-actions">
-        <a class="artifact-btn secondary" :href="artifact.url" target="_blank" rel="noreferrer">预览</a>
-        <a class="artifact-btn primary" :href="artifact.url" target="_blank" rel="noreferrer">打开</a>
+        <a class="artifact-btn secondary" :href="artifact.url" target="_blank" rel="noreferrer">{{ t('task.preview') }}</a>
+        <a class="artifact-btn primary" :href="artifact.url" target="_blank" rel="noreferrer">{{ t('task.open') }}</a>
       </div>
     </article>
   </div>

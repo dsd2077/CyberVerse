@@ -33,6 +33,7 @@ const clockMs = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 const showDiag = ref(false)
 const isChatCollapsed = ref(false)
+const connectionError = ref('')
 
 const queryLaunchState = sessionLaunchStateFromQuery(sessionId.value, route.query as Record<string, unknown>)
 if (queryLaunchState) {
@@ -301,7 +302,13 @@ onMounted(async () => {
 
   const startedAt = Date.now()
 
-  await chatConnect()
+  try {
+    await chatConnect()
+  } catch (err) {
+    connectionError.value = t('session.connectionFailed')
+    console.error('[SessionPage] Chat connection failed:', err)
+    return
+  }
 
   // Load conversation history for this character
   if (characterId.value) {
@@ -311,16 +318,28 @@ onMounted(async () => {
   if (isDirectMode) {
     // Direct P2P WebRTC: register signaling handler then connect
     registerSignalingHandler((data: any) => dp.handleSignaling(data))
-    await dp.connect(
-      (msg: any) => sendSignaling(msg),
-      { dedicatedAudioOutput: launchState.value?.avatar_enabled === false },
-    )
+    try {
+      await dp.connect(
+        (msg: any) => sendSignaling(msg),
+        { dedicatedAudioOutput: launchState.value?.avatar_enabled === false },
+      )
+    } catch (err) {
+      connectionError.value = t('session.connectionFailed')
+      console.error('[SessionPage] Direct media connection failed:', err)
+      return
+    }
   } else {
     // LiveKit mode
     const url = launchState.value?.livekit_url || ''
     const token = launchState.value?.livekit_token || ''
     if (url && token) {
-      await lk.connect(url, token)
+      try {
+        await lk.connect(url, token)
+      } catch (err) {
+        connectionError.value = t('session.connectionFailed')
+        console.error('[SessionPage] LiveKit connection failed:', err)
+        return
+      }
     }
   }
 
@@ -375,6 +394,11 @@ function formatTime(s: number): string {
   <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed }">
     <!-- Left: Video area (60%) -->
     <div ref="sessionVideoShellRef" class="session-video-shell">
+      <div v-if="connectionError"
+           class="absolute top-20 left-1/2 z-20 -translate-x-1/2 rounded-cv-md border border-red-400/40 bg-red-950/80 px-4 py-2 text-sm text-red-100 shadow-lg">
+        {{ connectionError }}
+      </div>
+
       <VideoPlayer
         ref="videoPlayerRef"
         :display-mode="displayMode"

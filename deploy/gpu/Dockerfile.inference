@@ -1,0 +1,52 @@
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace:/workspace/inference/generated
+
+RUN set -eux; \
+    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4; \
+    rm -f /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/nvidia*.list; \
+    sed -i \
+        -e 's|http://archive.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g' \
+        -e 's|http://security.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g' \
+        /etc/apt/sources.list; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    ffmpeg \
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY pyproject.toml README.md ./
+COPY proto/ ./proto/
+COPY inference/ ./inference/
+COPY agent_runtime/ ./agent_runtime/
+COPY models/flash_head/ ./models/flash_head/
+
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install -e ".[inference,agent,qwen,omni,tts,flash_head]" \
+    && mkdir -p inference/generated \
+    && python -m grpc_tools.protoc \
+        -I proto/ \
+        --python_out=inference/generated \
+        --grpc_python_out=inference/generated \
+        proto/*.proto
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=20 --start-period=600s \
+    CMD python -c "import grpc; ch = grpc.insecure_channel('127.0.0.1:50051'); grpc.channel_ready_future(ch).result(timeout=3)" || exit 1
+
+EXPOSE 50051
+
+CMD ["python", "-m", "inference.server", "--config", "/workspace/deploy/gpu/cyberverse_config.gpu.yaml"]

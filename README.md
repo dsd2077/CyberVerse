@@ -112,6 +112,45 @@ git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
+### Optional: Pixi reproducible development environments
+
+CyberVerse provides two Pixi environments for reproducible Python / Go / frontend development checks:
+
+- `macos-arm`: macOS on Apple Silicon (`osx-arm64`)
+- `linux-x86`: Linux on x86_64 (`linux-64`)
+
+Install Pixi if needed:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+On macOS Apple Silicon:
+
+```bash
+pixi install -e macos-arm
+pixi run -e macos-arm python-test
+pixi run -e macos-arm go-test
+```
+
+After copying `infra/cyberverse_config.example.yaml` to `cyberverse_config.yaml` and configuring `.env`, you can start the local Mac-side services in one foreground process:
+
+```bash
+pixi run -e macos-arm dev
+```
+
+`Ctrl+C` stops the inference process, Go server, and frontend dev server. For weak Mac hardware, keep GPU/avatar inference on the remote Ubuntu deployment and point the local config or frontend environment at that remote API.
+
+On Linux x86_64:
+
+```bash
+pixi install -e linux-x86
+pixi run -e linux-x86 python-test
+pixi run -e linux-x86 go-test
+```
+
+The Pixi environments cover development and test dependencies such as Python 3.10, Go 1.25, Node 22, FFmpeg, `soxr`, `libopus`, and `opusfile`. GPU avatar inference still requires the CUDA / PyTorch and model-weight setup below.
+
 ### Step 2: Create Python environment
 
 ```bash
@@ -141,9 +180,18 @@ Edit `.env`, fill in your API keys:
 ```
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao omni model
 DOUBAO_APP_ID=your_doubao_app_id
+HINDSIGHT_API_KEY=your_hindsight_api_key       # Optional PersonaAgent long-term memory
+HINDSIGHT_BASE_URL=https://hindsight.jmsu.top
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=local-user                   # Stable cross-session memory namespace
+HINDSIGHT_USER_TAG=local-user                  # Legacy/common recall tag
 ```
 
 Doubao Voice: get **App ID** / **API Key** per [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) → `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
+
+PersonaAgent can use Hindsight for cross-session memory when `HINDSIGHT_BASE_URL` and optional `HINDSIGHT_API_KEY` are set in your local `.env`. By default it writes to banks shaped like `cv:user:{user_id}:character:{character_id}`; set `HINDSIGHT_USER_ID` to keep one user's memories stable across sessions. Keep real Hindsight keys only in `.env`; do not commit them.
+
+For the PersonaAgent digital-human path, the required external interfaces are the realtime omni model credentials, the text LLM credentials used by local subagents, optional `ZHIHU_ACCESS_SECRET` for research tools, optional Hindsight memory credentials, and the local or remote Go/API + avatar inference endpoints.
 
 After the stack is running, you can change these values (and other API keys / service endpoints) from the web UI at **`/settings`** instead of editing `.env` only.
 

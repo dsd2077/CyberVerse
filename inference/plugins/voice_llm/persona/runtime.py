@@ -187,10 +187,22 @@ class LocalTaskRuntime:
                 progress=0,
             ),
         )
-        runner = asyncio.create_task(self._run_task(task.id))
-        self._runners[task.id] = runner
-        runner.add_done_callback(lambda done, task_id=task.id: self._runners.pop(task_id, None))
         return _as_json(task)
+
+    async def start_task(self, task_id: str) -> dict[str, Any]:
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(f"task not found: {task_id}")
+            if task.status in TERMINAL_STATUSES:
+                return _as_json(task)
+            runner = self._runners.get(task_id)
+            if runner is not None and not runner.done():
+                return _as_json(task)
+            runner = asyncio.create_task(self._run_task(task_id))
+            self._runners[task_id] = runner
+            runner.add_done_callback(lambda done, task_id=task_id: self._runners.pop(task_id, None))
+            return _as_json(task)
 
     async def get_task(self, task_id: str) -> dict[str, Any]:
         async with self._lock:

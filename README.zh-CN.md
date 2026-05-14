@@ -113,6 +113,45 @@ git clone https://github.com/dsd2077/CyberVerse.git
 cd CyberVerse
 ```
 
+### 可选：使用 Pixi 创建可复现开发环境
+
+CyberVerse 提供两个 Pixi 环境，用于复现 Python / Go / 前端开发检查：
+
+- `macos-arm`：Apple Silicon Mac（`osx-arm64`）
+- `linux-x86`：x86_64 Linux（`linux-64`）
+
+如未安装 Pixi，先执行：
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+Apple Silicon Mac：
+
+```bash
+pixi install -e macos-arm
+pixi run -e macos-arm python-test
+pixi run -e macos-arm go-test
+```
+
+复制 `infra/cyberverse_config.example.yaml` 为 `cyberverse_config.yaml` 并配置 `.env` 后，可以用一个前台进程启动本地 Mac 侧服务：
+
+```bash
+pixi run -e macos-arm dev
+```
+
+按 `Ctrl+C` 会停止 inference、Go server 和前端 dev server。Mac 性能较弱时，把 GPU/avatar 推理留在远程 Ubuntu 部署上，本地配置或前端环境指向远程 API 即可。
+
+x86_64 Linux：
+
+```bash
+pixi install -e linux-x86
+pixi run -e linux-x86 python-test
+pixi run -e linux-x86 go-test
+```
+
+Pixi 环境会安装 Python 3.10、Go 1.25、Node 22、FFmpeg、`soxr`、`libopus`、`opusfile` 等开发和测试依赖。GPU 数字人推理仍需按下方步骤配置 CUDA / PyTorch 与模型权重。
+
 ### 第 2 步：创建 Python 环境
 
 ```bash
@@ -143,9 +182,18 @@ cp infra/.env.example .env
 ```
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao 语音 LLM
 DOUBAO_APP_ID=your_doubao_app_id
+HINDSIGHT_API_KEY=your_hindsight_api_key       # 可选：PersonaAgent 长期记忆
+HINDSIGHT_BASE_URL=https://hindsight.jmsu.top
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=local-user                   # 跨会话稳定记忆命名空间
+HINDSIGHT_USER_TAG=local-user                  # 兼容旧配置的通用 recall tag
 ```
 
 豆包语音：按 [火山引擎快速入门](https://www.volcengine.com/docs/6561/2119699?lang=zh) 获取 **App ID** / **API Key**，填入 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。
+
+PersonaAgent 在本地 `.env` 配置 `HINDSIGHT_BASE_URL` 和可选 `HINDSIGHT_API_KEY` 后，会使用 Hindsight 做跨会话长期记忆。默认 bank 形如 `cv:user:{user_id}:character:{character_id}`；设置 `HINDSIGHT_USER_ID` 可让同一用户跨会话稳定使用同一记忆库。真实 Hindsight key 只放本地 `.env`，不要提交到代码仓库。
+
+PersonaAgent 数字人链路需要的外部接口包括：实时 omni 模型凭证、本地 subagent 使用的文本 LLM 凭证、可选的 `ZHIHU_ACCESS_SECRET` 调研工具凭证、可选的 Hindsight 记忆凭证，以及本地或远程 Go/API + avatar inference endpoint。
 
 服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改这些值（以及其他 API Key / 服务端点），而不必只依赖编辑 `.env`。
 

@@ -24,6 +24,7 @@ type voiceRecordingInferenceStub struct {
 	avatarStarted chan struct{}
 	avatarRelease chan struct{}
 	avatarDone    chan struct{}
+	ttsTexts      chan string
 }
 
 func newVoiceRecordingInferenceStub() *voiceRecordingInferenceStub {
@@ -34,6 +35,7 @@ func newVoiceRecordingInferenceStub() *voiceRecordingInferenceStub {
 		avatarStarted: make(chan struct{}),
 		avatarRelease: make(chan struct{}),
 		avatarDone:    make(chan struct{}),
+		ttsTexts:      make(chan string, 4),
 	}
 }
 
@@ -79,11 +81,22 @@ func (f *voiceRecordingInferenceStub) GenerateLLMStream(context.Context, string,
 	return ch, errCh
 }
 
-func (f *voiceRecordingInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
+func (f *voiceRecordingInferenceStub) SynthesizeSpeechStream(ctx context.Context, textCh <-chan string, _ inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	ch := make(chan *pb.AudioChunk)
 	errCh := make(chan error)
-	close(ch)
-	close(errCh)
+	go func() {
+		defer close(ch)
+		defer close(errCh)
+		for text := range textCh {
+			select {
+			case f.ttsTexts <- text:
+			case <-ctx.Done():
+				return
+			}
+			ch <- &pb.AudioChunk{Data: []byte{1, 0, 2, 0}, SampleRate: 24000}
+			ch <- &pb.AudioChunk{SampleRate: 24000, IsFinal: true}
+		}
+	}()
 	return ch, errCh
 }
 
@@ -390,4 +403,35 @@ func TestVoiceTurnRecordsKeyedStaleFinalToOriginalTurnAfterBargeIn(t *testing.T)
 	if history[1].Content != "第一轮完整回答" || history[3].Content != "第二轮回答" {
 		t.Fatalf("assistant turns were mixed: %+v", history)
 	}
+}
+
+func TestVoiceTextOnlyFinalTriggersAssistantSpeech(t *testing.T) {
+	orch, session, _, inf := newVoiceRecordingHarness(t)
+
+	if err := orch.HandleTextInput(context.Background(), session.ID, "用文字问一个问题"); err != nil {
+		t.Fatal(err)
+	}
+	<-inf.started
+
+	inf.outputs <- &pb.VoiceLLMOutput{Transcript: "这是文字模式回答", IsFinal: true, QuestionId: "q1", ReplyId: "r1"}
+
+	select {
+	case got := <-inf.ttsTexts:
+		if got != "这是文字模式回答" {
+			t.Fatalf("unexpected TTS text: %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for text-only PersonaAgent response to reach TTS")
+	}
+
+	select {
+	case <-inf.avatarStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for text-only PersonaAgent response to start avatar")
+	}
+
+	close(inf.avatarRelease)
+	close(inf.outputs)
+	close(inf.errs)
+	session.WaitPipelineDone(2 * time.Second)
 }

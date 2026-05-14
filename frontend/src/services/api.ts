@@ -1,8 +1,22 @@
 import type { AvatarModelInfo, Character, CharacterForm, ComponentsResponse, ImageInfo, KnowledgeSource, KnowledgeUploadSkippedFile, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
+const API_ORIGIN = (() => {
+  try {
+    return /^https?:\/\//i.test(API_BASE) ? new URL(API_BASE).origin : ''
+  } catch {
+    return ''
+  }
+})()
 
 // ── Helpers ──
+
+export function resolveApiUrl(url?: string): string {
+  if (!url) return ''
+  if (/^(blob:|data:|https?:\/\/)/i.test(url)) return url
+  if (!API_ORIGIN) return url
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : `${API_ORIGIN}/${url}`
+}
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -78,7 +92,7 @@ export async function getComponents(): Promise<ComponentsResponse> {
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' })
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/close`, { method: 'POST' })
   if (!res.ok && res.status !== 404) throw new Error(`Failed to delete session: ${res.status}`)
 }
 

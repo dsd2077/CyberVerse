@@ -1,0 +1,55 @@
+FROM golang:1.25-bookworm AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=sum.golang.google.cn
+
+WORKDIR /build
+
+RUN set -eux; \
+    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4; \
+    sed -i \
+        -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
+        -e 's|http://deb.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
+        /etc/apt/sources.list.d/debian.sources; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    libopus-dev \
+    libopusfile-dev \
+    libsoxr-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+
+COPY server/ ./
+RUN CGO_ENABLED=1 go build -o cyberverse-server ./cmd/cyberverse-server
+
+FROM debian:bookworm-slim
+
+RUN set -eux; \
+    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4; \
+    sed -i \
+        -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
+        -e 's|http://deb.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
+        /etc/apt/sources.list.d/debian.sources; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    ffmpeg \
+    libopus0 \
+    libopusfile0 \
+    libsoxr0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /build/cyberverse-server ./cyberverse-server
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=30 --start-period=30s \
+    CMD curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null || exit 1
+
+EXPOSE 8080 8443
+
+CMD ["./cyberverse-server", "--config", "/app/cyberverse_config.yaml"]

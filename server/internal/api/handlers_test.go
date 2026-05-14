@@ -14,6 +14,7 @@ import (
 	"github.com/cyberverse/server/internal/orchestrator"
 	pb "github.com/cyberverse/server/internal/pb"
 	"github.com/cyberverse/server/internal/ws"
+	"github.com/gorilla/websocket"
 )
 
 func newTestCharStore(t *testing.T) *character.Store {
@@ -258,9 +259,48 @@ func TestCreateSessionMaxConcurrent(t *testing.T) {
 	req2 := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	w2 := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w2, req2)
-	if w2.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503, got %d", w2.Code)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429, got %d", w2.Code)
 	}
+}
+
+func TestWebSocketDisconnectClosesSession(t *testing.T) {
+	mgr := orchestrator.NewSessionManager(1)
+	r := newTestRouterWithMgr(mgr)
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions", "application/json", strings.NewReader(`{"mode":"standard"}`))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var created CreateSessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode session response: %v", err)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/chat/" + created.SessionID
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("write close message: %v", err)
+	}
+	_ = conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mgr.Count() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected session cleanup after websocket disconnect, got %d active sessions", mgr.Count())
 }
 
 func TestDeleteSession(t *testing.T) {
@@ -274,6 +314,25 @@ func TestDeleteSession(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 
 	req2 := httptest.NewRequest("DELETE", "/api/v1/sessions/"+resp.SessionID, nil)
+	w2 := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w2.Code)
+	}
+}
+
+func TestCloseSessionViaPost(t *testing.T) {
+	r := newTestRouter()
+
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	var resp CreateSessionResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	req2 := httptest.NewRequest("POST", "/api/v1/sessions/"+resp.SessionID+"/close", nil)
 	w2 := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w2, req2)
 

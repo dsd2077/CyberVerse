@@ -1,0 +1,156 @@
+server:
+    host: "0.0.0.0"
+    http_port: 8080
+    grpc_port: 50051
+    cors_origins: ["*"]
+
+livekit:
+    url: "ws://unused-livekit:7880"
+    api_key: "devkey"
+    api_secret: "secret"
+
+warmup:
+    enabled: true
+    distributed:
+        enabled: false
+        timeout_s: 30
+
+inference:
+    avatar:
+        default: "flash_head"
+        runtime:
+            cuda_visible_devices: 0
+            world_size: 1
+        flash_head:
+            plugin_class: "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
+            models_dir: "/workspace/models"
+            checkpoint_dir: "/workspace/checkpoints/SoulX-FlashHead-1_3B"
+            wav2vec_dir: "/workspace/checkpoints/wav2vec2-base-960h"
+            model_type: "lite"
+            device: "cuda:0"
+            seed: 9999
+            compile_model: true
+            compile_vae: true
+            dist_worker_main_thread: true
+            infer_params:
+                frame_num: 33
+                motion_frames_latent_num: 2
+                tgt_fps: 20
+                sample_rate: 16000
+                sample_shift: 5
+                color_correction_strength: 1.0
+                cached_audio_duration: 8
+                num_heads: 12
+                height: 512
+                width: 512
+
+    omni:
+        default: "qwen_omni"
+        qwen_omni:
+            plugin_class: "inference.plugins.voice_llm.qwen_omni_realtime.QwenOmniRealtimePlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3.5-omni-flash-realtime"
+            voice: "Tina"
+            input_sample_rate: 16000
+            output_sample_rate: 24000
+            vad_type: "semantic_vad"
+            vad_threshold: 0.5
+            vad_silence_duration_ms: 800
+
+    persona:
+        persona:
+            plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
+            model_provider: "qwen_omni"
+            checkpoint_db_path: "/workspace/data/tasks/langgraph_checkpoints.db"
+            llm:
+                provider: "qwen"
+            memory:
+                hindsight:
+                    enabled: "${HINDSIGHT_ENABLED}"
+                    base_url: "${HINDSIGHT_BASE_URL}"
+                    api_key: "${HINDSIGHT_API_KEY}"
+                    bank_id_template: "${HINDSIGHT_BANK_ID_TEMPLATE}"
+                    user_id: "${HINDSIGHT_USER_ID}"
+                    user_tag: "${HINDSIGHT_USER_TAG}"
+                    timeout_seconds: "${HINDSIGHT_TIMEOUT_SECONDS}"
+                    tags:
+                        - "source:cyberverse"
+                    recall:
+                        budget: "${HINDSIGHT_RECALL_BUDGET}"
+                        max_results: "${HINDSIGHT_RECALL_MAX_RESULTS}"
+                        max_tokens: "${HINDSIGHT_RECALL_MAX_TOKENS}"
+                    retain:
+                        context: "${HINDSIGHT_RETAIN_CONTEXT}"
+                        document_id_template: "${HINDSIGHT_DOCUMENT_ID_TEMPLATE}"
+                        max_chars: "${HINDSIGHT_RETAIN_MAX_CHARS}"
+            tools:
+                zhihu:
+                    access_secret: "${ZHIHU_ACCESS_SECRET}"
+                    api_base: "https://developer.zhihu.com"
+                    timeout_seconds: 30
+                    zhida_model: "zhida-fast-1p5"
+            max_agent_iterations: 100
+
+    llm:
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3.6-plus"
+            temperature: 0.7
+            extra_body:
+                enable_thinking: false
+
+    tts:
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3-tts-flash-realtime"
+            voice: "Momo"
+            sample_rate: 24000
+            target_sample_rate: 16000
+
+    asr:
+        default: "qwen"
+        qwen:
+            plugin_class: "inference.plugins.asr.qwen_asr_plugin.QwenASRPlugin"
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "qwen3-asr-flash-realtime"
+            language: "auto"
+            sample_rate: 16000
+            vad_threshold: 0.8
+            vad_silence_duration_ms: 600
+
+session:
+    max_concurrent: 1
+    idle_timeout_s: 300
+    max_duration_s: 3600
+
+pipeline:
+    default_mode: "omni"
+    streaming_mode: "direct"
+    visual_input:
+        enabled: true
+        frame_interval_ms: 1000
+        max_width: 1280
+        max_height: 720
+        jpeg_quality: 0.78
+        max_frame_bytes: 524288
+        ws_max_message_bytes: 1048576
+        max_recent_frames: 2
+        frame_ttl_ms: 10000
+    turn_enabled: true
+    turn_port: 8443
+    turn_realm: "cyberverse"
+    turn_username: "cyberverse"
+    turn_password: "${TURN_PASSWORD}"
+    ice_public_ip: "122.205.95.186"
+
+recording:
+    enabled: true
+    output_dir: "/app/data/recordings"
+    crf: 23
+
+inference_grpc:
+    addr: "cyberverse-inference:50051"

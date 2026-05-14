@@ -274,7 +274,7 @@ def build_default_subagent_tools(
 
     @tool(
         "create_html_report",
-        description="生成最终 HTML 报告并结束任务。只有在已经通过可用工具收集到足够依据后才调用。",
+        description="生成最终 HTML 报告并结束任务。工具无结果或失败时也要调用，用 caveats 清楚说明来源不足和限制。",
         args_schema=HTML_REPORT_SCHEMA,
     )
     async def create_html_report(**payload: Any) -> dict[str, Any]:

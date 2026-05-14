@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { Character } from '../types'
+import { resolveApiUrl } from '../services/api'
 import { formatVoiceTypeDisplay } from '../utils/voice'
 
 const router = useRouter()
@@ -10,9 +11,9 @@ const { t, locale } = useI18n()
 const props = defineProps<{ character: Character }>()
 const emit = defineEmits<{ delete: [id: string] }>()
 const coverImage = computed(() =>
-  props.character.active_image
+  resolveApiUrl(props.character.active_image
     ? `/api/v1/characters/${props.character.id}/images/${encodeURIComponent(props.character.active_image)}`
-    : props.character.avatar_image
+    : props.character.avatar_image)
 )
 
 // Generate a gradient from character name hash

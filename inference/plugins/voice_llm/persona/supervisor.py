@@ -225,6 +225,8 @@ class PersonaSupervisor:
                 task_id = str(task.get("id") or "").strip()
             if not task_id:
                 raise RuntimeError("task runtime did not return a task id")
+            if hasattr(self.runtime, "start_task"):
+                await self.runtime.start_task(task_id)  # type: ignore[attr-defined]
             final_task, events = await self.wait_for_task_terminal(task_id)
             return self.task_completion_prompt(pending.user_request, final_task, events)
         except asyncio.CancelledError:
