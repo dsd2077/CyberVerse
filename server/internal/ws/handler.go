@@ -33,6 +33,17 @@ func HandleWebSocketWithReadLimit(
 	onMessage func(string, WSMessage),
 	onActivity func(string),
 ) http.HandlerFunc {
+	return HandleWebSocketWithReadLimitAndDisconnect(hub, sessionID, maxMessageSize, onMessage, onActivity, nil)
+}
+
+func HandleWebSocketWithReadLimitAndDisconnect(
+	hub *Hub,
+	sessionID string,
+	maxMessageSize int64,
+	onMessage func(string, WSMessage),
+	onActivity func(string),
+	onDisconnect func(string),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -45,6 +56,7 @@ func HandleWebSocketWithReadLimit(
 			Conn:           conn,
 			Send:           make(chan []byte, 64),
 			MaxMessageSize: maxMessageSize,
+			OnDisconnect:   onDisconnect,
 			hub:            hub,
 		}
 

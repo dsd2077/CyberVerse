@@ -31,7 +31,9 @@ func (h *Hub) Register(client *Client) {
 }
 
 // Unregister removes a client from the hub and closes its send channel.
-func (h *Hub) Unregister(client *Client) {
+// It returns the remaining client count for the session and whether the client
+// was removed by this call.
+func (h *Hub) Unregister(client *Client) (int, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -39,11 +41,14 @@ func (h *Hub) Unregister(client *Client) {
 		if _, exists := clients[client]; exists {
 			delete(clients, client)
 			close(client.Send)
+			remaining := len(clients)
 			if len(clients) == 0 {
 				delete(h.clients, client.SessionID)
 			}
+			return remaining, true
 		}
 	}
+	return 0, false
 }
 
 // Broadcast sends a message to all clients in a session.

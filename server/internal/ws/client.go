@@ -21,6 +21,7 @@ type Client struct {
 	Conn           *websocket.Conn
 	Send           chan []byte
 	MaxMessageSize int64
+	OnDisconnect   func(sessionID string)
 	hub            *Hub
 }
 
@@ -48,8 +49,11 @@ func (c *Client) ReadPump(
 	onActivity func(sessionID string),
 ) {
 	defer func() {
-		c.hub.Unregister(c)
-		c.Conn.Close()
+		remaining, removed := c.hub.Unregister(c)
+		_ = c.Conn.Close()
+		if removed && remaining == 0 && c.OnDisconnect != nil {
+			c.OnDisconnect(c.SessionID)
+		}
 	}()
 
 	maxMessageSize := c.MaxMessageSize
