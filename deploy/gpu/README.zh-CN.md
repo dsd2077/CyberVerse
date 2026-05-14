@@ -45,7 +45,10 @@ cp deploy/gpu/.env.example .env
 DASHSCOPE_API_KEY=...
 TURN_PASSWORD=...
 HINDSIGHT_API_KEY=...
-HINDSIGHT_USER_TAG=openclaw
+HINDSIGHT_BASE_URL=https://hindsight.jmsu.top
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=local-user
+HINDSIGHT_USER_TAG=local-user
 ```
 
 如果需要知乎任务工具，再填 `ZHIHU_ACCESS_SECRET`。真实 Hindsight / Zhihu key 只放远程 `.env`，不要提交。

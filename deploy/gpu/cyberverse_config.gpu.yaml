@@ -69,12 +69,20 @@ inference:
                     enabled: "${HINDSIGHT_ENABLED}"
                     base_url: "${HINDSIGHT_BASE_URL}"
                     api_key: "${HINDSIGHT_API_KEY}"
-                    bank_id: "${HINDSIGHT_BANK_ID}"
+                    bank_id_template: "${HINDSIGHT_BANK_ID_TEMPLATE}"
+                    user_id: "${HINDSIGHT_USER_ID}"
                     user_tag: "${HINDSIGHT_USER_TAG}"
                     timeout_seconds: "${HINDSIGHT_TIMEOUT_SECONDS}"
-                    recall_max_results: "${HINDSIGHT_RECALL_MAX_RESULTS}"
-                    recall_max_tokens: "${HINDSIGHT_RECALL_MAX_TOKENS}"
-                    retain_max_chars: "${HINDSIGHT_RETAIN_MAX_CHARS}"
+                    tags:
+                        - "source:cyberverse"
+                    recall:
+                        budget: "${HINDSIGHT_RECALL_BUDGET}"
+                        max_results: "${HINDSIGHT_RECALL_MAX_RESULTS}"
+                        max_tokens: "${HINDSIGHT_RECALL_MAX_TOKENS}"
+                    retain:
+                        context: "${HINDSIGHT_RETAIN_CONTEXT}"
+                        document_id_template: "${HINDSIGHT_DOCUMENT_ID_TEMPLATE}"
+                        max_chars: "${HINDSIGHT_RETAIN_MAX_CHARS}"
             tools:
                 zhihu:
                     access_secret: "${ZHIHU_ACCESS_SECRET}"

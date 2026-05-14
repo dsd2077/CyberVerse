@@ -1652,20 +1652,30 @@ func (o *Orchestrator) standardSystemPrompt(session *Session) string {
 	return composeSystemPrompt(o.globalSystemPrompt(), characterSystemPrompt(char, true, true))
 }
 
-func (o *Orchestrator) recallConversationMemory(ctx context.Context, query string) []string {
+func memoryScopeFromSession(session *Session, source string, turnID string) conversationMemoryScope {
+	scope := conversationMemoryScope{Source: source, TurnID: turnID}
+	if session == nil {
+		return scope
+	}
+	scope.SessionID = session.ID
+	scope.CharacterID = session.CharacterID
+	return scope
+}
+
+func (o *Orchestrator) recallConversationMemory(ctx context.Context, session *Session, query string) []string {
 	if o == nil || o.memoryClient == nil || strings.TrimSpace(query) == "" {
 		return nil
 	}
 	memCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	memories, err := o.memoryClient.Recall(memCtx, query)
+	memories, err := o.memoryClient.Recall(memCtx, query, memoryScopeFromSession(session, "standard", ""))
 	if err != nil {
 		log.Printf("conversation memory recall failed: %v", err)
 	}
 	return memories
 }
 
-func (o *Orchestrator) retainConversationMemory(userText string, assistantText string) {
+func (o *Orchestrator) retainConversationMemory(session *Session, turnID string, userText string, assistantText string) {
 	if o == nil || o.memoryClient == nil {
 		return
 	}
@@ -1678,7 +1688,7 @@ func (o *Orchestrator) retainConversationMemory(userText string, assistantText s
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := o.memoryClient.Retain(ctx, content, "conversation"); err != nil {
+		if err := o.memoryClient.Retain(ctx, content, "conversation", memoryScopeFromSession(session, "standard", turnID)); err != nil {
 			log.Printf("conversation memory retain failed: %v", err)
 		}
 	}()
@@ -2243,7 +2253,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 			if resp, ok := <-fullResponseCh; ok && resp != "" {
 				assistantResp = resp
 				session.AddMessage(ChatMessage{Role: "assistant", Content: resp, TurnSeq: turnSeq})
-				o.retainConversationMemory(memoryUserText, resp)
+				o.retainConversationMemory(session, fmt.Sprint(turnSeq), memoryUserText, resp)
 				if _, err := o.persistSessionConversation(session); err != nil {
 					log.Printf("conversation: SaveConversation error session=%s: %v", sessionID, err)
 				}
@@ -2298,7 +2308,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 			break
 		}
 	}
-	if memoryPrompt := formatConversationMemory(o.recallConversationMemory(ctx, memoryUserText)); memoryPrompt != "" {
+	if memoryPrompt := formatConversationMemory(o.recallConversationMemory(ctx, session, memoryUserText)); memoryPrompt != "" {
 		messages = append(messages, inference.ChatMessage{Role: "system", Content: memoryPrompt})
 	}
 	for _, m := range history {

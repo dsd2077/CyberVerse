@@ -67,9 +67,10 @@ def test_hindsight_config_reads_env_and_cleans_placeholders(monkeypatch):
     )
 
     assert config.enabled is True
-    assert config.base_url == "https://hindsight.lucky.jmsu.top"
+    assert config.base_url == "https://hindsight.jmsu.top"
     assert config.api_key == "env-key"
-    assert config.bank_id == "openclaw"
+    assert config.bank_id == ""
+    assert config.bank_id_template == "cv:user:{user_id}:character:{character_id}"
     assert config.user_tag == "env-user"
 
 
@@ -104,20 +105,35 @@ async def test_hindsight_recall_sends_expected_payload():
         http_client=http,
     )
 
-    memories = await client.recall("我喜欢什么环境管理工具？")
+    memories = await client.recall(
+        "我喜欢什么环境管理工具？",
+        session_id="session-1",
+        character_id="char-1",
+        turn_id="turn-1",
+    )
 
     assert memories == [
         {"text": "用户喜欢 Pixi。"},
         {"text": "用户在 macOS 上开发。"},
     ]
-    assert http.posts[0]["url"] == "https://hindsight.lucky.jmsu.top/v1/default/banks/openclaw/memories/recall"
+    assert http.posts[0]["url"] == (
+        "https://hindsight.jmsu.top/v1/default/banks/cv:user:user-1:character:char-1/memories/recall"
+    )
     assert http.posts[0]["headers"]["Authorization"] == "Bearer test-key"
     assert http.posts[0]["json"] == {
         "query": "我喜欢什么环境管理工具",
         "types": ["world", "experience"],
-        "budget": "mid",
+        "budget": "low",
+        "max_results": 2,
         "max_tokens": 4096,
-        "tags": ["user-1"],
+        "tags": [
+            "source:cyberverse",
+            "user:user-1",
+            "character:char-1",
+            "session:session-1",
+            "source:voice",
+            "user-1",
+        ],
         "tags_match": "any",
     }
 
@@ -143,16 +159,31 @@ async def test_hindsight_retain_sends_expected_payload():
         http_client=http,
     )
 
-    result = await client.retain("用户: 你好\n助手: 你好，我在。")
+    result = await client.retain(
+        "用户: 你好\n助手: 你好，我在。",
+        session_id="session-1",
+        character_id="char-1",
+        turn_id="turn-1",
+        metadata={"source": "test"},
+    )
 
     assert result == {"ok": True}
-    assert http.posts[0]["url"] == "https://hindsight.lucky.jmsu.top/v1/default/banks/openclaw/memories"
+    assert http.posts[0]["url"] == "https://hindsight.jmsu.top/v1/default/banks/cv:user:user-1:character:char-1/memories"
     assert http.posts[0]["json"] == {
         "items": [
             {
                 "content": "用户: 你好\n助手: 你好，我在。",
-                "context": "conversation",
-                "tags": ["user-1"],
+                "context": "cyberverse realtime conversation",
+                "tags": [
+                    "source:cyberverse",
+                    "user:user-1",
+                    "character:char-1",
+                    "session:session-1",
+                    "source:voice",
+                    "user-1",
+                ],
+                "metadata": {"source": "test"},
+                "document_id": "session:session-1:turn:turn-1",
             }
         ],
         "async": True,

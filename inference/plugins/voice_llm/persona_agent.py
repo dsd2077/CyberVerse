@@ -121,7 +121,7 @@ PERSONA_AGENT_INSTRUCTIONS = """你是 CyberVerse 数字人 PersonaAgent，直�
 """
 
 PERSONA_MEMORY_INSTRUCTIONS = """你具备长期记忆能力。
-当用户当前话语已经构成完整意图时，回答前先调用 recall_memory 检索相关记忆。
+系统会在你回答前自动检索当前用户和角色相关的长期记忆。
 如果相关记忆能帮助回答，请自然融合到回复中，不要机械复述记忆列表。
 如果用户问到之前讨论过的内容，优先参考相关记忆。
 不要主动透露用户明确要求保密的信息。
@@ -144,6 +144,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self.supervisor: PersonaSupervisor | None = None
         self.memory_client: HindsightMemoryClient | None = None
         self._memory_tasks: set[asyncio.Task[None]] = set()
+        self._memory_turn_seq = 0
         self.rag_engine: RAGEngine | None = None
         self.checkpoint_db_path = ""
         self.task_poll_interval_seconds = 1.0
@@ -337,7 +338,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         session_config: VoiceLLMSessionConfig,
     ) -> SupervisorToolResult:
         if call.name.strip() == "recall_memory":
-            return await self._recall_memory(call)
+            return await self._recall_memory(call, session_config)
         if call.name.strip() == "retrieve_character_knowledge":
             return await self._retrieve_character_knowledge(call, session_config)
         if self.supervisor is None:
@@ -513,7 +514,11 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
     def _memory_enabled(self) -> bool:
         return bool(self.memory_client is not None and self.memory_client.enabled)
 
-    async def _recall_memory(self, call: ToolCall) -> SupervisorToolResult:
+    async def _recall_memory(
+        self,
+        call: ToolCall,
+        session_config: VoiceLLMSessionConfig,
+    ) -> SupervisorToolResult:
         args = call.arguments or {}
         query = self._clean_text(args.get("query") or args.get("text") or args.get("user_request"))
         if not self._memory_enabled() or not query or self.memory_client is None:
@@ -524,7 +529,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     "memories_text": "暂无相关记忆",
                 }
             )
-        memories = await self.memory_client.recall(query)
+        memories = await self.memory_client.recall(query, **self._memory_scope(session_config, source="voice"))
         memories_text = format_memories(memories) or "暂无相关记忆"
         return SupervisorToolResult(
             result={
@@ -535,10 +540,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         )
 
     def _tool_definitions(self) -> list[ToolDefinition]:
-        tools = list(PERSONA_TOOL_DEFINITIONS)
-        if self._memory_enabled():
-            return [MEMORY_TOOL_DEFINITION, *tools]
-        return tools
+        return list(PERSONA_TOOL_DEFINITIONS)
 
     def _persona_system_prompt(self, session_config: VoiceLLMSessionConfig) -> str:
         prompt = (session_config.system_prompt or "").strip()
@@ -560,21 +562,106 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             parts.append(f"角色设定：\n{prompt}")
         return "\n".join(parts)
 
-    def _schedule_memory_retain(self, user_text: str, assistant_text: str) -> None:
+    def _memory_scope(
+        self,
+        session_config: VoiceLLMSessionConfig,
+        *,
+        source: str,
+        turn_id: str = "",
+    ) -> dict[str, str]:
+        return {
+            "user_id": self._clean_text(getattr(session_config, "user_id", "")),
+            "character_id": session_config.character_id,
+            "session_id": session_config.session_id,
+            "source": source,
+            "turn_id": turn_id,
+        }
+
+    def _memory_document_id(
+        self,
+        session_config: VoiceLLMSessionConfig,
+        *,
+        source: str,
+        turn_id: str,
+    ) -> str:
+        if self.memory_client is None:
+            return ""
+        return self.memory_client.document_id(**self._memory_scope(session_config, source=source, turn_id=turn_id))
+
+    async def _memory_response_instructions(
+        self,
+        user_text: str,
+        session_config: VoiceLLMSessionConfig,
+    ) -> str:
+        user_text = self._clean_text(user_text)
+        if not self._memory_enabled() or not user_text or self.memory_client is None:
+            return ""
+        memories = await self.memory_client.recall(user_text, **self._memory_scope(session_config, source="voice"))
+        memories_text = format_memories(memories)
+        if not memories_text:
+            return ""
+        return "\n".join(
+            [
+                "以下是与当前用户和角色相关的长期记忆，请自然参考，不要机械复述：",
+                memories_text,
+                "不要提到内部记忆检索过程。",
+            ]
+        )
+
+    def _schedule_memory_retain(
+        self,
+        user_text: str,
+        assistant_text: str,
+        session_config: VoiceLLMSessionConfig,
+        *,
+        source: str = "voice",
+        turn_id: str = "",
+    ) -> None:
         user_text = self._clean_text(user_text)
         assistant_text = self._clean_text(assistant_text)
         if not self._memory_enabled() or not user_text or not assistant_text or self.memory_client is None:
             return
+        if not turn_id:
+            self._memory_turn_seq += 1
+            turn_id = str(self._memory_turn_seq)
         content = f"用户: {user_text}\n助手: {assistant_text}"
-        task = asyncio.create_task(self._retain_memory(content))
+        metadata = {
+            "session_id": session_config.session_id,
+            "character_id": session_config.character_id,
+            "source": f"persona_{source}",
+        }
+        document_id = self._memory_document_id(session_config, source=source, turn_id=turn_id)
+        task = asyncio.create_task(
+            self._retain_memory(
+                content,
+                session_config=session_config,
+                source=source,
+                metadata=metadata,
+                document_id=document_id,
+            )
+        )
         self._memory_tasks.add(task)
         task.add_done_callback(self._memory_tasks.discard)
 
-    async def _retain_memory(self, content: str) -> None:
+    async def _retain_memory(
+        self,
+        content: str,
+        *,
+        session_config: VoiceLLMSessionConfig,
+        source: str,
+        metadata: dict[str, str],
+        document_id: str,
+    ) -> None:
         if self.memory_client is None:
             return
         try:
-            await self.memory_client.retain(content, context="conversation")
+            await self.memory_client.retain(
+                content,
+                context="conversation",
+                **self._memory_scope(session_config, source=source),
+                metadata=metadata,
+                document_id=document_id,
+            )
         except Exception as exc:
             logger.warning("persona memory retain task failed: %s", exc)
 
@@ -627,7 +714,9 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             return
         memories_text = ""
         if self._memory_enabled() and self.memory_client is not None:
-            memories_text = format_memories(await self.memory_client.recall(user_text))
+            memories_text = format_memories(
+                await self.memory_client.recall(user_text, **self._memory_scope(session_config, source="text"))
+            )
 
         llm = self.task_runtime.llm if self.task_runtime is not None else None
         if llm is None:
@@ -635,7 +724,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
 
         response = await llm.ainvoke(self._text_turn_messages(user_text, session_config, memories_text))
         assistant_text = self._message_text(response) or "我暂时没有生成有效回复。"
-        self._schedule_memory_retain(user_text, assistant_text)
+        self._schedule_memory_retain(user_text, assistant_text, session_config, source="text")
         yield VoiceLLMOutputEvent(transcript=assistant_text, is_final=True)
 
     async def _merged_input_stream(
@@ -767,11 +856,22 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                         question_id=event.question_id,
                         reply_id=event.reply_id,
                     )
+                    response_instruction_parts: list[str] = []
                     try:
-                        response_instructions = await self._rag_response_instructions(user_text, session_config)
+                        memory_instructions = await self._memory_response_instructions(user_text, session_config)
+                    except Exception:
+                        logger.exception("persona memory pre-response failed")
+                        memory_instructions = ""
+                    if memory_instructions:
+                        response_instruction_parts.append(memory_instructions)
+                    try:
+                        rag_instructions = await self._rag_response_instructions(user_text, session_config)
                     except Exception:
                         logger.exception("persona RAG pre-response failed")
-                        response_instructions = ""
+                        rag_instructions = ""
+                    if rag_instructions:
+                        response_instruction_parts.append(rag_instructions)
+                    response_instructions = "\n\n".join(response_instruction_parts)
                     await injected.put(VoiceLLMInputEvent(response_instructions=response_instructions))
                     event = replace(event, user_transcript="")
                     if not event.tool_calls and not event.barge_in and not self._has_assistant_output(event):
@@ -839,7 +939,13 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     pending_partials.clear()
                     turn_transcripts.clear()
                 if event.is_final and event.transcript:
-                    self._schedule_memory_retain(memory_user_text, event.transcript)
+                    self._schedule_memory_retain(
+                        memory_user_text,
+                        event.transcript,
+                        session_config,
+                        source="voice",
+                        turn_id=event.reply_id or event.question_id,
+                    )
                     memory_user_text = ""
                 yield event
 

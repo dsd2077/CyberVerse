@@ -19,7 +19,7 @@ flowchart LR
   F --> G["Go server: session, WebSocket, APIs"]
   G --> P["Python inference: PersonaAgentPlugin"]
   P --> M["HindsightMemoryClient"]
-  M --> H["Hindsight bank: openclaw"]
+  M --> H["Hindsight bank: cv:user:{user_id}:character:{character_id}"]
   P --> S["PersonaSupervisor"]
   S --> R["LocalTaskRuntime"]
   R --> L["LangGraph subagent"]
@@ -49,8 +49,8 @@ flowchart LR
 
 ## Development Assumptions
 
-- v1 只接入 PersonaAgent 数字人路径；Standard mode 暂不加长期记忆。
-- v1 使用固定 `HINDSIGHT_USER_TAG` 做跨会话隔离，不引入登录态。
+- v1 优先接入 PersonaAgent 数字人路径；Go standard pipeline 也已接入同一套 Hindsight retain/recall 客户端，用于非数字人文本对话的长期记忆。
+- v1 使用 `HINDSIGHT_BANK_ID_TEMPLATE`、`HINDSIGHT_USER_ID` 和 `HINDSIGHT_USER_TAG` 做跨会话隔离，不引入登录态。
 - v1 每个完成回合保存简洁 `用户: ...\n助手: ...` 文本，不额外调用 LLM 做摘要或分类。
 - Hindsight 服务异常不能阻塞主对话；recall 失败返回空记忆，retain 失败只记录 warning。
 - 真实 Hindsight key 只放本地 `.env`，不得提交；由于 key 已在聊天上下文出现，生产/长期 key 应轮换一次。
@@ -111,10 +111,11 @@ Required `.env` contract:
 
 ```bash
 HINDSIGHT_ENABLED=true
-HINDSIGHT_BASE_URL=https://hindsight.lucky.jmsu.top
+HINDSIGHT_BASE_URL=http://w4ce.jmsu.top:8888
 HINDSIGHT_API_KEY=your_hindsight_api_key
-HINDSIGHT_BANK_ID=openclaw
-HINDSIGHT_USER_TAG=openclaw
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=zly
+HINDSIGHT_USER_TAG=zly
 HINDSIGHT_TIMEOUT_SECONDS=30
 HINDSIGHT_RECALL_MAX_RESULTS=5
 HINDSIGHT_RECALL_MAX_TOKENS=4096
@@ -123,9 +124,9 @@ HINDSIGHT_RETAIN_MAX_CHARS=6000
 
 Expected: missing or placeholder key disables memory without breaking conversation.
 
-- [x] **Step 2: Keep recall as hidden tool**
+- [x] **Step 2: Keep recall automatic before response**
 
-PersonaAgent exposes `recall_memory` only when Hindsight is enabled. Realtime model should call it after complete user intent, before final answer.
+PersonaAgent does not expose `recall_memory` as an active model tool. It automatically recalls Hindsight memory after a complete user transcript and injects the formatted result into `response_instructions` before the model answers.
 
 - [x] **Step 3: Keep retain nonblocking**
 
@@ -152,6 +153,8 @@ With local `.env` configured and without committing secrets:
 Expected: PersonaAgent recalls the Pixi preference naturally. If Hindsight is unavailable, normal conversation continues without memory.
 
 Status on 2026-05-13: Hindsight live recall smoke passed after adding local `.env`; client enabled and returned 5 recall results. Full digital-human conversation smoke still needs DashScope/Qwen and remote avatar/inference configuration.
+
+Status on 2026-05-14: CyberVerse remote smoke against `http://w4ce.jmsu.top:8888` verified retain writes documents into bank `cv:user:zly:character:c8af36f1-ed95-4b8e-8cda-0e1e156596fc`. The real PersonaAgent text turn stored `session:eec76193-512e-415b-b9cc-4c0720a0c696:turn:1` with the expected transcript, tags, and metadata. Blocking issue: Hindsight retain/reprocess operations complete successfully but produce `memory_unit_count=0`, `total_nodes=0`, `usage.total_tokens=0`, and recall returns no results. This points to the Hindsight backend extraction path or bank/global LLM configuration, not the CyberVerse retain payload.
 
 ## Chunk 2: PersonaAgent + LocalTaskRuntime Reliability
 
@@ -343,8 +346,9 @@ Result on 2026-05-13:
 - `npm run --prefix frontend build`: PASS.
 - `git diff --check`: PASS.
 - YAML parse check for `infra/cyberverse_config.example.yaml` and `deploy/gpu/cyberverse_config.gpu.yaml`: PASS.
-- Real Hindsight recall smoke: PASS after local `.env` was added.
-- Full digital-human conversation smoke: blocked by missing DashScope/Qwen and remote avatar/inference configuration; does not block unit/local regression coverage.
+- Historical local Hindsight recall smoke: PASS after local `.env` was added.
+- 2026-05-14 remote Hindsight smoke against `http://w4ce.jmsu.top:8888`: CyberVerse retain writes bank documents, but Hindsight extraction returns `memory_unit_count=0` and recall remains empty. This blocks end-to-end durable recall until the Hindsight backend extraction/LLM worker is fixed.
+- Full digital-human conversation smoke with Qwen: PASS for the PersonaAgent response and retain document write; durable recall remains blocked by Hindsight backend extraction.
 
 ## Future Decisions
 

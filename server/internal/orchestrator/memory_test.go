@@ -54,7 +54,7 @@ func TestHindsightConversationMemoryRetainWritesLocalFallback(t *testing.T) {
 	client := &hindsightConversationMemory{
 		baseURL:           "http://127.0.0.1:1",
 		apiKey:            "test",
-		bankID:            "openclaw",
+		bankIDTemplate:    "cv:user:{user_id}:character:{character_id}",
 		userTag:           "user-1",
 		maxResults:        3,
 		maxTokens:         1024,
@@ -64,13 +64,46 @@ func TestHindsightConversationMemoryRetainWritesLocalFallback(t *testing.T) {
 		httpClient:        &http.Client{Timeout: 10 * time.Millisecond},
 	}
 
-	_ = client.Retain(context.Background(), "用户: 请记住项目暗号是 LocalOnly。\n助手: 好。", "conversation")
+	_ = client.Retain(
+		context.Background(),
+		"用户: 请记住项目暗号是 LocalOnly。\n助手: 好。",
+		"conversation",
+		conversationMemoryScope{SessionID: "session-1", CharacterID: "char-1", Source: "standard", TurnID: "1"},
+	)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !containsText([]string{string(data)}, "LocalOnly") {
 		t.Fatalf("local fallback did not persist retained content: %s", data)
+	}
+}
+
+func TestHindsightConversationMemoryResolvesCyberVerseScope(t *testing.T) {
+	client := &hindsightConversationMemory{
+		bankIDTemplate:     "cv:user:{user_id}:character:{character_id}",
+		userTag:            "user-1",
+		documentIDTemplate: "session:{session_id}:turn:{turn_id}",
+		defaultTags:        []string{"source:cyberverse"},
+	}
+	scope := conversationMemoryScope{
+		SessionID:   "session-1",
+		CharacterID: "char-1",
+		Source:      "standard",
+		TurnID:      "7",
+	}
+
+	if got := client.resolveBankID(scope); got != "cv:user:user-1:character:char-1" {
+		t.Fatalf("unexpected bank id: %s", got)
+	}
+	tags := client.tags(scope)
+	for _, want := range []string{"source:cyberverse", "user:user-1", "character:char-1", "session:session-1", "source:standard", "user-1"} {
+		if !containsText(tags, want) {
+			t.Fatalf("expected tag %q in %+v", want, tags)
+		}
+	}
+	if got := client.documentID(scope); got != "session:session-1:turn:7" {
+		t.Fatalf("unexpected document id: %s", got)
 	}
 }
 

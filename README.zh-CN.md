@@ -183,12 +183,15 @@ cp infra/.env.example .env
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao 语音 LLM
 DOUBAO_APP_ID=your_doubao_app_id
 HINDSIGHT_API_KEY=your_hindsight_api_key       # 可选：PersonaAgent 长期记忆
-HINDSIGHT_USER_TAG=openclaw                    # 跨会话稳定记忆 tag
+HINDSIGHT_BASE_URL=https://hindsight.jmsu.top
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=local-user                   # 跨会话稳定记忆命名空间
+HINDSIGHT_USER_TAG=local-user                  # 兼容旧配置的通用 recall tag
 ```
 
 豆包语音：按 [火山引擎快速入门](https://www.volcengine.com/docs/6561/2119699?lang=zh) 获取 **App ID** / **API Key**，填入 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。
 
-PersonaAgent 在本地 `.env` 配置 `HINDSIGHT_API_KEY` 和 `HINDSIGHT_USER_TAG` 后，会使用 Hindsight 做跨会话长期记忆。默认端点是 `https://hindsight.lucky.jmsu.top`，默认 bank 是 `openclaw`；如需调整，可设置 `HINDSIGHT_BASE_URL` 与 `HINDSIGHT_BANK_ID`。真实 Hindsight key 只放本地 `.env`，不要提交到代码仓库。
+PersonaAgent 在本地 `.env` 配置 `HINDSIGHT_BASE_URL` 和可选 `HINDSIGHT_API_KEY` 后，会使用 Hindsight 做跨会话长期记忆。默认 bank 形如 `cv:user:{user_id}:character:{character_id}`；设置 `HINDSIGHT_USER_ID` 可让同一用户跨会话稳定使用同一记忆库。真实 Hindsight key 只放本地 `.env`，不要提交到代码仓库。
 
 PersonaAgent 数字人链路需要的外部接口包括：实时 omni 模型凭证、本地 subagent 使用的文本 LLM 凭证、可选的 `ZHIHU_ACCESS_SECRET` 调研工具凭证、可选的 Hindsight 记忆凭证，以及本地或远程 Go/API + avatar inference endpoint。
 

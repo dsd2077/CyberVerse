@@ -80,12 +80,12 @@ type fakeConversationMemory struct {
 	retainCh chan string
 }
 
-func (f *fakeConversationMemory) Recall(_ context.Context, query string) ([]string, error) {
+func (f *fakeConversationMemory) Recall(_ context.Context, query string, _ conversationMemoryScope) ([]string, error) {
 	f.recalls = append(f.recalls, query)
 	return []string{"用户喜欢用 Pixi 管理环境。"}, nil
 }
 
-func (f *fakeConversationMemory) Retain(_ context.Context, content string, _ string) error {
+func (f *fakeConversationMemory) Retain(_ context.Context, content string, _ string, _ conversationMemoryScope) error {
 	f.retains = append(f.retains, content)
 	if f.retainCh != nil {
 		f.retainCh <- content

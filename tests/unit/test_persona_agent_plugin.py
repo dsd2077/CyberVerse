@@ -48,6 +48,12 @@ class FakeOmniPlugin(VoiceLLMPlugin):
             return event
         raise AssertionError("expected input event")
 
+    async def _next_response_instructions(self, input_stream):
+        async for event in input_stream:
+            if event.response_instructions is not None:
+                return event.response_instructions
+        raise AssertionError("expected response instructions")
+
     async def converse_stream(self, input_stream, session_config=None):
         self.last_session_config = session_config
         async for _ in input_stream:
@@ -63,20 +69,11 @@ class FakeOmniPlugin(VoiceLLMPlugin):
             return
 
         if self.scenario == "memory_chat":
-            assert "recall_memory" in [tool.name for tool in session_config.tools]
+            assert "recall_memory" not in [tool.name for tool in session_config.tools]
             yield VoiceLLMOutputEvent(user_transcript="记住我喜欢用 Pixi 管理环境")
-            yield VoiceLLMOutputEvent(
-                tool_calls=[
-                    ToolCall(
-                        id="memory-1",
-                        name="recall_memory",
-                        arguments={"query": "记住我喜欢用 Pixi 管理环境"},
-                    )
-                ]
-            )
-            memory_result = await self._next_tool_result(input_stream)
-            assert memory_result.name == "recall_memory"
-            assert "Pixi" in memory_result.result["memories_text"]
+            response_instructions = await self._next_response_instructions(input_stream)
+            assert "长期记忆" in response_instructions
+            assert "Pixi" in response_instructions
             yield VoiceLLMOutputEvent(
                 transcript="我记住了，你喜欢用 Pixi 管理环境。",
                 audio=AudioChunk(data=b"memory", sample_rate=16000, is_final=True),
@@ -304,11 +301,14 @@ class FakeMemoryClient:
         self.recalls = []
         self.retains = []
 
-    async def recall(self, query):
+    async def recall(self, query, **_kwargs):
         self.recalls.append(query)
         return [{"text": "用户喜欢用 Pixi 管理环境。"}]
 
-    async def retain(self, content, context="conversation"):
+    def document_id(self, **kwargs):
+        return f"session:{kwargs.get('session_id', '')}:turn:{kwargs.get('turn_id', '')}"
+
+    async def retain(self, content, context="conversation", **_kwargs):
         self.retains.append({"content": content, "context": context})
         return {"ok": True}
 

@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _ENV_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 _RECALL_QUERY_PUNCTUATION_RE = re.compile(r"""[\u3000\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65？。、《》“”‘’、；：！…（）【】?!,;:()[\]{}"']+""")
+_SAFE_MEMORY_ID_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
+_DEFAULT_BANK_ID_TEMPLATE = "cv:user:{user_id}:character:{character_id}"
 
 
 def _clean_config_string(value: Any) -> str:
@@ -19,6 +21,13 @@ def _clean_config_string(value: Any) -> str:
     if _ENV_PLACEHOLDER_RE.match(text):
         return ""
     return text
+
+
+def _safe_memory_id(value: Any, default: str = "unknown") -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = default
+    return (_SAFE_MEMORY_ID_RE.sub("-", text) or default)[:128]
 
 
 def _optional_bool(value: Any, default: bool) -> bool:
@@ -70,6 +79,24 @@ def _fallback_memory_path(value: Any) -> str:
     return os.path.join(os.getcwd(), "data", "persona_memory_shadow.jsonl")
 
 
+def _config_tags(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        raw = str(value or "").split(",")
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        tag = _clean_config_string(item)
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+    if "source:cyberverse" not in seen:
+        tags.insert(0, "source:cyberverse")
+    return tuple(tags)
+
+
 def _keyword_terms(value: str) -> set[str]:
     text = _normalize_recall_query(value).lower()
     terms = set(re.findall(r"[a-z0-9_-]{3,}", text))
@@ -113,13 +140,19 @@ def _persona_hindsight_params(runtime_config: dict[str, Any] | None) -> dict[str
 @dataclass(frozen=True)
 class HindsightMemoryConfig:
     enabled: bool = True
-    base_url: str = "https://hindsight.lucky.jmsu.top"
+    base_url: str = "https://hindsight.jmsu.top"
     api_key: str = ""
-    bank_id: str = "openclaw"
+    bank_id: str = ""
+    bank_id_template: str = _DEFAULT_BANK_ID_TEMPLATE
+    user_id: str = ""
     user_tag: str = ""
     timeout_seconds: float = 30.0
+    recall_budget: str = "low"
     recall_max_results: int = 5
     recall_max_tokens: int = 4096
+    retain_context: str = "cyberverse realtime conversation"
+    document_id_template: str = "session:{session_id}:turn:{turn_id}"
+    tags: tuple[str, ...] = ("source:cyberverse",)
     retain_max_chars: int = 6000
     local_fallback_enabled: bool = True
     local_fallback_path: str = ""
@@ -128,22 +161,31 @@ class HindsightMemoryConfig:
 def hindsight_config_from_runtime_config(runtime_config: dict[str, Any] | None = None) -> HindsightMemoryConfig:
     params = _persona_hindsight_params(runtime_config)
     enabled_value = params.get("enabled") if "enabled" in params else os.getenv("HINDSIGHT_ENABLED")
+    recall_params = params.get("recall", {})
+    recall_params = recall_params if isinstance(recall_params, dict) else {}
+    retain_params = params.get("retain", {})
+    retain_params = retain_params if isinstance(retain_params, dict) else {}
     timeout_value = params.get("timeout_seconds") if "timeout_seconds" in params else os.getenv("HINDSIGHT_TIMEOUT_SECONDS")
-    max_results_value = (
-        params.get("recall_max_results")
-        if "recall_max_results" in params
-        else os.getenv("HINDSIGHT_RECALL_MAX_RESULTS")
-    )
-    max_tokens_value = (
-        params.get("recall_max_tokens")
-        if "recall_max_tokens" in params
-        else os.getenv("HINDSIGHT_RECALL_MAX_TOKENS")
-    )
-    max_chars_value = (
-        params.get("retain_max_chars")
-        if "retain_max_chars" in params
-        else os.getenv("HINDSIGHT_RETAIN_MAX_CHARS")
-    )
+    if "max_results" in recall_params:
+        max_results_value = recall_params.get("max_results")
+    elif "recall_max_results" in params:
+        max_results_value = params.get("recall_max_results")
+    else:
+        max_results_value = os.getenv("HINDSIGHT_RECALL_MAX_RESULTS")
+
+    if "max_tokens" in recall_params:
+        max_tokens_value = recall_params.get("max_tokens")
+    elif "recall_max_tokens" in params:
+        max_tokens_value = params.get("recall_max_tokens")
+    else:
+        max_tokens_value = os.getenv("HINDSIGHT_RECALL_MAX_TOKENS")
+
+    if "max_chars" in retain_params:
+        max_chars_value = retain_params.get("max_chars")
+    elif "retain_max_chars" in params:
+        max_chars_value = params.get("retain_max_chars")
+    else:
+        max_chars_value = os.getenv("HINDSIGHT_RETAIN_MAX_CHARS")
     fallback_enabled_value = (
         params.get("local_fallback_enabled")
         if "local_fallback_enabled" in params
@@ -154,24 +196,50 @@ def hindsight_config_from_runtime_config(runtime_config: dict[str, Any] | None =
         if "local_fallback_path" in params
         else os.getenv("HINDSIGHT_LOCAL_FALLBACK_PATH")
     )
+    bank_id_template = (
+        _clean_config_string(params.get("bank_id_template"))
+        or _clean_config_string(os.getenv("HINDSIGHT_BANK_ID_TEMPLATE"))
+    )
+    bank_id = _clean_config_string(params.get("bank_id")) or _clean_config_string(os.getenv("HINDSIGHT_BANK_ID"))
+    if bank_id_template:
+        bank_id = ""
+    else:
+        bank_id_template = "" if bank_id else _DEFAULT_BANK_ID_TEMPLATE
 
     return HindsightMemoryConfig(
         enabled=_optional_bool(_clean_config_string(enabled_value), True),
         base_url=(
             _clean_config_string(params.get("base_url"))
             or _clean_config_string(os.getenv("HINDSIGHT_BASE_URL"))
-            or "https://hindsight.lucky.jmsu.top"
+            or "https://hindsight.jmsu.top"
         ).rstrip("/"),
         api_key=_clean_config_string(params.get("api_key")) or _clean_config_string(os.getenv("HINDSIGHT_API_KEY")),
-        bank_id=(
-            _clean_config_string(params.get("bank_id"))
-            or _clean_config_string(os.getenv("HINDSIGHT_BANK_ID"))
-            or "openclaw"
-        ),
+        bank_id=bank_id,
+        bank_id_template=bank_id_template,
+        user_id=_clean_config_string(params.get("user_id")) or _clean_config_string(os.getenv("HINDSIGHT_USER_ID")),
         user_tag=_clean_config_string(params.get("user_tag")) or _clean_config_string(os.getenv("HINDSIGHT_USER_TAG")),
+        recall_budget=(
+            _clean_config_string(recall_params.get("budget"))
+            or _clean_config_string(params.get("recall_budget"))
+            or _clean_config_string(os.getenv("HINDSIGHT_RECALL_BUDGET"))
+            or "low"
+        ),
         timeout_seconds=_optional_float(timeout_value, 30.0),
         recall_max_results=_bounded_int(max_results_value, 5, 1, 20),
         recall_max_tokens=_bounded_int(max_tokens_value, 4096, 256, 32768),
+        retain_context=(
+            _clean_config_string(retain_params.get("context"))
+            or _clean_config_string(params.get("retain_context"))
+            or _clean_config_string(os.getenv("HINDSIGHT_RETAIN_CONTEXT"))
+            or "cyberverse realtime conversation"
+        ),
+        document_id_template=(
+            _clean_config_string(retain_params.get("document_id_template"))
+            or _clean_config_string(params.get("document_id_template"))
+            or _clean_config_string(os.getenv("HINDSIGHT_DOCUMENT_ID_TEMPLATE"))
+            or "session:{session_id}:turn:{turn_id}"
+        ),
+        tags=_config_tags(params.get("tags") if "tags" in params else os.getenv("HINDSIGHT_TAGS")),
         retain_max_chars=_bounded_int(max_chars_value, 6000, 500, 50000),
         local_fallback_enabled=_optional_bool(_clean_config_string(fallback_enabled_value), True),
         local_fallback_path=_fallback_memory_path(fallback_path_value),
@@ -214,19 +282,100 @@ class HindsightMemoryClient:
         return bool(
             self.config.enabled
             and self.config.base_url
-            and self.config.api_key
-            and self.config.bank_id
-            and self.config.user_tag
+            and (self.config.bank_id or self.config.bank_id_template)
         )
 
     def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        return headers
+
+    def _scope_values(
+        self,
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+        source: str = "voice",
+        turn_id: str = "",
+    ) -> dict[str, str]:
+        resolved_user_id = user_id or self.config.user_id or self.config.user_tag or session_id
         return {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
+            "user_id": _safe_memory_id(resolved_user_id, "anonymous"),
+            "character_id": _safe_memory_id(character_id, "default-character"),
+            "session_id": _safe_memory_id(session_id, "unknown-session"),
+            "source": _safe_memory_id(source, "voice"),
+            "turn_id": _safe_memory_id(turn_id, "unknown-turn"),
         }
 
-    def _url(self, suffix: str) -> str:
-        return f"{self.config.base_url}/v1/default/banks/{self.config.bank_id}/memories{suffix}"
+    def resolve_bank_id(
+        self,
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+    ) -> str:
+        if self.config.bank_id:
+            return self.config.bank_id
+        values = self._scope_values(user_id=user_id, character_id=character_id, session_id=session_id)
+        try:
+            return self.config.bank_id_template.format(**values)
+        except KeyError as exc:
+            logger.warning("Hindsight bank_id_template references unknown field: %s", exc)
+            return _DEFAULT_BANK_ID_TEMPLATE.format(**values)
+
+    def tags(
+        self,
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+        source: str = "voice",
+    ) -> list[str]:
+        values = self._scope_values(user_id=user_id, character_id=character_id, session_id=session_id, source=source)
+        tags = [
+            *self.config.tags,
+            f"user:{values['user_id']}",
+            f"character:{values['character_id']}",
+            f"session:{values['session_id']}",
+            f"source:{values['source']}",
+        ]
+        if self.config.user_tag:
+            tags.append(self.config.user_tag)
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for tag in tags:
+            if not tag or tag in seen:
+                continue
+            seen.add(tag)
+            deduped.append(tag)
+        return deduped
+
+    def document_id(
+        self,
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+        source: str = "voice",
+        turn_id: str = "",
+    ) -> str:
+        values = self._scope_values(
+            user_id=user_id,
+            character_id=character_id,
+            session_id=session_id,
+            source=source,
+            turn_id=turn_id,
+        )
+        try:
+            return self.config.document_id_template.format(**values)
+        except KeyError as exc:
+            logger.warning("Hindsight document_id_template references unknown field: %s", exc)
+            return "session:{session_id}:turn:{turn_id}".format(**values)
+
+    def _url(self, suffix: str, *, bank_id: str | None = None) -> str:
+        return f"{self.config.base_url}/v1/default/banks/{bank_id or self.config.bank_id}/memories{suffix}"
 
     def _local_fallback_enabled(self) -> bool:
         return bool(
@@ -336,23 +485,34 @@ class HindsightMemoryClient:
             data = response.json()
             return data if isinstance(data, dict) else {}
 
-    async def recall(self, query: str) -> list[dict[str, Any]]:
+    async def recall(
+        self,
+        query: str,
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+        source: str = "voice",
+        turn_id: str = "",
+    ) -> list[dict[str, Any]]:
         query = _normalize_recall_query(query)
         if not self.enabled or not query:
             return []
         local_memories = self._recall_local_memory(query)
         if local_memories and _explicit_memory_write(local_memories[0].get("text", "")):
             return local_memories
+        bank_id = self.resolve_bank_id(user_id=user_id, character_id=character_id, session_id=session_id)
         payload: dict[str, Any] = {
             "query": query,
             "types": ["world", "experience"],
-            "budget": "mid",
+            "budget": self.config.recall_budget,
+            "max_results": self.config.recall_max_results,
             "max_tokens": self.config.recall_max_tokens,
-            "tags": [self.config.user_tag],
+            "tags": self.tags(user_id=user_id, character_id=character_id, session_id=session_id, source=source),
             "tags_match": "any",
         }
         try:
-            data = await self._post_json(self._url("/recall"), payload)
+            data = await self._post_json(self._url("/recall", bank_id=bank_id), payload)
         except Exception as exc:
             logger.warning("Hindsight recall failed: %s", exc)
             return local_memories
@@ -367,20 +527,46 @@ class HindsightMemoryClient:
                 memories.append({"text": text})
         return self._merge_memories(local_memories, memories)
 
-    async def retain(self, content: str, context: str = "conversation") -> dict[str, Any]:
+    async def retain(
+        self,
+        content: str,
+        context: str = "",
+        *,
+        user_id: str = "",
+        character_id: str = "",
+        session_id: str = "",
+        source: str = "voice",
+        metadata: dict[str, str] | None = None,
+        document_id: str = "",
+        turn_id: str = "",
+    ) -> dict[str, Any]:
         content = _clip_text(content, self.config.retain_max_chars)
-        context = str(context or "conversation").strip() or "conversation"
+        context = str(context or self.config.retain_context).strip() or self.config.retain_context
         if not self.enabled or not content:
             return {"ok": False}
         self._append_local_memory(content, context)
+        bank_id = self.resolve_bank_id(user_id=user_id, character_id=character_id, session_id=session_id)
         item: dict[str, Any] = {
             "content": content,
             "context": context,
-            "tags": [self.config.user_tag],
+            "tags": self.tags(user_id=user_id, character_id=character_id, session_id=session_id, source=source),
         }
+        if metadata:
+            item["metadata"] = metadata
+        item_document_id = document_id
+        if not item_document_id and turn_id:
+            item_document_id = self.document_id(
+                user_id=user_id,
+                character_id=character_id,
+                session_id=session_id,
+                source=source,
+                turn_id=turn_id,
+            )
+        if item_document_id:
+            item["document_id"] = item_document_id
         payload = {"items": [item], "async": True}
         try:
-            return await self._post_json(self._url(""), payload)
+            return await self._post_json(self._url("", bank_id=bank_id), payload)
         except Exception as exc:
             logger.warning("Hindsight retain failed: %s", exc)
             return {"ok": False}

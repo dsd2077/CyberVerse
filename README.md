@@ -181,12 +181,15 @@ Edit `.env`, fill in your API keys:
 DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao omni model
 DOUBAO_APP_ID=your_doubao_app_id
 HINDSIGHT_API_KEY=your_hindsight_api_key       # Optional PersonaAgent long-term memory
-HINDSIGHT_USER_TAG=openclaw                    # Stable cross-session memory tag
+HINDSIGHT_BASE_URL=https://hindsight.jmsu.top
+HINDSIGHT_BANK_ID_TEMPLATE=cv:user:{user_id}:character:{character_id}
+HINDSIGHT_USER_ID=local-user                   # Stable cross-session memory namespace
+HINDSIGHT_USER_TAG=local-user                  # Legacy/common recall tag
 ```
 
 Doubao Voice: get **App ID** / **API Key** per [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) → `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
 
-PersonaAgent can use Hindsight for cross-session memory when `HINDSIGHT_API_KEY` and `HINDSIGHT_USER_TAG` are set in your local `.env`. The default endpoint is `https://hindsight.lucky.jmsu.top` and the default bank is `openclaw`; override them with `HINDSIGHT_BASE_URL` and `HINDSIGHT_BANK_ID` if needed. Keep real Hindsight keys only in `.env`; do not commit them.
+PersonaAgent can use Hindsight for cross-session memory when `HINDSIGHT_BASE_URL` and optional `HINDSIGHT_API_KEY` are set in your local `.env`. By default it writes to banks shaped like `cv:user:{user_id}:character:{character_id}`; set `HINDSIGHT_USER_ID` to keep one user's memories stable across sessions. Keep real Hindsight keys only in `.env`; do not commit them.
 
 For the PersonaAgent digital-human path, the required external interfaces are the realtime omni model credentials, the text LLM credentials used by local subagents, optional `ZHIHU_ACCESS_SECRET` for research tools, optional Hindsight memory credentials, and the local or remote Go/API + avatar inference endpoints.
 
