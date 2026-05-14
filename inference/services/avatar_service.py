@@ -10,6 +10,7 @@ from inference.plugins.avatar.base import AvatarPlugin
 FLASHHEAD_GENERATION_STARTED_HEADER = (
     "x-cyberverse-trace-flashhead-generation-started-since-user-final-ms"
 )
+AVATAR_DISABLED_MESSAGE = "avatar inference is disabled by config"
 
 
 def _metadata_value(context, key: str) -> str:
@@ -30,10 +31,13 @@ def _metadata_int(context, key: str) -> int:
 
 class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
 
-    def __init__(self, registry: PluginRegistry) -> None:
+    def __init__(self, registry: PluginRegistry, enabled: bool = True) -> None:
         self.registry = registry
+        self.enabled = enabled
 
     def _get_plugin(self) -> AvatarPlugin:
+        if not self.enabled:
+            raise RuntimeError(AVATAR_DISABLED_MESSAGE)
         plugin = self.registry.get_by_category("avatar")
         if plugin is None:
             raise RuntimeError("No avatar plugin initialized")
@@ -52,6 +56,8 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             return avatar_pb2.SetAvatarResponse(success=False, message=str(e))
 
     async def GenerateStream(self, request_iterator, context):
+        if not self.enabled:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, AVATAR_DISABLED_MESSAGE)
         plugin = self._get_plugin()
         session_id = _metadata_value(context, "x-cyberverse-session-id")
         question_id = _metadata_value(context, "x-cyberverse-question-id")
@@ -109,6 +115,8 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             return avatar_pb2.ResetResponse(success=False)
 
     async def GetInfo(self, request, context):
+        if not self.enabled:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, AVATAR_DISABLED_MESSAGE)
         plugin = self._get_plugin()
         output_width, output_height = plugin.get_output_dimensions()
         return avatar_pb2.AvatarInfo(

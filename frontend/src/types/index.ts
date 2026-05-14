@@ -8,6 +8,29 @@ export interface ImageInfo {
   url?: string
 }
 
+export type KnowledgeSourceStatus = 'indexing' | 'ready' | 'failed'
+
+export interface KnowledgeSource {
+  id: string
+  title: string
+  filename: string
+  mime_type: string
+  relative_path?: string
+  stored_path?: string
+  indexable: boolean
+  status: KnowledgeSourceStatus
+  chunk_count: number
+  error?: string
+  created_at: string
+  updated_at: string
+  indexed_at?: string
+}
+
+export interface KnowledgeUploadSkippedFile {
+  filename: string
+  reason: string
+}
+
 // Character data model
 export interface Character {
   id: string
@@ -104,6 +127,7 @@ export interface ConfigSection {
 export interface LaunchConfig {
   active_model: string
   configured_default_model: string
+  avatar_enabled: boolean
   config_status: AvatarModelConfigStatus
   sections: ConfigSection[]
 }
@@ -129,6 +153,7 @@ export interface AvatarModelDescriptor {
 export interface AvatarModelInfo {
   active_model: string
   configured_default_model: string
+  avatar_enabled: boolean
   models: AvatarModelDescriptor[]
   config_status: AvatarModelConfigStatus
 }

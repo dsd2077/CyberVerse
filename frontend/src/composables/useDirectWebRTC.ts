@@ -177,10 +177,14 @@ export function useDirectWebRTC() {
   const connectionState = ref<ConnectionState>('disconnected')
   const error = ref<string>('')
   const debugState = ref<AVSyncDebugState>(emptyDebugState())
+  const needsPlaybackGesture = ref(false)
+  const isOutputMuted = ref(false)
 
   let pc: RTCPeerConnection | null = null
   let sendSignaling: ((msg: any) => void) | null = null
   let localStream: MediaStream | null = null
+  let remoteAudioElement: HTMLAudioElement | null = null
+  let dedicatedAudioOutput = false
   let networkStatsTimer: ReturnType<typeof setInterval> | null = null
 
   // Serialize signaling: queue operations so addIceCandidate waits for setRemoteDescription
@@ -301,6 +305,97 @@ export function useDirectWebRTC() {
     debugState.value.notes = next.slice(-10)
   }
 
+  function remoteAudioEl(): HTMLAudioElement {
+    if (!remoteAudioElement) {
+      remoteAudioElement = new Audio()
+      remoteAudioElement.autoplay = true
+      remoteAudioElement.muted = isOutputMuted.value
+      remoteAudioElement.volume = 1
+      remoteAudioElement.addEventListener('play', () => {
+        if (audioPlayWallMs === null) {
+          audioPlayWallMs = performance.now()
+          debugState.value.firstPlayAtMs = Date.now()
+          pushNote('audio element playing')
+        }
+      })
+    }
+    return remoteAudioElement
+  }
+
+  function applyOutputMuted() {
+    const muted = isOutputMuted.value
+    const videoEl = videoElement.value
+    if (videoEl) {
+      videoEl.muted = muted
+      videoEl.volume = muted ? 0 : 1
+    }
+    if (remoteAudioElement) {
+      remoteAudioElement.muted = muted
+      remoteAudioElement.volume = muted ? 0 : 1
+    }
+  }
+
+  function clearRemoteAudioElement() {
+    if (!remoteAudioElement) return
+    remoteAudioElement.pause()
+    remoteAudioElement.srcObject = null
+    remoteAudioElement = null
+  }
+
+  function playbackErrorMessage(e: unknown): string {
+    if (e instanceof DOMException) return `${e.name}: ${e.message}`
+    if (e instanceof Error) return e.message
+    return String(e)
+  }
+
+  async function playElement(el: HTMLMediaElement, label: string) {
+    el.muted = isOutputMuted.value
+    el.volume = isOutputMuted.value ? 0 : 1
+    try {
+      await el.play()
+      pushNote(`play ok (${label})`)
+      return true
+    } catch (e: unknown) {
+      pushNote(`play blocked (${label}): ${playbackErrorMessage(e)}`)
+      return false
+    }
+  }
+
+  async function ensurePlayback(reason: string) {
+    applyOutputMuted()
+    const targets: Array<{ el: HTMLMediaElement; label: string }> = []
+    const videoEl = videoElement.value
+    const hasDedicatedAudioOutput = dedicatedAudioOutput && !!remoteAudioElement?.srcObject
+    if (!hasDedicatedAudioOutput && videoEl?.srcObject) {
+      targets.push({ el: videoEl, label: `video ${reason}` })
+    }
+    if (remoteAudioElement?.srcObject) {
+      targets.push({ el: remoteAudioElement, label: `audio ${reason}` })
+    }
+    if (targets.length === 0) return
+
+    const results = await Promise.all(targets.map((target) => playElement(target.el, target.label)))
+    needsPlaybackGesture.value = !isOutputMuted.value && results.some((ok) => !ok)
+  }
+
+  async function resumePlayback() {
+    isOutputMuted.value = false
+    applyOutputMuted()
+    await ensurePlayback('user gesture')
+  }
+
+  async function toggleOutputMute() {
+    isOutputMuted.value = !isOutputMuted.value
+    applyOutputMuted()
+    pushNote(`assistant output ${isOutputMuted.value ? 'muted' : 'unmuted'}`)
+    if (isOutputMuted.value) {
+      needsPlaybackGesture.value = false
+      return
+    }
+    needsPlaybackGesture.value = false
+    await ensurePlayback('assistant output unmuted')
+  }
+
   async function pollNetworkStats() {
     if (!pc) return
     try {
@@ -352,7 +447,7 @@ export function useDirectWebRTC() {
    * PeerConnection is created later when the server sends webrtc_offer.
    * @param signalingFn - function to send signaling messages via WebSocket
    */
-  async function connect(signalingFn: (msg: any) => void) {
+  async function connect(signalingFn: (msg: any) => void, options: { dedicatedAudioOutput?: boolean } = {}) {
     if (connectionState.value === 'connecting' || connectionState.value === 'connected') {
       return
     }
@@ -364,6 +459,10 @@ export function useDirectWebRTC() {
     sendSignaling = signalingFn
     pendingIceServers = null
     sentWebrtcReady = false
+    needsPlaybackGesture.value = false
+    isOutputMuted.value = false
+    dedicatedAudioOutput = !!options.dedicatedAudioOutput
+    clearRemoteAudioElement()
 
     // Try to acquire mic, but don't abort the connection if it fails.
     // The WebRTC session (AI video/audio) still works without a mic track.
@@ -405,22 +504,23 @@ export function useDirectWebRTC() {
     let videoMST: MediaStreamTrack | null = null
     let audioMST: MediaStreamTrack | null = null
 
-    const mergeStream = (resumePlay = false) => {
+    const mergeStream = (reason: string) => {
       const el = videoElement.value
-      if (!el || !videoMST) return
-      const tracks: MediaStreamTrack[] = [videoMST]
-      if (audioMST) tracks.push(audioMST)
+      if (!el || (!videoMST && !audioMST)) return
+      const tracks: MediaStreamTrack[] = []
+      if (videoMST) tracks.push(videoMST)
+      if (audioMST && !dedicatedAudioOutput) tracks.push(audioMST)
       el.srcObject = new MediaStream(tracks)
-      el.muted = false
-      console.log(`[DirectRTC][${ts()}] merged stream set: video=Y audio=${!!audioMST}`)
-      // When srcObject is replaced (e.g. audio track added after video), Chrome does
-      // not automatically resume playback — the autoplay attribute only fires once.
-      // Explicitly call play() so audio is heard from the first response.
-      if (resumePlay) {
-        el.play().catch((e) => {
-          console.warn(`[DirectRTC][${ts()}] play() after audio merge failed:`, e)
-        })
+      el.muted = isOutputMuted.value
+      el.volume = isOutputMuted.value ? 0 : 1
+      console.log(`[DirectRTC][${ts()}] merged stream set: video=${!!videoMST} audio=${!!audioMST}`)
+      if (audioMST && dedicatedAudioOutput) {
+        const audioEl = remoteAudioEl()
+        audioEl.srcObject = new MediaStream([audioMST])
+        applyOutputMuted()
       }
+      // srcObject may be replaced when audio arrives after video, so autoplay is not enough.
+      void ensurePlayback(reason)
     }
 
     newPc.ontrack = (event) => {
@@ -437,7 +537,7 @@ export function useDirectWebRTC() {
         }
         videoMST = track
         if (videoElement.value) {
-          mergeStream()
+          mergeStream('video track')
           attachVideoFrameCallback(videoElement.value)
         }
       }
@@ -463,7 +563,7 @@ export function useDirectWebRTC() {
           }, { once: true })
         }
 
-        mergeStream(true /* resumePlay: audio track just added */)
+        mergeStream('audio track')
       }
     }
 
@@ -611,10 +711,13 @@ export function useDirectWebRTC() {
       networkStatsTimer = null
     }
     sentWebrtcReady = false
+    needsPlaybackGesture.value = false
+    isOutputMuted.value = false
 
     if (videoElement.value) {
       videoElement.value.srcObject = null
     }
+    clearRemoteAudioElement()
 
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop())
@@ -627,6 +730,7 @@ export function useDirectWebRTC() {
     sendSignaling = null
     signalingChain = Promise.resolve()
     pendingIceServers = null
+    dedicatedAudioOutput = false
     connectionState.value = 'disconnected'
     debugState.value.connectionState = 'disconnected'
     if (debugPollTimer) {
@@ -688,11 +792,15 @@ export function useDirectWebRTC() {
     connectionState,
     debugState,
     error,
+    needsPlaybackGesture,
+    isOutputMuted,
     isMuted,
     micBarLevels,
     connect,
     disconnect,
     toggleMute,
+    resumePlayback,
+    toggleOutputMute,
     handleSignaling,
   }
 }

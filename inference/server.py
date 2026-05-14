@@ -15,12 +15,14 @@ from inference.core.types import PluginConfig
 from inference.generated import (
     avatar_pb2_grpc,
     llm_pb2_grpc,
+    rag_pb2_grpc,
     tts_pb2_grpc,
     asr_pb2_grpc,
     voice_llm_pb2_grpc,
 )
 from inference.services.avatar_service import AvatarGRPCService
 from inference.services.llm_service import LLMGRPCService
+from inference.services.rag_service import RAGGRPCService
 from inference.services.tts_service import TTSGRPCService
 from inference.services.asr_service import ASRGRPCService
 from inference.services.voice_llm_service import VoiceLLMGRPCService
@@ -39,6 +41,22 @@ _PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "omni", "persona", "voice_l
 _INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr", "omni", "persona", "voice_llm"}
 
 
+def _config_bool(value: object, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 def _configure_process_logging() -> None:
     logging.basicConfig(level=logging.INFO)
     # LiveAct pulls in vLLM transitively but this server path does not use it.
@@ -49,6 +67,8 @@ def _configure_process_logging() -> None:
 class InferenceServer:
     def __init__(self, config_path: str) -> None:
         self.config = load_config(config_path)
+        avatar_cfg = self.config.get("inference", {}).get("avatar", {})
+        self.avatar_enabled = _config_bool(avatar_cfg.get("enabled"), True)
         self.registry = PluginRegistry()
         self.rank = int(os.environ.get("RANK", "0"))
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -95,6 +115,10 @@ class InferenceServer:
     def _register_plugins(self) -> None:
         """Discover and register plugin classes from config (no hardcoded imports)."""
         for category in _PLUGIN_CATEGORIES:
+            if category == "avatar" and not self.avatar_enabled:
+                if self.is_primary:
+                    logger.info("Avatar inference disabled by config; skipping avatar plugins")
+                continue
             section = self.config.get("inference", {}).get(category, {})
             for name, conf in section.items():
                 if name == "default" or not isinstance(conf, dict):
@@ -122,6 +146,8 @@ class InferenceServer:
         stays default-only to avoid extra model/GPU cost.
         """
         for category in _PLUGIN_CATEGORIES:
+            if category == "avatar" and not self.avatar_enabled:
+                continue
             section = self.config.get("inference", {}).get(category, {})
             if category in _INITIALIZE_ALL_CATEGORIES:
                 names = [
@@ -150,10 +176,13 @@ class InferenceServer:
 
     def _register_grpc_services(self) -> None:
         avatar_pb2_grpc.add_AvatarServiceServicer_to_server(
-            AvatarGRPCService(self.registry), self.server
+            AvatarGRPCService(self.registry, enabled=self.avatar_enabled), self.server
         )
         llm_pb2_grpc.add_LLMServiceServicer_to_server(
             LLMGRPCService(self.registry), self.server
+        )
+        rag_pb2_grpc.add_RAGServiceServicer_to_server(
+            RAGGRPCService(self.config), self.server
         )
         tts_pb2_grpc.add_TTSServiceServicer_to_server(
             TTSGRPCService(self.registry), self.server

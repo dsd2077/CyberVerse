@@ -22,17 +22,28 @@ import (
 )
 
 type fakeInferenceService struct {
-	avatarInfo              *pb.AvatarInfo
-	infoErr                 error
-	setAvatarErr            error
-	setAvatarErrs           []error
-	setAvatarCalls          int
-	setAvatarSizes          []int
-	setAvatarFormats        []string
-	checkVoiceProviderError string
-	checkVoiceErr           error
-	checkVoiceConfigs       chan inference.VoiceLLMSessionConfig
-	voiceConfigs            chan inference.VoiceLLMSessionConfig
+	avatarInfo                *pb.AvatarInfo
+	infoCalls                 int
+	infoErr                   error
+	setAvatarErr              error
+	setAvatarErrs             []error
+	setAvatarCalls            int
+	setAvatarSizes            []int
+	setAvatarFormats          []string
+	generateAvatarStreamCalls int
+	generateAvatarCalls       int
+	checkVoiceProviderError   string
+	checkVoiceErr             error
+	checkVoiceConfigs         chan inference.VoiceLLMSessionConfig
+	voiceConfigs              chan inference.VoiceLLMSessionConfig
+	ragIndexRequests          chan inference.RAGIndexSourceRequest
+	ragDeleteRequests         chan string
+	ragSearchRequests         chan inference.RAGSearchRequest
+	ragIndexChunkCount        int
+	ragIndexErr               error
+	ragDeleteErr              error
+	ragSearchResults          []inference.RAGSearchResult
+	ragSearchErr              error
 }
 
 func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
@@ -41,6 +52,7 @@ func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
 }
 
 func (f *fakeInferenceService) AvatarInfo(context.Context) (*pb.AvatarInfo, error) {
+	f.infoCalls++
 	if f.infoErr != nil {
 		return nil, f.infoErr
 	}
@@ -57,6 +69,7 @@ func (f *fakeInferenceService) SetAvatar(_ context.Context, _ string, imageData 
 	return f.setAvatarErr
 }
 func (f *fakeInferenceService) GenerateAvatarStream(context.Context, <-chan *pb.AudioChunk) (<-chan *pb.VideoChunk, <-chan error) {
+	f.generateAvatarStreamCalls++
 	videoCh := make(chan *pb.VideoChunk)
 	errCh := make(chan error)
 	close(videoCh)
@@ -64,6 +77,7 @@ func (f *fakeInferenceService) GenerateAvatarStream(context.Context, <-chan *pb.
 	return videoCh, errCh
 }
 func (f *fakeInferenceService) GenerateAvatar(context.Context, []*pb.AudioChunk) (<-chan *pb.VideoChunk, <-chan error) {
+	f.generateAvatarCalls++
 	videoCh := make(chan *pb.VideoChunk)
 	errCh := make(chan error)
 	close(videoCh)
@@ -118,6 +132,45 @@ func (f *fakeInferenceService) ConverseStream(_ context.Context, _ <-chan infere
 }
 func (f *fakeInferenceService) Interrupt(context.Context, string) error { return nil }
 func (f *fakeInferenceService) Close() error                            { return nil }
+
+func (f *fakeInferenceService) IndexRAGSource(_ context.Context, req inference.RAGIndexSourceRequest) (int, error) {
+	if f.ragIndexRequests != nil {
+		select {
+		case f.ragIndexRequests <- req:
+		default:
+		}
+	}
+	if f.ragIndexErr != nil {
+		return 0, f.ragIndexErr
+	}
+	if f.ragIndexChunkCount > 0 {
+		return f.ragIndexChunkCount, nil
+	}
+	return 1, nil
+}
+
+func (f *fakeInferenceService) DeleteRAGSource(_ context.Context, _ string, _ string, sourceID string) error {
+	if f.ragDeleteRequests != nil {
+		select {
+		case f.ragDeleteRequests <- sourceID:
+		default:
+		}
+	}
+	return f.ragDeleteErr
+}
+
+func (f *fakeInferenceService) SearchRAG(_ context.Context, req inference.RAGSearchRequest) ([]inference.RAGSearchResult, error) {
+	if f.ragSearchRequests != nil {
+		select {
+		case f.ragSearchRequests <- req:
+		default:
+		}
+	}
+	if f.ragSearchErr != nil {
+		return nil, f.ragSearchErr
+	}
+	return f.ragSearchResults, nil
+}
 
 func newAvatarModelTestRouter(t *testing.T, activeModel string) (*Router, *character.Store) {
 	t.Helper()
@@ -639,5 +692,143 @@ func TestCreateSessionRejectsWhenActiveRuntimeModelUnavailable(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestCreateSessionWithAvatarDisabledUsesCachedIdleVideoOnly(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  avatar:
+    enabled: false
+    default: flash_head
+    flash_head:
+      infer_params:
+        width: 512
+        height: 512
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{Name: "Voice Only", VoiceType: "Tina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := character.ImageInfo{Filename: "avatar.png", OrigName: "avatar.png"}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+	idleDir := charStore.IdleVideosForSizeDir(char.ID, image.Filename, 512, 512)
+	if err := os.MkdirAll(idleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idleDir, "cached.mp4"), []byte("cached"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore, cfg.Pipeline)
+	r := NewRouter(mgr, orch, nil, nil, cfg, charStore, "", configPath)
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.IdleVideoURLs) != 1 || !strings.Contains(resp.IdleVideoURLs[0], "cached.mp4") {
+		t.Fatalf("expected cached idle video URL, got %v", resp.IdleVideoURLs)
+	}
+	if inf.infoCalls != 0 {
+		t.Fatalf("expected no AvatarInfo calls when avatar disabled, got %d", inf.infoCalls)
+	}
+	if inf.setAvatarCalls != 0 {
+		t.Fatalf("expected no SetAvatar calls when avatar disabled, got %d", inf.setAvatarCalls)
+	}
+	if inf.generateAvatarCalls != 0 || inf.generateAvatarStreamCalls != 0 {
+		t.Fatalf("expected no avatar generation calls, got GenerateAvatar=%d GenerateAvatarStream=%d", inf.generateAvatarCalls, inf.generateAvatarStreamCalls)
+	}
+}
+
+func TestCreateSessionWithAvatarDisabledAndMissingIdleCacheStillSucceeds(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  avatar:
+    enabled: false
+    default: live_act
+    live_act:
+      infer_params:
+        size: "320*480"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{Name: "No Cache", VoiceType: "Tina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := character.ImageInfo{Filename: "avatar.png", OrigName: "avatar.png"}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.live_act", OutputFps: 20, OutputWidth: 320, OutputHeight: 480},
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore, cfg.Pipeline)
+	r := NewRouter(mgr, orch, nil, nil, cfg, charStore, "", configPath)
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.IdleVideoURLs) != 0 || resp.IdleVideoURL != "" {
+		t.Fatalf("expected no idle video URLs without cache, got %q %v", resp.IdleVideoURL, resp.IdleVideoURLs)
+	}
+	if inf.infoCalls != 0 || inf.setAvatarCalls != 0 || inf.generateAvatarCalls != 0 || inf.generateAvatarStreamCalls != 0 {
+		t.Fatalf("expected no avatar calls when disabled, info=%d set=%d gen=%d stream=%d", inf.infoCalls, inf.setAvatarCalls, inf.generateAvatarCalls, inf.generateAvatarStreamCalls)
 	}
 }

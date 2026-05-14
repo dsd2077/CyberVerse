@@ -908,7 +908,7 @@ packages:
 - pypi: ./
   name: cyberverse
   version: 0.1.0
-  sha256: ba58e30fcb68d3c1632bf9bec43a21ef12234e7f0878d15b462ff2d2984df957
+  sha256: bd366264e983dae012ec3bb1543dfcccc0ac928f7d800e10639666b52a87daff
   requires_dist:
   - numpy>=1.24
   - pydantic>=2.0
@@ -924,6 +924,14 @@ packages:
   - openai>=1.0 ; extra == 'qwen'
   - websockets>=12.0 ; extra == 'qwen'
   - scipy>=1.10 ; extra == 'qwen'
+  - langchain>=1.0 ; extra == 'rag'
+  - langchain-core>=1.0 ; extra == 'rag'
+  - langchain-openai>=1.0 ; extra == 'rag'
+  - langchain-text-splitters>=1.0 ; extra == 'rag'
+  - langchain-community>=0.4 ; extra == 'rag'
+  - langchain-chroma>=1.0 ; extra == 'rag'
+  - pypdf>=5.0 ; extra == 'rag'
+  - python-docx>=1.1 ; extra == 'rag'
   - opencv-python-headless>=4.12.0 ; extra == 'flash-head'
   - diffusers>=0.34.0 ; extra == 'flash-head'
   - transformers==4.57.3 ; extra == 'flash-head'
@@ -971,7 +979,7 @@ packages:
   - langgraph>=1.0 ; extra == 'agent'
   - langgraph-checkpoint-sqlite>=2.0.0 ; extra == 'agent'
   - aiosqlite>=0.20 ; extra == 'agent'
-  - cyberverse[inference,llm,tts,omni,asr,flash-head,live-act,agent] ; extra == 'all'
+  - cyberverse[inference,llm,tts,omni,asr,rag,flash-head,live-act,agent] ; extra == 'all'
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/dav1d-1.2.1-hd590300_0.conda
   sha256: 22053a5842ca8ee1cf8e1a817138cdb5e647eb2c46979f84153f6ad7bde73020

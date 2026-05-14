@@ -1,0 +1,57 @@
+syntax = "proto3";
+package cyberverse;
+
+option go_package = "github.com/cyberverse/server/internal/pb";
+
+service RAGService {
+  rpc IndexSource (RAGIndexSourceRequest) returns (RAGIndexSourceResponse);
+  rpc DeleteSource (RAGDeleteSourceRequest) returns (RAGDeleteSourceResponse);
+  rpc Search (RAGSearchRequest) returns (RAGSearchResponse);
+}
+
+message RAGIndexSourceRequest {
+  string character_id = 1;
+  string character_dir = 2;
+  string source_id = 3;
+  string source_type = 4;
+  string title = 5;
+  string filename = 6;
+  string mime_type = 7;
+  string source_path = 8;
+}
+
+message RAGIndexSourceResponse {
+  int32 chunk_count = 1;
+}
+
+message RAGDeleteSourceRequest {
+  string character_id = 1;
+  string character_dir = 2;
+  string source_id = 3;
+}
+
+message RAGDeleteSourceResponse {
+  bool success = 1;
+}
+
+message RAGSearchRequest {
+  string character_id = 1;
+  string character_dir = 2;
+  string query = 3;
+  int32 top_k = 4;
+  int32 max_context_chars = 5;
+  float min_score = 6;
+}
+
+message RAGSearchResult {
+  string source_id = 1;
+  string source_type = 2;
+  string title = 3;
+  string filename = 4;
+  string content = 5;
+  float score = 6;
+}
+
+message RAGSearchResponse {
+  repeated RAGSearchResult results = 1;
+}

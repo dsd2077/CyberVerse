@@ -127,6 +127,18 @@ async def test_avatar_get_info(registry):
 
 
 @pytest.mark.asyncio
+async def test_avatar_get_info_aborts_when_disabled(registry):
+    svc = AvatarGRPCService(registry, enabled=False)
+    context = MagicMock()
+    context.abort = AsyncMock(side_effect=RuntimeError("aborted"))
+
+    with pytest.raises(RuntimeError):
+        await svc.GetInfo(MagicMock(), context)
+
+    context.abort.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_avatar_reset(registry):
     svc = AvatarGRPCService(registry)
     request = MagicMock(session_id="test")

@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from inference.server import InferenceServer
 
 
@@ -178,3 +180,55 @@ def test_build_plugin_config_passes_omni_models_to_persona_plugins():
     assert plugin_config.params == {"model_provider": "qwen_omni"}
     assert plugin_config.shared["omni"] == config["inference"]["omni"]
     assert plugin_config.shared["runtime_config"] == config
+
+
+def test_register_plugins_skips_avatar_when_disabled_but_keeps_voice_plugins():
+    config = {
+        "inference": {
+            "avatar": {
+                "enabled": False,
+                "default": "flash_head",
+                "flash_head": {"plugin_class": "pkg.Avatar"},
+            },
+            "omni": {
+                "default": "qwen_omni",
+                "qwen_omni": {"plugin_class": "pkg.Omni"},
+            },
+        }
+    }
+    server = _make_server(config)
+
+    with patch("inference.server.import_plugin_class", return_value=object):
+        server._register_plugins()
+
+    assert "avatar.flash_head" not in server.registry.registered_names
+    assert "omni.qwen_omni" in server.registry.registered_names
+
+
+@pytest.mark.asyncio
+async def test_initialize_configured_plugins_skips_avatar_when_disabled():
+    class DummyPlugin:
+        async def initialize(self, config):
+            self.config = config
+
+    config = {
+        "inference": {
+            "avatar": {
+                "enabled": False,
+                "default": "flash_head",
+                "flash_head": {"plugin_class": "pkg.Avatar"},
+            },
+            "tts": {
+                "default": "qwen",
+                "qwen": {"plugin_class": "pkg.TTS"},
+            },
+        }
+    }
+    server = _make_server(config)
+    server.registry.register("avatar.flash_head", DummyPlugin)
+    server.registry.register("tts.qwen", DummyPlugin)
+
+    await server._initialize_configured_plugins()
+
+    assert "avatar.flash_head" not in server.registry.initialized_names
+    assert "tts.qwen" in server.registry.initialized_names

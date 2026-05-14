@@ -28,9 +28,15 @@ type InferenceConfig struct {
 }
 
 type PluginDefaults struct {
-	LLM PluginDefaultSection `yaml:"llm"`
-	ASR PluginDefaultSection `yaml:"asr"`
-	TTS PluginDefaultSection `yaml:"tts"`
+	Avatar AvatarPluginSection  `yaml:"avatar"`
+	LLM    PluginDefaultSection `yaml:"llm"`
+	ASR    PluginDefaultSection `yaml:"asr"`
+	TTS    PluginDefaultSection `yaml:"tts"`
+}
+
+type AvatarPluginSection struct {
+	Enabled *bool  `yaml:"enabled"`
+	Default string `yaml:"default"`
 }
 
 type PluginDefaultSection struct {
@@ -60,6 +66,7 @@ type PipelineConfig struct {
 	DefaultMode     string            `yaml:"default_mode"`
 	StreamingMode   string            `yaml:"streaming_mode"` // "direct" (default, P2P WebRTC) or "livekit"
 	VisualInput     VisualInputConfig `yaml:"visual_input,omitempty"`
+	RAG             RAGConfig         `yaml:"rag,omitempty"`
 	ICEServers      []ICEServer       `yaml:"ice_servers,omitempty"`
 	ICETCPPort      int               `yaml:"ice_tcp_port,omitempty"`      // Deprecated: use TURN instead
 	ICEPublicIP     string            `yaml:"ice_public_ip,omitempty"`     // Public IP or hostname (also used by TURN)
@@ -72,6 +79,20 @@ type PipelineConfig struct {
 	DefaultLLM      string            `yaml:"-"`
 	DefaultASR      string            `yaml:"-"`
 	DefaultTTS      string            `yaml:"-"`
+	AvatarEnabled   *bool             `yaml:"-"`
+}
+
+type RAGConfig struct {
+	Enabled         *bool   `yaml:"enabled,omitempty"`
+	TopK            int     `yaml:"top_k,omitempty"`
+	MinScore        float32 `yaml:"min_score,omitempty"`
+	MaxContextChars int     `yaml:"max_context_chars,omitempty"`
+	ChunkChars      int     `yaml:"chunk_chars,omitempty"`
+	ChunkOverlap    int     `yaml:"chunk_overlap_chars,omitempty"`
+}
+
+func (c RAGConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 type VisualInputConfig struct {
@@ -88,6 +109,13 @@ type VisualInputConfig struct {
 
 func (c VisualInputConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+func (c *Config) AvatarEnabled() bool {
+	if c == nil || c.Plugins.Avatar.Enabled == nil {
+		return true
+	}
+	return *c.Plugins.Avatar.Enabled
 }
 
 // ICEServer configures STUN/TURN servers for direct WebRTC mode.
@@ -157,6 +185,21 @@ func Load(path string) (*Config, error) {
 	if cfg.Pipeline.VisualInput.FrameTTLMS == 0 {
 		cfg.Pipeline.VisualInput.FrameTTLMS = 10000
 	}
+	if cfg.Pipeline.RAG.TopK == 0 {
+		cfg.Pipeline.RAG.TopK = 5
+	}
+	if cfg.Pipeline.RAG.MaxContextChars == 0 {
+		cfg.Pipeline.RAG.MaxContextChars = 4500
+	}
+	if cfg.Pipeline.RAG.MinScore == 0 {
+		cfg.Pipeline.RAG.MinScore = 0.25
+	}
+	if cfg.Pipeline.RAG.ChunkChars == 0 {
+		cfg.Pipeline.RAG.ChunkChars = 900
+	}
+	if cfg.Pipeline.RAG.ChunkOverlap == 0 {
+		cfg.Pipeline.RAG.ChunkOverlap = 120
+	}
 	if len(cfg.Pipeline.ICEServers) == 0 {
 		cfg.Pipeline.ICEServers = []ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
@@ -189,6 +232,8 @@ func Load(path string) (*Config, error) {
 	cfg.Pipeline.DefaultLLM = cfg.Plugins.LLM.Default
 	cfg.Pipeline.DefaultASR = cfg.Plugins.ASR.Default
 	cfg.Pipeline.DefaultTTS = cfg.Plugins.TTS.Default
+	avatarEnabled := cfg.AvatarEnabled()
+	cfg.Pipeline.AvatarEnabled = &avatarEnabled
 
 	// Inference gRPC address: env var takes precedence
 	if addr := os.Getenv("GRPC_INFERENCE_ADDR"); addr != "" {

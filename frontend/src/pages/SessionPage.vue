@@ -9,7 +9,13 @@ import { useWebRTC } from '../composables/useWebRTC'
 import { useDirectWebRTC } from '../composables/useDirectWebRTC'
 import { useChat } from '../composables/useChat'
 import { useVisualInput, type VisualInputConfig } from '../composables/useVisualInput'
-import { deleteSession, resolveApiUrl } from '../services/api'
+import { deleteSession } from '../services/api'
+import {
+  clearSessionLaunchState,
+  loadSessionLaunchState,
+  saveSessionLaunchState,
+  sessionLaunchStateFromQuery,
+} from '../utils/sessionLaunchState'
 
 const router = useRouter()
 const route = useRoute()
@@ -29,16 +35,15 @@ const showDiag = ref(false)
 const isChatCollapsed = ref(false)
 const connectionError = ref('')
 
-const streamingMode = (route.query.streaming_mode as string) || 'direct'
+const queryLaunchState = sessionLaunchStateFromQuery(sessionId.value, route.query as Record<string, unknown>)
+if (queryLaunchState) {
+  saveSessionLaunchState(queryLaunchState)
+}
+const launchState = ref(loadSessionLaunchState(sessionId.value) || queryLaunchState)
+const streamingMode = launchState.value?.streaming_mode || 'direct'
 
 function parseVisualInputConfig(): Partial<VisualInputConfig> | undefined {
-  const raw = route.query.visual_input
-  if (!raw || Array.isArray(raw)) return undefined
-  try {
-    return JSON.parse(raw) as Partial<VisualInputConfig>
-  } catch {
-    return undefined
-  }
+  return launchState.value?.visual_input
 }
 
 const visualInputConfig = computed(() => parseVisualInputConfig())
@@ -54,9 +59,16 @@ const videoElement = isDirectMode ? dp.videoElement : lk.videoElement
 const connectionState = isDirectMode ? dp.connectionState : lk.connectionState
 const debugState = isDirectMode ? dp.debugState : lk.debugState
 const isMuted = isDirectMode ? dp.isMuted : lk.isMuted
+const isOutputMuted = isDirectMode ? dp.isOutputMuted : lk.isOutputMuted
 const micBarLevels = isDirectMode ? dp.micBarLevels : lk.micBarLevels
 const toggleMute = isDirectMode ? dp.toggleMute : lk.toggleMute
+const toggleOutputMute = isDirectMode ? dp.toggleOutputMute : lk.toggleOutputMute
 const webrtcDisconnect = isDirectMode ? dp.disconnect : lk.disconnect
+
+const outputMutedVisual = computed(() => isOutputMuted.value)
+const outputButtonTitle = computed(() => {
+  return isOutputMuted.value ? t('session.outputUnmute') : t('session.outputMute')
+})
 
 watchEffect(() => {
   const inst = videoPlayerRef.value
@@ -64,7 +76,7 @@ watchEffect(() => {
   videoElement.value = inner ? unref(inner) : null
 })
 
-const characterId = computed(() => (route.query.character_id as string) || '')
+const characterId = computed(() => launchState.value?.character_id || '')
 
 const {
   messages,
@@ -228,14 +240,12 @@ watchEffect(() => {
 })
 
 // Initialize idle video URLs from route query (if already cached at session creation)
-const routeIdleUrls = route.query.idle_video_urls
-  ? JSON.parse(route.query.idle_video_urls as string) as string[]
-  : null
-const routeIdleUrl = (route.query.idle_video_url as string) || ''
-if (routeIdleUrls && routeIdleUrls.length > 0) {
-  idleVideoUrls.value = routeIdleUrls.map(resolveApiUrl)
-} else if (routeIdleUrl) {
-  idleVideoUrls.value = [resolveApiUrl(routeIdleUrl)]
+const launchIdleUrls = launchState.value?.idle_video_urls
+const launchIdleUrl = launchState.value?.idle_video_url || ''
+if (launchIdleUrls && launchIdleUrls.length > 0) {
+  idleVideoUrls.value = launchIdleUrls
+} else if (launchIdleUrl) {
+  idleVideoUrls.value = [launchIdleUrl]
 }
 
 // Standby MP4 failed to decode (404/HTML, corrupt file, etc.) — do not keep black layer over WebRTC.
@@ -284,6 +294,10 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
 
 // Auto-connect on mount using session params from query
 onMounted(async () => {
+  if (queryLaunchState && Object.keys(route.query).length > 0) {
+    void router.replace({ path: route.path })
+  }
+
   window.addEventListener('resize', keepVisualPreviewInBounds)
 
   const startedAt = Date.now()
@@ -305,7 +319,10 @@ onMounted(async () => {
     // Direct P2P WebRTC: register signaling handler then connect
     registerSignalingHandler((data: any) => dp.handleSignaling(data))
     try {
-      await dp.connect((msg: any) => sendSignaling(msg))
+      await dp.connect(
+        (msg: any) => sendSignaling(msg),
+        { dedicatedAudioOutput: launchState.value?.avatar_enabled === false },
+      )
     } catch (err) {
       connectionError.value = t('session.connectionFailed')
       console.error('[SessionPage] Direct media connection failed:', err)
@@ -313,8 +330,8 @@ onMounted(async () => {
     }
   } else {
     // LiveKit mode
-    const url = route.query.livekit_url as string
-    const token = route.query.livekit_token as string
+    const url = launchState.value?.livekit_url || ''
+    const token = launchState.value?.livekit_token || ''
     if (url && token) {
       try {
         await lk.connect(url, token)
@@ -344,10 +361,12 @@ async function handleDisconnect() {
   visualInput.stop(undefined, true)
   webrtcDisconnect()
   chatDisconnect()
+  const returnPath = launchState.value?.return_path || '/characters'
   if (sessionId.value) {
     await deleteSession(sessionId.value).catch(() => {})
+    clearSessionLaunchState(sessionId.value)
   }
-  router.push('/characters')
+  router.push(returnPath)
 }
 
 function handleLoadMore() {
@@ -358,6 +377,10 @@ function handleLoadMore() {
 
 function toggleChatPanel() {
   isChatCollapsed.value = !isChatCollapsed.value
+}
+
+async function handleOutputButtonClick() {
+  await toggleOutputMute()
 }
 
 function formatTime(s: number): string {
@@ -548,6 +571,22 @@ function formatTime(s: number): string {
             <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h5a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 11 16H6a2.5 2.5 0 0 1-2.5-2.5v-7Z" />
             <path d="m13.5 8 3-2v8l-3-2" stroke-linecap="round" stroke-linejoin="round" />
             <path v-if="!visualInput.isCameraActive.value" d="M3 3l14 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+
+        <!-- Digital human output mute; also unlocks browser audio when needed. -->
+        <button
+          type="button"
+          :title="outputButtonTitle"
+          :aria-label="outputButtonTitle"
+          class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+          :class="outputMutedVisual ? 'bg-cv-danger text-white' : 'bg-white/10 text-cv-text hover:bg-white/16'"
+          @click="handleOutputButtonClick"
+        >
+          <svg class="w-5 h-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M3 8.2v3.6h3l4 3.2V5L6 8.2H3Z" stroke-linejoin="round" />
+            <path d="M13 7.2a4 4 0 0 1 0 5.6M15.5 5a7.5 7.5 0 0 1 0 10" stroke-linecap="round" />
+            <path v-if="outputMutedVisual" d="M3 3l14 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
         </button>
 

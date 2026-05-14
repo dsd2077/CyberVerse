@@ -42,6 +42,8 @@ message VoiceLLMConfig {
   string welcome_message = 7;
   repeated VoiceLLMDialogContextItem dialog_context = 8;
   string provider = 9;
+  string character_id = 10;
+  string character_dir = 11;
 }
 
 message VoiceLLMDialogContextItem {

@@ -112,6 +112,7 @@ class VoiceLLMInputEvent:
     text: str = ""
     image: ImageFrame | None = None
     tool_result: ToolResult | None = None
+    response_instructions: str | None = None
 
 
 @dataclass
@@ -126,6 +127,8 @@ class VoiceLLMSessionConfig:
     """Per-session character config passed from Go through gRPC."""
     session_id: str = ""
     provider: str = ""
+    character_id: str = ""
+    character_dir: str = ""
     system_prompt: str = ""
     voice: str = ""
     bot_name: str = ""
@@ -134,6 +137,7 @@ class VoiceLLMSessionConfig:
     input_mode: str = ""
     dialog_context: list[VoiceLLMDialogContextItem] = field(default_factory=list)
     tools: list[ToolDefinition] = field(default_factory=list)
+    defer_response: bool = False
 
 
 @dataclass

@@ -58,6 +58,9 @@ func TestBuildVoiceLLMSessionConfigUsesPersonaAndOnlyOmniRolePrompt(t *testing.T
 	if got.BotName != "晴天" || got.SpeakingStyle != "自然、简洁" {
 		t.Fatalf("expected voice-specific fields to stay separate, got %+v", got)
 	}
+	if got.CharacterID != char.ID || got.CharacterDir == "" {
+		t.Fatalf("expected character RAG identity fields, got %+v", got)
+	}
 	if got.SystemPrompt != "你和用户像熟悉的朋友。" {
 		t.Fatalf("expected omni mode to keep only the character prompt, got %q", got.SystemPrompt)
 	}
@@ -201,5 +204,32 @@ func TestBuildVoiceLLMSessionConfigUsesPersonaWhenAgentEnabled(t *testing.T) {
 	}
 	if !orch.sessionSupportsVisualInput(session) {
 		t.Fatal("expected qwen_omni visual support to use the underlying character provider")
+	}
+}
+
+func TestStandardSystemPromptWithRAGAppendsMaterialContext(t *testing.T) {
+	store, err := character.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := store.Create(&character.Character{
+		Name:         "晴天",
+		SystemPrompt: "你是晴天。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orch := New(nil, nil, nil, nil, store)
+	session := NewSession("s1", ModeStandard, char.ID)
+
+	got := orch.standardSystemPromptWithRAG(session, "【角色素材检索结果】\n[1] 早年经历\n出生在海边。")
+	if !strings.Contains(got, "角色提示：你是晴天。") {
+		t.Fatalf("expected role prompt, got %q", got)
+	}
+	if !strings.Contains(got, "【角色素材检索结果】") || !strings.Contains(got, "出生在海边") {
+		t.Fatalf("expected RAG context, got %q", got)
+	}
+	if strings.Contains(got, "biography｜") {
+		t.Fatalf("expected material type label to be omitted, got %q", got)
 	}
 }

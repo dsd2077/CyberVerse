@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cyberverse/server/internal/character"
+	"github.com/cyberverse/server/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 type characterResponse struct {
@@ -47,6 +50,10 @@ func (r *Router) currentIdleVideoTarget(ctx context.Context) idleVideoTarget {
 		return idleVideoTarget{}
 	}
 
+	if !r.orch.AvatarEnabled() {
+		return r.configuredIdleVideoTarget()
+	}
+
 	info, err := r.orch.AvatarInfo(ctx)
 	if err != nil {
 		return idleVideoTarget{}
@@ -56,6 +63,77 @@ func (r *Router) currentIdleVideoTarget(ctx context.Context) idleVideoTarget {
 		width:  int(info.GetOutputWidth()),
 		height: int(info.GetOutputHeight()),
 	}
+	if !target.valid() {
+		return idleVideoTarget{}
+	}
+	return target
+}
+
+func parseAvatarSize(raw string) (int, int) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return 0, 0
+	}
+	raw = strings.ReplaceAll(raw, " ", "")
+	sep := "*"
+	if strings.Contains(raw, "x") {
+		sep = "x"
+	}
+	parts := strings.Split(raw, sep)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	width, wErr := strconv.Atoi(parts[0])
+	height, hErr := strconv.Atoi(parts[1])
+	if wErr != nil || hErr != nil || width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	return width, height
+}
+
+func yamlIntAtPath(doc *yaml.Node, dotPath string) int {
+	node, err := config.GetNodeAtPath(doc, dotPath)
+	if err != nil {
+		return 0
+	}
+	switch v := config.NodeValue(node, true).(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(v))
+		return n
+	default:
+		return 0
+	}
+}
+
+func (r *Router) configuredIdleVideoTarget() idleVideoTarget {
+	if r == nil || r.configPath == "" {
+		return idleVideoTarget{}
+	}
+	model := r.configuredDefaultAvatarModel()
+	if model == "" {
+		return idleVideoTarget{}
+	}
+	doc, err := config.ReadYAMLNode(r.configPath)
+	if err != nil {
+		return idleVideoTarget{}
+	}
+	inferPath := inferParamsConfigPath(model)
+	width := yamlIntAtPath(doc, inferPath+".width")
+	height := yamlIntAtPath(doc, inferPath+".height")
+	if width <= 0 || height <= 0 {
+		if node, err := config.GetNodeAtPath(doc, inferPath+".size"); err == nil {
+			if raw, ok := config.NodeValue(node, true).(string); ok {
+				width, height = parseAvatarSize(raw)
+			}
+		}
+	}
+	target := idleVideoTarget{width: width, height: height}
 	if !target.valid() {
 		return idleVideoTarget{}
 	}

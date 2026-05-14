@@ -24,6 +24,16 @@ tts = ["openai>=1.0", "scipy>=1.10"]
 omni = ["websockets>=12.0"]
 voice_llm = ["websockets>=12.0"]
 qwen = ["openai>=1.0", "websockets>=12.0", "scipy>=1.10"]
+rag = [
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "langchain-openai>=1.0",
+    "langchain-text-splitters>=1.0",
+    "langchain-community>=0.4",
+    "langchain-chroma>=1.0",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+]
 flash_head = [
     "opencv-python-headless>=4.12.0",
     "diffusers>=0.34.0",
@@ -80,7 +90,7 @@ agent = [
     "aiosqlite>=0.20",
 ]
 all = [
-    "cyberverse[inference,llm,tts,omni,asr,flash_head,live_act,agent]",
+    "cyberverse[inference,llm,tts,omni,asr,rag,flash_head,live_act,agent]",
 ]
 
 [tool.pytest.ini_options]

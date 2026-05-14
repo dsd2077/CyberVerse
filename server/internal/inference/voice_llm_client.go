@@ -21,6 +21,8 @@ func voiceLLMConfigPB(config VoiceLLMSessionConfig) *pb.VoiceLLMConfig {
 	return &pb.VoiceLLMConfig{
 		SessionId:      config.SessionID,
 		Provider:       config.Provider,
+		CharacterId:    config.CharacterID,
+		CharacterDir:   config.CharacterDir,
 		SystemPrompt:   config.SystemPrompt,
 		Voice:          config.Voice,
 		BotName:        config.BotName,

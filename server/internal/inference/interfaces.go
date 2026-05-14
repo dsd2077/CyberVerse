@@ -55,6 +55,8 @@ type VoiceLLMDialogContextItem struct {
 type VoiceLLMSessionConfig struct {
 	SessionID      string
 	Provider       string
+	CharacterID    string
+	CharacterDir   string
 	SystemPrompt   string
 	Voice          string // maps to voice_type / speaker
 	BotName        string

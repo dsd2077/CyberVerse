@@ -25,6 +25,7 @@ from inference.plugins.voice_llm.persona.memory import (
 )
 from inference.plugins.voice_llm.persona.runtime import LocalTaskRuntime
 from inference.plugins.voice_llm.persona.supervisor import PendingSubAgentTask, PersonaSupervisor, SupervisorToolResult
+from inference.rag import RAGEngine, RAGSearchRequest
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,20 @@ PERSONA_TOOL_DEFINITIONS = [
         description="取消当前会话中最新活跃的 CyberVerse 后台任务。",
         parameters={"type": "object", "properties": {}},
     ),
+    ToolDefinition(
+        name="retrieve_character_knowledge",
+        description="当用户询问当前角色的知识库、导入文档或人物生平事实时使用；先检索再回答。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "用于检索角色素材库的具体问题或关键词。",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
 ]
 
 MEMORY_TOOL_DEFINITION = ToolDefinition(
@@ -101,6 +116,7 @@ PERSONA_AGENT_INSTRUCTIONS = """你是 CyberVerse 数字人 PersonaAgent，直�
 调用 create_task 后，最多用一句很短的确认，例如“好的，我去查。”不要做空泛等待播报、不要承诺很快返回结果、不要再追加问题。
 询问后台任务进度：调用 get_task_status。
 要求取消、停止、不用继续当前后台任务：调用 cancel_task。
+询问当前角色的导入知识、文档内容、经历、生平或背景事实：必须先调用 retrieve_character_knowledge；如果没有检索结果，再说明资料库里没有找到相关信息。
 
 """
 
@@ -128,6 +144,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self.supervisor: PersonaSupervisor | None = None
         self.memory_client: HindsightMemoryClient | None = None
         self._memory_tasks: set[asyncio.Task[None]] = set()
+        self.rag_engine: RAGEngine | None = None
         self.checkpoint_db_path = ""
         self.task_poll_interval_seconds = 1.0
         self.task_monitor_timeout_seconds = 1800.0
@@ -189,6 +206,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                 }
             }
         self.memory_client = HindsightMemoryClient(hindsight_config_from_runtime_config(runtime_config))
+        self.rag_engine = RAGEngine(runtime_config)
         self.task_runtime = LocalTaskRuntime(
             runtime_config=runtime_config,
             max_active_tasks_per_session=int(config.params.get("max_active_tasks_per_session") or 3),
@@ -229,12 +247,102 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         if self.model_plugin is not None:
             await self.model_plugin.interrupt()
 
-    async def _execute_tool(self, call: ToolCall, session_id: str) -> SupervisorToolResult:
+    async def _retrieve_character_knowledge(
+        self,
+        call: ToolCall,
+        session_config: VoiceLLMSessionConfig,
+    ) -> SupervisorToolResult:
+        query = self._clean_text((call.arguments or {}).get("query")) or self._clean_text(
+            (call.arguments or {}).get("text")
+        )
+        if not query:
+            return SupervisorToolResult(result={"ok": False, "results": [], "error": "query is required"})
+        if not session_config.character_dir:
+            return SupervisorToolResult(result={"ok": True, "results": [], "reason": "character_dir_missing"})
+        if self.rag_engine is None:
+            return SupervisorToolResult(result={"ok": False, "results": [], "error": "rag engine is not initialized"})
+
+        results = await self.rag_engine.search(
+            RAGSearchRequest(
+                character_id=session_config.character_id,
+                character_dir=session_config.character_dir,
+                query=query,
+            )
+        )
+        return SupervisorToolResult(
+            result={
+                "ok": True,
+                "query": query,
+                "results": [
+                    {
+                        "source_id": item.source_id,
+                        "title": item.title,
+                        "filename": item.filename,
+                        "content": item.content,
+                        "score": item.score,
+                    }
+                    for item in results
+                ],
+            }
+        )
+
+    @staticmethod
+    def _format_rag_response_instructions(query: str, results: list[dict[str, Any]]) -> str:
+        lines = [
+            "请回答用户刚才的问题。下列内容来自当前角色素材库；如果与问题相关，必须优先依据这些素材回答；如果无关，请忽略它们。",
+            f"用户问题：{query}",
+            "【角色素材检索结果】",
+        ]
+        for idx, item in enumerate(results, 1):
+            title = str(item.get("title") or item.get("filename") or f"素材{idx}").strip()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            lines.append(f"[{idx}] {title}\n{content}")
+        lines.append("不要提到内部检索过程。不要编造素材中没有的事实。")
+        return "\n\n".join(lines)
+
+    async def _rag_response_instructions(
+        self,
+        text: str,
+        session_config: VoiceLLMSessionConfig,
+    ) -> str:
+        result = await self._retrieve_character_knowledge(
+            ToolCall(
+                id="persona_rag_pre_response",
+                name="retrieve_character_knowledge",
+                arguments={"query": text},
+            ),
+            session_config,
+        )
+        results = result.result.get("results")
+        if not isinstance(results, list) or not results:
+            logger.info(
+                "persona RAG pre-response no results session=%s query=%s",
+                session_config.session_id or "",
+                self._clip_text(text),
+            )
+            return ""
+        logger.info(
+            "persona RAG pre-response hit session=%s query=%s results=%d",
+            session_config.session_id or "",
+            self._clip_text(text),
+            len(results),
+        )
+        return self._format_rag_response_instructions(text, results)
+
+    async def _execute_tool(
+        self,
+        call: ToolCall,
+        session_config: VoiceLLMSessionConfig,
+    ) -> SupervisorToolResult:
         if call.name.strip() == "recall_memory":
             return await self._recall_memory(call)
+        if call.name.strip() == "retrieve_character_knowledge":
+            return await self._retrieve_character_knowledge(call, session_config)
         if self.supervisor is None:
             raise RuntimeError("persona supervisor is not initialized")
-        return await self.supervisor.handle_tool_call(call, session_id)
+        return await self.supervisor.handle_tool_call(call, session_config.session_id)
 
     @staticmethod
     def _clean_text(text: Any) -> str:
@@ -588,6 +696,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             session_config,
             system_prompt=self._persona_system_prompt(session_config),
             tools=self._tool_definitions(),
+            defer_response=True,
         )
         injected: asyncio.Queue[VoiceLLMInputEvent] = asyncio.Queue()
         pending_partials: list[str] = []
@@ -650,13 +759,20 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
 
                 self._log_model_event(session_config.session_id, event)
                 if event.user_transcript:
-                    turn_transcripts.append(event.user_transcript)
-                    memory_user_text = self._merge_text_segments([memory_user_text, event.user_transcript])
+                    user_text = event.user_transcript
+                    turn_transcripts.append(user_text)
+                    memory_user_text = self._merge_text_segments([memory_user_text, user_text])
                     yield VoiceLLMOutputEvent(
-                        user_transcript=event.user_transcript,
+                        user_transcript=user_text,
                         question_id=event.question_id,
                         reply_id=event.reply_id,
                     )
+                    try:
+                        response_instructions = await self._rag_response_instructions(user_text, session_config)
+                    except Exception:
+                        logger.exception("persona RAG pre-response failed")
+                        response_instructions = ""
+                    await injected.put(VoiceLLMInputEvent(response_instructions=response_instructions))
                     event = replace(event, user_transcript="")
                     if not event.tool_calls and not event.barge_in and not self._has_assistant_output(event):
                         model_event_task = asyncio.create_task(model_events.__anext__())
@@ -671,7 +787,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                                 pending_partials.append(partial_text)
                             turn_transcripts.clear()
                             try:
-                                tool_result = await self._execute_tool(call, session_config.session_id)
+                                tool_result = await self._execute_tool(call, session_config)
                                 result = tool_result.result
                             except Exception as exc:
                                 logger.exception("persona wait tool call failed: %s", call.name)
@@ -698,7 +814,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                         turn_transcripts.clear()
 
                         try:
-                            tool_result = await self._execute_tool(effective_call, session_config.session_id)
+                            tool_result = await self._execute_tool(effective_call, session_config)
                             if tool_result.pending_task is not None:
                                 pending_task_starts.append(tool_result.pending_task)
                             result = tool_result.result

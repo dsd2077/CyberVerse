@@ -8,6 +8,7 @@ import (
 	pb "github.com/cyberverse/server/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -17,6 +18,7 @@ type Client struct {
 	conn     *grpc.ClientConn
 	avatar   pb.AvatarServiceClient
 	llm      pb.LLMServiceClient
+	rag      pb.RAGServiceClient
 	tts      pb.TTSServiceClient
 	asr      pb.ASRServiceClient
 	voiceLLM pb.VoiceLLMServiceClient
@@ -49,6 +51,7 @@ func NewClient(addr string) (*Client, error) {
 		conn:     conn,
 		avatar:   pb.NewAvatarServiceClient(conn),
 		llm:      pb.NewLLMServiceClient(conn),
+		rag:      pb.NewRAGServiceClient(conn),
 		tts:      pb.NewTTSServiceClient(conn),
 		asr:      pb.NewASRServiceClient(conn),
 		voiceLLM: pb.NewVoiceLLMServiceClient(conn),
@@ -67,8 +70,14 @@ func (c *Client) Close() error {
 func (c *Client) HealthCheck(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := c.AvatarInfo(ctx)
-	return err
+	resp, err := healthpb.NewHealthClient(c.conn).Check(ctx, &healthpb.HealthCheckRequest{})
+	if err != nil {
+		return err
+	}
+	if resp.GetStatus() != healthpb.HealthCheckResponse_SERVING {
+		return fmt.Errorf("inference health status is %s", resp.GetStatus().String())
+	}
+	return nil
 }
 
 func (c *Client) AvatarInfo(ctx context.Context) (*pb.AvatarInfo, error) {

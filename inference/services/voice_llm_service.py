@@ -35,6 +35,8 @@ def _session_config_from_pb(cfg: voice_llm_pb2.VoiceLLMConfig) -> VoiceLLMSessio
     return VoiceLLMSessionConfig(
         session_id=cfg.session_id,
         provider=getattr(cfg, "provider", ""),
+        character_id=getattr(cfg, "character_id", ""),
+        character_dir=getattr(cfg, "character_dir", ""),
         system_prompt=cfg.system_prompt,
         voice=cfg.voice,
         bot_name=cfg.bot_name,

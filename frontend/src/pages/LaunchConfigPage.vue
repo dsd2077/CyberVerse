@@ -3,11 +3,12 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useCharacterStore } from '../stores/characters'
-import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, resolveApiUrl, updateLaunchConfig } from '../services/api'
+import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, updateLaunchConfig } from '../services/api'
 import CvSelect from '../components/CvSelect.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
 import { formatVoiceTypeDisplay } from '../utils/voice'
+import { buildSessionLaunchState, saveSessionLaunchState } from '../utils/sessionLaunchState'
 
 const router = useRouter()
 const route = useRoute()
@@ -148,19 +149,8 @@ async function launch() {
     resp.warnings?.forEach((warning) => {
       console.warn('[CyberVerse]', warning)
     })
-    router.push({
-      path: `/session/${resp.session_id}`,
-      query: {
-        streaming_mode: resp.streaming_mode || 'direct',
-        mode: resp.mode || launchMode,
-        livekit_url: resp.livekit_url,
-        livekit_token: resp.livekit_token,
-        idle_video_url: resolveApiUrl(resp.idle_video_url),
-        idle_video_urls: resp.idle_video_urls ? JSON.stringify(resp.idle_video_urls.map(resolveApiUrl)) : undefined,
-        visual_input: resp.visual_input ? JSON.stringify(resp.visual_input) : undefined,
-        character_id: characterId.value,
-      },
-    })
+    saveSessionLaunchState(buildSessionLaunchState(resp, characterId.value, launchMode))
+    router.push(`/session/${resp.session_id}`)
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : t('launch.launchFailed')
     console.error('Failed to launch:', e)
@@ -201,7 +191,7 @@ async function launch() {
         <div v-if="store.current" class="bg-cv-surface border border-cv-border rounded-cv-lg overflow-hidden shadow-[0_4px_16px_-2px_rgba(0,0,0,0.25)]">
           <!-- Avatar image -->
           <div class="h-[220px] bg-gradient-to-b from-[#142659] to-[#2e1a66] rounded-t-cv-lg ">
-            <img v-if="store.current.avatar_image" :src="resolveApiUrl(store.current.avatar_image)" class="w-full h-full object-cover" :alt="store.current.name" />
+            <img v-if="store.current.avatar_image" :src="store.current.avatar_image" class="w-full h-full object-cover" :alt="store.current.name" />
           </div>
 
           <div class="p-5 flex flex-col gap-4">

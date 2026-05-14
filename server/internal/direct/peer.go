@@ -707,6 +707,7 @@ func (p *DirectPeer) writeOpus(pcm []byte, sampleRate int) error {
 	samplesPerFrame := sampleRate / 50   // 20ms = 1/50 second
 	bytesPerFrame := samplesPerFrame * 2 // 16-bit mono
 	opusBuf := make([]byte, 4000)        // max opus frame size
+	frameDuration := 20 * time.Millisecond
 
 	for offset := 0; offset+bytesPerFrame <= len(pcm); offset += bytesPerFrame {
 		// Convert bytes to int16 samples
@@ -722,15 +723,38 @@ func (p *DirectPeer) writeOpus(pcm []byte, sampleRate int) error {
 		if n == 0 {
 			continue
 		}
+		payload := append([]byte(nil), opusBuf[:n]...)
 
 		if err := p.audioTrack.WriteSample(media.Sample{
-			Data:     opusBuf[:n],
-			Duration: 20 * time.Millisecond,
+			Data:     payload,
+			Duration: frameDuration,
 		}); err != nil {
 			return fmt.Errorf("write audio sample: %w", err)
 		}
+		if err := p.sleepAudioFrame(frameDuration); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (p *DirectPeer) sleepAudioFrame(d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	ctx := p.avPipelineCtx
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("audio publish cancelled")
+	case <-timer.C:
+		return nil
+	}
 }
 
 // Disconnect tears down the peer connection and releases resources.

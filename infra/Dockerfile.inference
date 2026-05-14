@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[inference]" && \
+RUN pip install --no-cache-dir -e ".[inference,rag]" && \
     pip install --no-cache-dir grpcio-tools grpcio-health-checking scipy
 
 # Generate gRPC code in builder stage

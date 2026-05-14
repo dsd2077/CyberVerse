@@ -123,6 +123,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                     config.session_id,
                     output_queue,
                     response_coordinator,
+                    defer_response=config.defer_response,
                 )
             )
 
@@ -224,6 +225,15 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                     if not event.tool_result.suppress_response:
                         expects_deferred_response = True
                     continue
+                if event.response_instructions is not None:
+                    expects_deferred_response = True
+                    await self._send_response_instructions(
+                        ws,
+                        session_id,
+                        event.response_instructions,
+                        response_coordinator,
+                    )
+                    continue
                 if event.text:
                     expects_deferred_response = True
                     await self._send_text(ws, session_id, event.text, response_coordinator)
@@ -310,6 +320,27 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
             )
         )
 
+    async def _send_response_instructions(
+        self,
+        ws: Any,
+        session_id: str,
+        instructions: str,
+        response_coordinator: "_QwenResponseCoordinator",
+    ) -> None:
+        response: dict[str, Any] = {"modalities": ["text", "audio"]}
+        instructions = str(instructions or "").strip()
+        if instructions:
+            response["instructions"] = instructions
+        await response_coordinator.enqueue(
+            _QwenDeferredResponse(
+                response_payload={
+                    "type": "response.create",
+                    "event_id": self._event_id(session_id, "response"),
+                    "response": response,
+                }
+            )
+        )
+
     async def _send_tool_result(
         self,
         ws: Any,
@@ -391,6 +422,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         session_id: str,
         output_queue: asyncio.Queue[VoiceLLMOutputEvent | Exception | None],
         response_coordinator: "_QwenResponseCoordinator | None" = None,
+        defer_response: bool = False,
     ) -> None:
         response_coordinator = response_coordinator or _QwenResponseCoordinator()
         turn_state = _QwenTurnState(session_id=session_id or "qwen_omni")
@@ -449,7 +481,8 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                     continue
 
                 if event_type == "input_audio_buffer.speech_started":
-                    await response_coordinator.mark_response_started()
+                    if not defer_response:
+                        await response_coordinator.mark_response_started()
                     turn_state.start_next_turn()
                     await output_queue.put(
                         VoiceLLMOutputEvent(
@@ -566,6 +599,8 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                 "silence_duration_ms": self.vad_silence_duration_ms,
             },
         }
+        if session_config.defer_response:
+            payload["turn_detection"]["create_response"] = False
         has_tools = bool(session_config.tools)
         optional_values: dict[str, Any] = {
             "temperature": self.temperature,

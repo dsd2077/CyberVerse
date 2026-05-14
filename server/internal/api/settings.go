@@ -97,6 +97,7 @@ type avatarModelDescriptor struct {
 type avatarModelInfoResponse struct {
 	ActiveModel            string                  `json:"active_model"`
 	ConfiguredDefaultModel string                  `json:"configured_default_model"`
+	AvatarEnabled          bool                    `json:"avatar_enabled"`
 	Models                 []avatarModelDescriptor `json:"models"`
 	ConfigStatus           avatarModelConfigStatus `json:"config_status"`
 }
@@ -104,6 +105,7 @@ type avatarModelInfoResponse struct {
 type launchConfigResponse struct {
 	ActiveModel            string                    `json:"active_model"`
 	ConfiguredDefaultModel string                    `json:"configured_default_model"`
+	AvatarEnabled          bool                      `json:"avatar_enabled"`
 	ConfigStatus           avatarModelConfigStatus   `json:"config_status"`
 	Sections               []launchConfigSectionJSON `json:"sections"`
 }
@@ -342,7 +344,7 @@ func (r *Router) configuredAvatarModels() []string {
 	}
 	models := make([]string, 0, len(keys))
 	for _, key := range keys {
-		if key == "default" || key == "runtime" {
+		if key == "default" || key == "enabled" || key == "runtime" {
 			continue
 		}
 		models = append(models, key)
@@ -386,6 +388,13 @@ func (r *Router) activeAvatarModel(ctx context.Context) (string, error) {
 	if r.orch == nil {
 		return "", errInferenceUnavailable
 	}
+	if !r.orch.AvatarEnabled() {
+		model := r.configuredDefaultAvatarModel()
+		if model == "" {
+			return "disabled", nil
+		}
+		return model, nil
+	}
 	info, err := r.orch.AvatarInfo(ctx)
 	if err != nil {
 		return "", err
@@ -402,6 +411,7 @@ func (r *Router) buildAvatarModelInfo(ctx context.Context) (*avatarModelInfoResp
 	if err != nil {
 		return nil, err
 	}
+	avatarEnabled := r.orch == nil || r.orch.AvatarEnabled()
 	configuredDefault := r.configuredDefaultAvatarModel()
 	configuredModels := r.configuredAvatarModels()
 	if len(configuredModels) == 0 && activeModel != "" {
@@ -426,6 +436,7 @@ func (r *Router) buildAvatarModelInfo(ctx context.Context) (*avatarModelInfoResp
 	return &avatarModelInfoResponse{
 		ActiveModel:            activeModel,
 		ConfiguredDefaultModel: configuredDefault,
+		AvatarEnabled:          avatarEnabled,
 		Models:                 models,
 		ConfigStatus:           r.configStatusForModel(activeModel),
 	}, nil
@@ -591,6 +602,7 @@ func (r *Router) handleGetLaunchConfig(w http.ResponseWriter, req *http.Request)
 	writeJSON(w, http.StatusOK, launchConfigResponse{
 		ActiveModel:            activeModel,
 		ConfiguredDefaultModel: r.configuredDefaultAvatarModel(),
+		AvatarEnabled:          r.orch == nil || r.orch.AvatarEnabled(),
 		ConfigStatus:           r.configStatusForModel(activeModel),
 		Sections:               r.buildLaunchSections(activeModel),
 	})

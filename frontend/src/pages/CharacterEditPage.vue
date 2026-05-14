@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
+import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
 import { OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
@@ -956,6 +957,8 @@ const breadcrumb = computed(() =>
                     class="w-full h-40 bg-cv-elevated border border-cv-border rounded-cv-md px-4 py-3 text-[13px] text-cv-text placeholder:text-cv-text-muted resize-y leading-[22px] focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)] transition-all" />
           <p class="text-right text-[11px] text-cv-text-muted mt-1">{{ promptLength }} / 2000</p>
         </section>
+
+        <KnowledgeSourceManager v-if="isEdit" :character-id="characterId" />
       </div>
     </main>
 

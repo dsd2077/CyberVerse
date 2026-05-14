@@ -30,6 +30,11 @@ services:
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
       - GRPC_INFERENCE_ADDR=cyberverse-inference:50051
+      - ZHIHU_APP_ID=${ZHIHU_APP_ID:-}
+      - ZHIHU_APP_KEY=${ZHIHU_APP_KEY:-}
+      - ZHIHU_REDIRECT_URI=${ZHIHU_REDIRECT_URI:-}
+    volumes:
+      - ../data:/app/data
     depends_on:
       - livekit
       - cyberverse-inference
@@ -47,8 +52,10 @@ services:
       - DOUBAO_API_KEY=${DOUBAO_API_KEY:?DOUBAO_API_KEY is required}
       - DOUBAO_APP_ID=${DOUBAO_APP_ID:?DOUBAO_APP_ID is required}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - CYBERVERSE_DATA_DIR=/app/data
     volumes:
       - ../checkpoints:/app/checkpoints
+      - ../data:/app/data
     deploy:
       resources:
         limits:

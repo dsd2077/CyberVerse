@@ -26,6 +26,7 @@ type CreateSessionResponse struct {
 	SessionID     string               `json:"session_id"`
 	Mode          string               `json:"mode"`
 	StreamingMode string               `json:"streaming_mode"`
+	AvatarEnabled bool                 `json:"avatar_enabled"`
 	LiveKitURL    string               `json:"livekit_url,omitempty"`
 	Token         string               `json:"livekit_token,omitempty"`
 	IdleVideoURL  string               `json:"idle_video_url,omitempty"`
@@ -169,7 +170,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	}
 	mode := parsePipelineMode(modeName)
 
-	if r.orch != nil && r.charStore != nil && body.CharacterID != "" {
+	if r.orch != nil && r.charStore != nil && body.CharacterID != "" && r.orch.AvatarEnabled() {
 		if _, err := r.activeAvatarModel(req.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
 			return
@@ -221,7 +222,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		// Trigger background generation only if the current-resolution idle video does not exist yet.
 		// Once ready, push the URLs to the frontend via WebSocket so the idle
 		// videos can start playing without a page reload.
-		if len(resp.IdleVideoURLs) == 0 {
+		if len(resp.IdleVideoURLs) == 0 && r.orch.AvatarEnabled() {
 			char, _ := r.charStore.Get(body.CharacterID)
 			activeImage := ""
 			if char != nil {
@@ -260,6 +261,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	if r.orch != nil {
 		streamingMode := r.orch.StreamingMode()
 		resp.StreamingMode = streamingMode
+		resp.AvatarEnabled = r.orch.AvatarEnabled()
 
 		// Generate LiveKit token only in livekit mode
 		if streamingMode == "livekit" && r.roomMgr != nil && r.cfg != nil {

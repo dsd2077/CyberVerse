@@ -25,6 +25,9 @@ warmup:
 
 inference:
     avatar:
+        # Set to false for pure voice sessions. Cached idle videos are still
+        # served, but realtime speaking video and new idle video generation stop.
+        enabled: true
         # Select the avatar backend initialized by the inference process.
         default: "flash_head"
         runtime:
@@ -145,6 +148,16 @@ inference:
             model: "gpt-4o"
             temperature: 0.7
 
+    embedding:
+        # Used by local character RAG indexes.
+        default: "qwen"
+        qwen:
+            api_key: "${DASHSCOPE_API_KEY}"
+            model: "text-embedding-v4"
+        openai:
+            api_key: "${OPENAI_API_KEY}"
+            model: "text-embedding-3-small"
+
     tts:
         # Used by standard mode after the LLM response is generated.
         default: "qwen"
@@ -186,6 +199,13 @@ session:
 pipeline:
     default_mode: "omni"
     streaming_mode: "direct" # "direct" = P2P WebRTC, "livekit" = LiveKit SFU.
+    rag:
+        enabled: true
+        top_k: 5
+        min_score: 0.25
+        max_context_chars: 4500
+        chunk_chars: 900
+        chunk_overlap_chars: 120
     visual_input:
         enabled: true
         frame_interval_ms: 1000
