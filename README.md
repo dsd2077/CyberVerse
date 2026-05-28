@@ -428,3 +428,48 @@ GNU General Public License v3.0 — see [LICENSE](LICENSE).
 - [SoulX-LiveAct](https://github.com/Soul-AILab/SoulX-LiveAct) - Avatar model by Soul AI Lab
 - [Pion](https://github.com/pion/webrtc) — Go WebRTC implementation
 - [Linux.do](https://linux.do/)
+
+## ❓ FAQ
+
+### What is CyberVerse?
+CyberVerse is an open-source real-time digital-human Agent framework. It uses WebRTC, persona memory, tools, RAG, and optional digital-human video capabilities to help you build AI agents centered on voice interaction.
+
+### Key Features
+| Feature | Description |
+|---------|-------------|
+| **Realtime Voice Agent** | Low-latency conversations with microphone input and interruptions |
+| **Audio/Video over WebRTC** | P2P or LiveKit SFU mode for different deployment scenarios |
+| **PersonaAgent + SubAgent** | Multi-agent architecture for fluid conversations and background tasks |
+| **Character Memory & RAG** | Persistent conversation history and knowledge base integration |
+| **Digital Human Video** | Optional GPU-powered avatar with lip-sync and facial animation |
+| **Plugin-Based Stack** | Replaceable modules for Brain, voice, hearing, tools, memory, and face |
+
+### How to Install
+Follow Quick Start in README.md:
+- Node 18+
+- Go 1.25
+- Conda
+- Python 3.10+
+- FFmpeg
+
+### Supported Languages
+- English
+- Chinese (简体中文)
+- Japanese (日本語)
+- Korean (한국어)
+
+### Requirements
+| Component | Version |
+|-----------|---------|
+| Node.js | 18+ |
+| Go | 1.25 |
+| Python | 3.10+ |
+| FFmpeg | Required |
+
+### License
+GPL v3 License
+
+### Help Resources
+- [Documentation](https://github.com/dsd2077/CyberVerse/tree/main/docs)
+- [Issues](https://github.com/dsd2077/CyberVerse/issues)
+- [Demo Videos](https://github.com/dsd2077/CyberVerse#demo)
