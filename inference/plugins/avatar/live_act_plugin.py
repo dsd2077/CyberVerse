@@ -240,6 +240,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
         # Distributed
         self._rank: int = int(os.environ.get("RANK", "0"))
         self._world_size: int = 1
+        self._dist_control_group = None
         self._dist_control_lock = threading.Lock()
         self._dist_worker_thread: threading.Thread | None = None
         self._dist_worker_stop = threading.Event()
@@ -344,6 +345,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
                 ring_degree=1,
                 ulysses_degree=self._world_size,
             )
+            self._dist_control_group = dist.new_group(backend="gloo")
 
         self._load_models(config)
         self._init_kv_cache()
@@ -1049,7 +1051,6 @@ class LiveActAvatarPlugin(AvatarPlugin):
         if self._rank != 0:
             return None
 
-        cuda_dev = torch.device(f"cuda:{self._rank}")
         audio_np = np.asarray(audio_slice, dtype=np.float32)
         with self._dist_control_lock:
             self._broadcast_dist_cmd_locked(
@@ -1058,8 +1059,8 @@ class LiveActAvatarPlugin(AvatarPlugin):
                 int(iteration),
                 0,
             )
-            payload = torch.from_numpy(audio_np).to(cuda_dev, non_blocking=False)
-            dist.broadcast(payload, src=0)
+            payload = torch.from_numpy(audio_np)
+            dist.broadcast(payload, src=0, group=self._dist_control_group)
             self._note_dist_command_locked()
         return self._run_one_iteration_local(audio_np, iteration)
 
@@ -1119,6 +1120,12 @@ class LiveActAvatarPlugin(AvatarPlugin):
                 torch.cuda.synchronize()
             except Exception:
                 pass
+            try:
+                if self._dist_control_group is not None:
+                    dist.destroy_process_group(self._dist_control_group)
+                    self._dist_control_group = None
+            except Exception:
+                logger.exception("destroy control process group failed")
             try:
                 dist.destroy_process_group()
             except Exception:
@@ -1215,13 +1222,11 @@ class LiveActAvatarPlugin(AvatarPlugin):
     ) -> None:
         if self._world_size <= 1 or self._rank != 0 or not dist.is_initialized():
             return
-        cuda_dev = torch.device(f"cuda:{self._rank}")
         cmd = torch.tensor(
             [int(op_code), int(param1), int(param2), int(param3)],
             dtype=torch.int32,
-            device=cuda_dev,
         )
-        dist.broadcast(cmd, src=0)
+        dist.broadcast(cmd, src=0, group=self._dist_control_group)
         self._note_dist_command_locked()
 
     def _note_dist_command_locked(self) -> None:
@@ -1244,9 +1249,8 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
         try:
             while not self._dist_worker_stop.is_set():
-                cuda_dev = torch.device(f"cuda:{self._rank}")
-                cmd = torch.zeros(4, dtype=torch.int32, device=cuda_dev)
-                dist.broadcast(cmd, src=0)
+                cmd = torch.zeros(4, dtype=torch.int32)
+                dist.broadcast(cmd, src=0, group=self._dist_control_group)
                 op = int(cmd[0].item())
 
                 if op == _DIST_OP_SHUTDOWN:
@@ -1258,9 +1262,9 @@ class LiveActAvatarPlugin(AvatarPlugin):
                     continue
                 if op == _DIST_OP_SET_AVATAR:
                     img_len = int(cmd[1].item())
-                    recv = torch.empty(img_len, dtype=torch.uint8, device=cuda_dev)
-                    dist.broadcast(recv, src=0)
-                    img_bytes = recv.cpu().numpy().tobytes()
+                    recv = torch.empty(img_len, dtype=torch.uint8)
+                    dist.broadcast(recv, src=0, group=self._dist_control_group)
+                    img_bytes = recv.numpy().tobytes()
                     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     tmp_path = tmp.name
                     try:
@@ -1281,14 +1285,14 @@ class LiveActAvatarPlugin(AvatarPlugin):
                     iteration = int(cmd[2].item())
                     if audio_len <= 0:
                         continue
-                    recv = torch.empty(audio_len, dtype=torch.float32, device=cuda_dev)
-                    dist.broadcast(recv, src=0)
+                    recv = torch.empty(audio_len, dtype=torch.float32)
+                    dist.broadcast(recv, src=0, group=self._dist_control_group)
                     if iteration != self._iteration_count:
                         raise RuntimeError(
                             "LiveAct worker iteration mismatch: "
                             f"local={self._iteration_count} broadcast={iteration}"
                         )
-                    audio_np = recv.detach().cpu().numpy().astype(np.float32, copy=False)
+                    audio_np = recv.numpy().astype(np.float32, copy=False)
                     _ = self._run_one_iteration_local(
                         audio_np, iteration, return_frames=False
                     )
@@ -1299,7 +1303,6 @@ class LiveActAvatarPlugin(AvatarPlugin):
         logger.info("LiveAct dist worker stopped: rank=%d", self._rank)
 
     def _distributed_set_avatar(self, image_path: str) -> None:
-        cuda_dev = torch.device(f"cuda:{self._rank}")
         with open(image_path, "rb") as f:
             img_bytes = f.read()
         if not img_bytes:
@@ -1307,8 +1310,8 @@ class LiveActAvatarPlugin(AvatarPlugin):
 
         with self._dist_control_lock:
             self._broadcast_dist_cmd_locked(_DIST_OP_SET_AVATAR, len(img_bytes), 0, 0)
-            img_tensor = torch.frombuffer(bytearray(img_bytes), dtype=torch.uint8).to(cuda_dev)
-            dist.broadcast(img_tensor, src=0)
+            img_tensor = torch.frombuffer(bytearray(img_bytes), dtype=torch.uint8)
+            dist.broadcast(img_tensor, src=0, group=self._dist_control_group)
             self._note_dist_command_locked()
         self._set_avatar_sync_local(image_path)
 
