@@ -1,5 +1,25 @@
 # 更新日志
 
+### 2026-05-29~2026-06-05
+
+Features:
+- 新增AutoDL平台镜像(审核中)
+- LiveAct 新增 FP4 GEMM 加速，支持 B 系列 GPU 进一步压缩推理算力（[2cace72](https://github.com/dsd2077/CyberVerse/commit/2cace72)）
+- 引入 MuseTalk 模型初始实现，含训练、预处理、离线/实时推理脚本与 Gradio demo（[c826645](https://github.com/dsd2077/CyberVerse/commit/c826645)）
+
+Changes:
+- PersonaAgent 移除 `wait_for_more_input` 工具，表达不清时直接自然追问，不再走工具调用（[aa691ee](https://github.com/dsd2077/CyberVerse/commit/aa691ee)）
+- 示例配置 `idle_strategy` 默认改为 `silent_inference`，与连贯推理模式对齐（[7644430](https://github.com/dsd2077/CyberVerse/commit/7644430)）
+
+Bugs:
+- 修复 LiveAct 多卡分布式控制 broadcast 在 GPU 上 busy-wait 的问题，控制通道改走独立 `gloo` 进程组（[PR #19](https://github.com/dsd2077/CyberVerse/pull/19)，[54635a3](https://github.com/dsd2077/CyberVerse/commit/54635a3)）
+
+Others:
+- README 新增常见问题自检（QA）章节，引入 RTP 指标排查数字人卡顿与音画落后（[f7a1a4b](https://github.com/dsd2077/CyberVerse/commit/f7a1a4b)）
+- 补充 LiveAct FP4 GEMM 编译安装说明（LightX2V / CUTLASS）（[ccbb978](https://github.com/dsd2077/CyberVerse/commit/ccbb978)）
+- 补充音频处理系统依赖：`libopus-dev`、`libopusfile-dev`、`libsoxr-dev`、`pkg-config`（[dba745b](https://github.com/dsd2077/CyberVerse/commit/dba745b)）
+- FlashAttention 安装说明更新至 2.8.1（[74d58e6](https://github.com/dsd2077/CyberVerse/commit/74d58e6)）
+
 ### 2026-05-22~2026-05-29
 本周主要围绕实时数字人链路的 Direct WebRTC 稳定性、AV 同步、空闲态数字人策略和语音上下文恢复展开。
 

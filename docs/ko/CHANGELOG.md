@@ -1,5 +1,25 @@
 # 변경 이력
 
+## 2026-05-29~2026-06-05
+
+Features:
+- AutoDL 플랫폼 이미지 추가(심사 중)
+- LiveAct에 FP4 GEMM 가속 추가, B 시리즈 GPU에서 추론 연산을 더 압축 가능 ([2cace72](https://github.com/dsd2077/CyberVerse/commit/2cace72))
+- MuseTalk 모델 초기 구현 도입. 학습, 전처리, 오프라인/실시간 추론 스크립트 및 Gradio demo 포함 ([c826645](https://github.com/dsd2077/CyberVerse/commit/c826645))
+
+Changes:
+- PersonaAgent에서 `wait_for_more_input` 도구 제거. 표현이 불명확할 때 도구 호출 대신 자연스럽게 추가 질문 ([aa691ee](https://github.com/dsd2077/CyberVerse/commit/aa691ee))
+- 예시 설정 `idle_strategy` 기본값을 `silent_inference`로 변경, 연속 추론 모드와 일치 ([7644430](https://github.com/dsd2077/CyberVerse/commit/7644430))
+
+Bugs:
+- LiveAct 멀티 GPU 분산 제어 broadcast가 GPU에서 busy-wait 하던 문제 수정. 제어 채널을 독립 `gloo` 프로세스 그룹으로 변경 ([PR #19](https://github.com/dsd2077/CyberVerse/pull/19), [54635a3](https://github.com/dsd2077/CyberVerse/commit/54635a3))
+
+Others:
+- README에 FAQ(QA) 섹션 추가. RTP 지표로 디지털 휴먼 끊김과 음영 지연 진단 가능 ([f7a1a4b](https://github.com/dsd2077/CyberVerse/commit/f7a1a4b))
+- LiveAct FP4 GEMM 빌드/설치 안내 추가 (LightX2V / CUTLASS) ([ccbb978](https://github.com/dsd2077/CyberVerse/commit/ccbb978))
+- 오디오 처리 시스템 의존성 추가: `libopus-dev`, `libopusfile-dev`, `libsoxr-dev`, `pkg-config` ([dba745b](https://github.com/dsd2077/CyberVerse/commit/dba745b))
+- FlashAttention 설치 안내를 2.8.1로 업데이트 ([74d58e6](https://github.com/dsd2077/CyberVerse/commit/74d58e6))
+
 ## 2026-05-22~2026-05-29
 
 이번 주에는 주로 실시간 디지털 휴먼 파이프라인의 Direct WebRTC 안정성, AV 동기화, idle 상태 디지털 휴먼 전략, 음성 컨텍스트 복구를 다뤘습니다.

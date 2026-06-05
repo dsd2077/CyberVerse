@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-05-29~2026-06-05
+
+Features:
+- Added AutoDL platform image (under review)
+- LiveAct adds FP4 GEMM acceleration, enabling further inference compute compression on B-series GPUs ([2cace72](https://github.com/dsd2077/CyberVerse/commit/2cace72))
+- Initial MuseTalk model implementation, including training, preprocessing, offline/real-time inference scripts, and a Gradio demo ([c826645](https://github.com/dsd2077/CyberVerse/commit/c826645))
+
+Changes:
+- PersonaAgent removes the `wait_for_more_input` tool; when input is unclear, it asks follow-up questions naturally instead of invoking a tool ([aa691ee](https://github.com/dsd2077/CyberVerse/commit/aa691ee))
+- Example config `idle_strategy` default changed to `silent_inference`, aligned with continuous inference mode ([7644430](https://github.com/dsd2077/CyberVerse/commit/7644430))
+
+Bugs:
+- Fixed LiveAct multi-GPU distributed control broadcast busy-wait on GPU; control channel now uses a separate `gloo` process group ([PR #19](https://github.com/dsd2077/CyberVerse/pull/19), [54635a3](https://github.com/dsd2077/CyberVerse/commit/54635a3))
+
+Others:
+- README adds an FAQ (QA) section with RTP metrics for diagnosing digital human stuttering and A/V lag ([f7a1a4b](https://github.com/dsd2077/CyberVerse/commit/f7a1a4b))
+- Added LiveAct FP4 GEMM build/install instructions (LightX2V / CUTLASS) ([ccbb978](https://github.com/dsd2077/CyberVerse/commit/ccbb978))
+- Added audio processing system dependencies: `libopus-dev`, `libopusfile-dev`, `libsoxr-dev`, `pkg-config` ([dba745b](https://github.com/dsd2077/CyberVerse/commit/dba745b))
+- FlashAttention install instructions updated to 2.8.1 ([74d58e6](https://github.com/dsd2077/CyberVerse/commit/74d58e6))
+
 ## 2026-05-22~2026-05-29
 
 This week mainly focused on Direct WebRTC stability, AV sync, idle-state digital human strategy, and voice context recovery in the real-time digital human pipeline.
